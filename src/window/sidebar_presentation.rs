@@ -277,6 +277,8 @@ pub(super) enum SidebarEvent {
     /// The header arrow that shows a hidden sidebar.
     ShowPressed,
     PointerLeftSidebar,
+    /// The pointer came back: a pending leave check must not hide.
+    PointerEnteredSidebar,
     /// `held` while a resize drag or context menu keeps the peek open.
     LeaveSettled {
         generation: u64,
@@ -321,7 +323,12 @@ pub(super) struct SidebarPresentation {
     breakpoint_in_transition: bool,
     compact_width: f64,
     drawer_width: f64,
+    /// Invalidates pending leave checks.
     generation: u64,
+    /// Invalidates pending breakpoint follow-ups. Separate from
+    /// `generation`: the breakpoint's own show/hide must not make its
+    /// follow-up stale.
+    breakpoint_generation: u64,
 }
 
 impl SidebarPresentation {
@@ -338,6 +345,7 @@ impl SidebarPresentation {
             compact_width: clamp_compact_rail_width(compact_width),
             drawer_width: drawer_width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
             generation: 0,
+            breakpoint_generation: 0,
         }
     }
 
@@ -371,6 +379,11 @@ impl SidebarPresentation {
         self.generation
     }
 
+    fn next_breakpoint_generation(&mut self) -> u64 {
+        self.breakpoint_generation = self.breakpoint_generation.wrapping_add(1);
+        self.breakpoint_generation
+    }
+
     /// Apply one event. Returns a timer to schedule, if any; read the new
     /// state with [`Self::scene`].
     pub(super) fn handle(&mut self, event: SidebarEvent) -> Option<SidebarTimer> {
@@ -396,6 +409,7 @@ impl SidebarPresentation {
                     self.hover_open = false;
                     self.breakpoint_in_transition = false;
                     self.next_generation();
+                    self.next_breakpoint_generation();
                 }
                 None
             }
@@ -428,7 +442,7 @@ impl SidebarPresentation {
                         if !self.mode.is_normal() {
                             self.open = false;
                         }
-                        let generation = self.next_generation();
+                        let generation = self.next_breakpoint_generation();
                         if self.open {
                             // Keep it visible as an overlay for one frame.
                             self.breakpoint_in_transition = true;
@@ -443,13 +457,13 @@ impl SidebarPresentation {
                         self.hover_open = false;
                         self.collapsed = false;
                         self.breakpoint_in_transition = true;
-                        let generation = self.next_generation();
+                        let generation = self.next_breakpoint_generation();
                         Some(SidebarTimer::BreakpointIdle { generation })
                     }
                 }
             }
             BreakpointFrameElapsed { generation } => {
-                if generation == self.generation {
+                if generation == self.breakpoint_generation {
                     self.open = false;
                     self.hover_open = false;
                     self.breakpoint_in_transition = false;
@@ -457,7 +471,7 @@ impl SidebarPresentation {
                 None
             }
             BreakpointIdleElapsed { generation, pinned } => {
-                if generation == self.generation {
+                if generation == self.breakpoint_generation {
                     self.pinned = pinned;
                     if self.mode.is_normal() && pinned {
                         self.open = true;
@@ -488,6 +502,12 @@ impl SidebarPresentation {
                 } else {
                     None
                 }
+            }
+            PointerEnteredSidebar => {
+                if self.hover_open {
+                    self.next_generation();
+                }
+                None
             }
             LeaveSettled { generation, held } => {
                 if generation != self.generation || !self.hover_open {
@@ -865,6 +885,23 @@ mod tests {
     }
 
     #[test]
+    fn returning_to_the_sidebar_cancels_the_leave_check() {
+        let mut sidebar = normal();
+        sidebar.handle(PinPressed { pinned: true });
+        sidebar.handle(EdgeHovered { pinned: false });
+        let Some(SidebarTimer::LeaveCheck { generation }) = sidebar.handle(PointerLeftSidebar)
+        else {
+            panic!("leave check");
+        };
+        sidebar.handle(PointerEnteredSidebar);
+        sidebar.handle(LeaveSettled {
+            generation,
+            held: false,
+        });
+        assert!(sidebar.scene().split_shows_sidebar && sidebar.scene().hover_open);
+    }
+
+    #[test]
     fn breakpoint_collapses_after_one_frame_and_reveals_pinned_on_expand() {
         let mut sidebar = normal();
         let Some(SidebarTimer::BreakpointFrame { generation }) =
@@ -924,6 +961,34 @@ mod tests {
             pinned: true,
         });
         assert!(!sidebar.scene().split_shows_sidebar && sidebar.scene().layout.compact_dock);
+    }
+
+    #[test]
+    fn the_breakpoints_own_hide_does_not_make_its_follow_up_stale() {
+        let mut sidebar = normal();
+        let Some(SidebarTimer::BreakpointFrame { generation }) =
+            sidebar.handle(BreakpointCrossed { window_width: 1000 })
+        else {
+            panic!("collapse");
+        };
+        // Writing the split emits show-sidebar notify, fed back as an event.
+        sidebar.handle(SplitShowChanged(true));
+        sidebar.handle(BreakpointFrameElapsed { generation });
+        assert!(!sidebar.scene().split_shows_sidebar);
+        let Some(SidebarTimer::BreakpointIdle { generation }) =
+            sidebar.handle(BreakpointCrossed { window_width: 1400 })
+        else {
+            panic!("the breakpoint must not stay stuck mid-transition");
+        };
+        sidebar.handle(SplitShowChanged(false));
+        sidebar.handle(BreakpointIdleElapsed {
+            generation,
+            pinned: true,
+        });
+        assert!(sidebar.scene().split_shows_sidebar);
+        assert!(sidebar
+            .handle(BreakpointCrossed { window_width: 1000 })
+            .is_some());
     }
 
     #[test]

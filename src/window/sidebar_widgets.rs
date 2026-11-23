@@ -15,6 +15,7 @@ use gtk::glib;
 use gtk4 as gtk;
 use libadwaita as adw;
 
+use super::sidebar_presentation::max_sidebar_width;
 use super::sidebar_presentation::{
     SidebarEvent, SidebarMode, SidebarPage, SidebarPlacement, SidebarPresentation, SidebarScene,
     SidebarTimer, SIDEBAR_MODE_SETTING_KEY,
@@ -72,6 +73,17 @@ pub(super) struct SidebarWidgets {
     controls_sync: RefCell<Option<Rc<dyn Fn()>>>,
     immersive_host: RefCell<Option<ImmersiveHost>>,
     leave_held: RefCell<Option<Rc<dyn Fn() -> bool>>>,
+    peek_hook: RefCell<Option<Rc<dyn Fn()>>>,
+    pending: RefCell<std::collections::VecDeque<SidebarEvent>>,
+    applying: Cell<bool>,
+}
+
+/// `PIC_SIDEBAR_TRACE=1` logs every sidebar event that changes the scene.
+fn sidebar_trace_enabled() -> bool {
+    thread_local! {
+        static ENABLED: bool = std::env::var_os("PIC_SIDEBAR_TRACE").is_some();
+    }
+    ENABLED.with(|enabled| *enabled)
 }
 
 const LEAVE_CHECK_DELAY: std::time::Duration = std::time::Duration::from_millis(140);
@@ -97,6 +109,9 @@ impl SidebarWidgets {
             controls_sync: RefCell::new(None),
             immersive_host: RefCell::new(None),
             leave_held: RefCell::new(None),
+            peek_hook: RefCell::new(None),
+            pending: RefCell::new(std::collections::VecDeque::new()),
+            applying: Cell::new(false),
         })
     }
 
@@ -131,9 +146,28 @@ impl SidebarWidgets {
     }
 
     /// Feed one event, apply the new scene, and schedule any follow-up.
+    ///
+    /// Writing a widget can emit a notify whose handler dispatches again.
+    /// Such nested events are queued and handled once the current scene has
+    /// been applied, so a scene is never applied half-way.
     pub(super) fn dispatch(self: &Rc<Self>, event: SidebarEvent) {
-        // Until every writer goes through here, the split's own state is the
-        // truth for the windowed layout. Observe it before deciding.
+        self.pending.borrow_mut().push_back(event);
+        if self.applying.get() {
+            return;
+        }
+        self.applying.set(true);
+        loop {
+            // Release the queue before handling: handling may queue more.
+            let next = self.pending.borrow_mut().pop_front();
+            let Some(event) = next else { break };
+            self.handle_and_apply(event);
+        }
+        self.applying.set(false);
+    }
+
+    fn handle_and_apply(self: &Rc<Self>, event: SidebarEvent) {
+        // The split's swipe gestures change it without an event. Take its
+        // windowed state as the truth before deciding.
         if !self.is_immersive() {
             let split = &self.parts.split;
             self.state
@@ -142,6 +176,14 @@ impl SidebarWidgets {
         }
         let mode_before = self.mode();
         let timer = self.state.borrow_mut().handle(event);
+        if sidebar_trace_enabled()
+            && (timer.is_some() || Some(self.state.borrow().scene()) != *self.last.borrow())
+        {
+            eprintln!(
+                "PIC_SIDEBAR event={event:?} timer={timer:?} scene={:?}",
+                self.state.borrow().scene()
+            );
+        }
         if matches!(event, SidebarEvent::ModeChosen(_)) && self.mode() != mode_before {
             self.persist_mode();
         }
@@ -149,6 +191,37 @@ impl SidebarWidgets {
         if let Some(timer) = timer {
             self.schedule(timer);
         }
+    }
+
+    /// Called just before a hover peek opens the split, so the gallery can
+    /// freeze its layout before the split starts changing width.
+    pub(super) fn set_peek_hook(&self, hook: Rc<dyn Fn()>) {
+        self.peek_hook.replace(Some(hook));
+    }
+
+    /// Keep a collapsed drawer's width cap in step with the split's width.
+    /// Called every frame; writes only when the cap moved.
+    pub(super) fn sync_drawer_cap(&self) {
+        let split = &self.parts.split;
+        if split.is_collapsed() && self.mode().is_normal() && !self.is_immersive() {
+            let cap = max_sidebar_width(true, self.cells.collapsed_width.get(), split.width());
+            if (split.max_sidebar_width() - cap).abs() > 0.1 {
+                split.set_max_sidebar_width(cap);
+            }
+        }
+    }
+
+    fn set_split_collapsed(&self, collapsed: bool) {
+        let split = &self.parts.split;
+        if split.is_collapsed() != collapsed {
+            split.set_collapsed(collapsed);
+        }
+        // A collapsed split shows the sidebar as a drawer at its own width.
+        split.set_max_sidebar_width(max_sidebar_width(
+            collapsed,
+            self.cells.collapsed_width.get(),
+            split.width(),
+        ));
     }
 
     fn persist_mode(&self) {
@@ -263,10 +336,36 @@ impl SidebarWidgets {
             parts.column.set_visible(scene.layout.full_sidebar);
             parts.sidebar.set_visible(scene.layout.full_sidebar);
         }
-        // The Adw sidebar is completely absent in compact mode. Neither its
-        // natural minimum nor its animation can enlarge the icon rail.
-        if parts.split.shows_sidebar() != scene.split_shows_sidebar {
-            parts.split.set_show_sidebar(scene.split_shows_sidebar);
+        // Mirror pin and hover-peek into sidebar.rs before the split moves:
+        // show-sidebar notify handlers read them.
+        if changed(|s| s.pinned) {
+            crate::sidebar::set_pinned(&parts.sidebar, scene.pinned);
+        }
+        if changed(|s| s.hover_open) {
+            if scene.hover_open {
+                if let Some(hook) = self.peek_hook.borrow().clone() {
+                    hook();
+                }
+            }
+            crate::sidebar::set_hover_open(&parts.sidebar, scene.hover_open);
+        }
+        // Hide before collapsing or expanding, show after, so the drawer
+        // always slides instead of being cut by the layout switch. The Adw
+        // sidebar is completely absent in compact mode. Neither its natural
+        // minimum nor its animation can enlarge the icon rail.
+        if !scene.split_shows_sidebar && parts.split.shows_sidebar() {
+            parts.split.set_show_sidebar(false);
+        }
+        if changed(|s| s.split_collapsed) || parts.split.is_collapsed() != scene.split_collapsed {
+            self.set_split_collapsed(scene.split_collapsed);
+        }
+        if scene.split_shows_sidebar && !parts.split.shows_sidebar() {
+            parts.split.set_show_sidebar(true);
+        }
+        if changed(|s| s.chrome.hover_strip) {
+            if let Some(strip) = self.hover_strip.borrow().as_ref() {
+                strip.set_visible(scene.chrome.hover_strip);
+            }
         }
         if changed(|s| s.layout.split_gestures) {
             parts
@@ -285,7 +384,7 @@ impl SidebarWidgets {
     fn restore_normal_widths(&self) {
         let split = &self.parts.split;
         split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
-        split.set_max_sidebar_width(super::sidebar_presentation::max_sidebar_width(
+        split.set_max_sidebar_width(max_sidebar_width(
             split.is_collapsed(),
             self.cells.collapsed_width.get(),
             split.width(),
@@ -375,7 +474,7 @@ impl SidebarWidgets {
         split.set_pin_sidebar(scene.split_pin);
         split.set_enable_show_gesture(scene.layout.split_gestures);
         split.set_enable_hide_gesture(scene.layout.split_gestures);
-        split.set_collapsed(scene.split_collapsed);
+        self.set_split_collapsed(scene.split_collapsed);
         // A collapsed-notify handler may change the sidebar state.
         split.set_show_sidebar(false);
         // The existing shell leaves the split and becomes an overlay child of
@@ -450,7 +549,7 @@ impl SidebarWidgets {
         split.set_sidebar(Some(shell));
         crate::sidebar::clear_hover_open(&parts.sidebar);
         crate::sidebar::set_pinned(&parts.sidebar, scene.pinned);
-        split.set_collapsed(scene.split_collapsed);
+        self.set_split_collapsed(scene.split_collapsed);
         split.set_pin_sidebar(scene.split_pin);
         split.set_enable_show_gesture(scene.layout.split_gestures);
         split.set_enable_hide_gesture(scene.layout.split_gestures);

@@ -1,5 +1,20 @@
 {
     let main_split = adw::OverlaySplitView::new();
+    // The sidebar presentation adapter is built once its widgets exist;
+    // callbacks created before that reach it through this slot.
+    let sidebar_widgets_slot: Rc<RefCell<Option<Rc<SidebarWidgets>>>> =
+        Rc::new(RefCell::new(None));
+    // In the collapsed (drawer) layout, choosing a destination returns the
+    // available width to the photo grid.
+    let dismiss_drawer: Rc<dyn Fn()> = {
+        let slot = sidebar_widgets_slot.clone();
+        Rc::new(move || {
+            let widgets = slot.borrow().clone();
+            if let Some(widgets) = widgets {
+                widgets.dispatch(SidebarEvent::DrawerDismissed);
+            }
+        })
+    };
 
     let nav_request_sequence = Rc::new(Cell::new(0_u64));
     let album_theme_changed_for_destination = album_theme_changed.clone();
@@ -477,15 +492,11 @@
         &albums,
         sidebar_counts,
         {
-            let main_split = main_split.clone();
+            let dismiss_drawer = dismiss_drawer.clone();
             let destination_click = destination_click.clone();
             move |new_filter| {
                 destination_click(new_filter);
-                // In the compact overlay layout, selecting a destination should
-                // immediately return the available width to the photo grid.
-                if main_split.is_collapsed() {
-                    main_split.set_show_sidebar(false);
-                }
+                dismiss_drawer();
             }
         },
         {
@@ -959,12 +970,10 @@
     compact_sidebar.set_vexpand(true);
     let compact_navigate: Rc<dyn Fn(sidebar::SidebarFilter)> = {
         let navigate = destination_click.clone();
-        let split = main_split.clone();
+        let dismiss_drawer = dismiss_drawer.clone();
         Rc::new(move |destination| {
             navigate(destination);
-            if split.is_collapsed() {
-                split.set_show_sidebar(false);
-            }
+            dismiss_drawer();
         })
     };
     let mut albums_button = None;
@@ -1070,7 +1079,7 @@
         let title = folder_overview_title.clone();
         let subtitle = folder_overview_subtitle.clone();
         let stack = main_stack.clone();
-        let split = main_split.clone();
+        let dismiss_drawer = dismiss_drawer.clone();
         let navigate = compact_navigate.clone();
         Rc::new(move |network| {
             title.set_label(if network { "Shared Folders" } else { "Folders" });
@@ -1125,9 +1134,7 @@
                 rows.append(&entry);
             }
             stack.set_visible_child_name("folders-overview");
-            if split.is_collapsed() {
-                split.set_show_sidebar(false);
-            }
+            dismiss_drawer();
         })
     };
     let compact_rail_shell = gtk::Overlay::new();
@@ -1216,7 +1223,11 @@
     {
         let width = compact_width.clone();
         let connection = connection.clone();
+        let widgets = sidebar_widgets_slot.clone();
         dock_drag.connect_drag_end(move |_, _, _| {
+            if let Some(widgets) = widgets.borrow().clone() {
+                widgets.dispatch(SidebarEvent::CompactWidthChanged(width.get()));
+            }
             if let Err(error) = db::set_setting(
                 &connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY, &width.get().to_string(),
             ) { eprintln!("Could not save compact width: {error}"); }
@@ -1284,6 +1295,7 @@
         if compact_enabled { SidebarMode::Compact } else { SidebarMode::Normal },
         connection.clone(),
     );
+    sidebar_widgets_slot.replace(Some(sidebar_widgets.clone()));
     let set_sidebar_expanded: Rc<dyn Fn(bool)> = {
         let widgets = sidebar_widgets.clone();
         Rc::new(move |show_normal| {
@@ -1710,41 +1722,10 @@
         });
     }
     {
-        let expanded = sidebar_expanded.clone();
-        let collapsed_sidebar_width_for_notify = collapsed_sidebar_width.clone();
-        let sidebar_for_collapse_notify = sidebar.clone();
-        let immersive_for_collapse_notify = immersive_active.clone();
-        main_split.connect_collapsed_notify(move |split| {
-            // In compact mode the wide sidebar is not part of the layout: the
-            // 44px rail replaces it. An immersive session is the one
-            // exception, because it shows that very sidebar as a temporary
-            // overlay and therefore needs the collapsed drawer width.
-            if !expanded.get() && !immersive_for_collapse_notify.get() {
-                split.set_show_sidebar(false);
-                return;
-            }
-            split.set_max_sidebar_width(max_sidebar_width(
-                split.is_collapsed(),
-                collapsed_sidebar_width_for_notify.get(),
-                split.width(),
-            ));
-            if !split.is_collapsed() {
-                // A collapsed hover peek that was still open when the window
-                // widened must not leave stale auto-hide state behind.
-                sidebar::clear_hover_open(&sidebar_for_collapse_notify);
-            }
-        });
-    }
-    {
-        let collapsed_width = collapsed_sidebar_width.clone();
-        let expanded = sidebar_expanded.clone();
-        main_split.add_tick_callback(move |split, _| {
-            if split.is_collapsed() && expanded.get() {
-                let cap = max_sidebar_width(true, collapsed_width.get(), split.width());
-                if (split.max_sidebar_width() - cap).abs() > 0.1 {
-                    split.set_max_sidebar_width(cap);
-                }
-            }
+        // A collapsed drawer's width cap follows the split's width.
+        let widgets = sidebar_widgets.clone();
+        main_split.add_tick_callback(move |_, _| {
+            widgets.sync_drawer_cap();
             glib::ControlFlow::Continue
         });
     }
@@ -1752,16 +1733,9 @@
     // show-sidebar as collapsed toggles. PIC owns that visibility transition
     // so the responsive breakpoint can use the same animated drawer path as
     // the manual sidebar toggle.
+    // The sidebar presentation module owns gestures, pin and hover-peek
+    // state; sidebar.rs only mirrors pin/hover for its own readers.
     main_split.set_pin_sidebar(true);
-    let initial_target = sidebar_target(SidebarMode::from_normal(sidebar_expanded.get()), false);
-    main_split.set_enable_show_gesture(initial_target.split_gestures);
-    main_split.set_enable_hide_gesture(initial_target.split_gestures);
-
-    // Sidebar pin/hover state lives in sidebar.rs. Keep one authoritative
-    // state store so manual pinning and temporary hover-open behavior cannot
-    // drift apart.
-    sidebar::set_pinned(&sidebar, true);
-    sidebar::clear_hover_open(&sidebar);
 
     // When the sidebar is hidden, expose a very small hover target at the
     // far-left edge. Hover-opening does not change the pinned state.
@@ -1782,8 +1756,7 @@
     sidebar_widgets.set_hover_strip(sidebar_hover_reveal.clone());
 
     let sidebar_hover_motion = gtk::EventControllerMotion::new();
-    let main_split_for_hover_reveal = main_split.clone();
-    let expanded_for_hover_reveal = sidebar_expanded.clone();
+    let widgets_for_hover_reveal = sidebar_widgets.clone();
     let immersive_for_hover_reveal = immersive_active.clone();
     let sidebar_for_hover_reveal = sidebar.clone();
     let gallery_for_hover_reveal = gallery.clone();
@@ -1800,26 +1773,21 @@
         // so edge-hover must still peek it open while collapsed. In the
         // expanded layout the pin gate still applies: a pinned sidebar the
         // user explicitly hid stays hidden until they show it again.
-        if hover_peek_allowed(
-            SidebarMode::from_normal(expanded_for_hover_reveal.get()),
-            false,
-            main_split_for_hover_reveal.shows_sidebar(),
-            sidebar::is_pinned(&sidebar_for_hover_reveal),
-            main_split_for_hover_reveal.is_collapsed(),
-        ) {
-            // Hover reveal is intentionally presentation-only. Freeze the
-            // gallery model before OverlaySplitView starts changing width.
-            sidebar_hover_freeze_generation_for_reveal.set(
-                sidebar_hover_freeze_generation_for_reveal
-                    .get()
-                    .wrapping_add(1),
-            );
-            sidebar_hover_layout_freeze_for_reveal.set(true);
-            gallery_for_hover_reveal.set_photo_wall_width_frozen(true);
-            sidebar::set_hover_open(&sidebar_for_hover_reveal, true);
-            main_split_for_hover_reveal.set_show_sidebar(true);
-        }
+        widgets_for_hover_reveal.dispatch(SidebarEvent::EdgeHovered {
+            pinned: sidebar::is_pinned(&sidebar_for_hover_reveal),
+        });
     });
+    // Hover reveal is intentionally presentation-only. Freeze the gallery
+    // model before OverlaySplitView starts changing width.
+    sidebar_widgets.set_peek_hook(Rc::new(move || {
+        sidebar_hover_freeze_generation_for_reveal.set(
+            sidebar_hover_freeze_generation_for_reveal
+                .get()
+                .wrapping_add(1),
+        );
+        sidebar_hover_layout_freeze_for_reveal.set(true);
+        gallery_for_hover_reveal.set_photo_wall_width_frozen(true);
+    }));
     sidebar_hover_reveal.add_controller(sidebar_hover_motion);
 
     // Auto-close only a sidebar that was opened by hover (including a
@@ -1842,63 +1810,40 @@
         false
     }
     let sidebar_leave_motion = gtk::EventControllerMotion::new();
-    let sidebar_leave_generation = Rc::new(Cell::new(0_u64));
     {
-        let generation = sidebar_leave_generation.clone();
+        // Returning to the sidebar cancels a pending mouse-leave hide.
+        let widgets = sidebar_widgets.clone();
         sidebar_leave_motion.connect_enter(move |_, _, _| {
-            // Returning to the sidebar cancels a pending mouse-leave hide.
-            generation.set(generation.get().wrapping_add(1));
+            widgets.dispatch(SidebarEvent::PointerEnteredSidebar);
         });
     }
-    let main_split_for_hover_hide = main_split.clone();
-    let sidebar_for_hover_hide = sidebar.clone();
-    let left_column_for_hover_hide = left_column.clone();
-    let leave_generation = sidebar_leave_generation.clone();
-    let resize_active_for_leave = sidebar_resize_active.clone();
-    let immersive_for_sidebar_leave = immersive_active.clone();
-    sidebar_leave_motion.connect_leave(move |_| {
-        let next = leave_generation.get().wrapping_add(1);
-        leave_generation.set(next);
-        let generation = leave_generation.clone();
-        let split = main_split_for_hover_hide.clone();
-        let sidebar = sidebar_for_hover_hide.clone();
-        let column = left_column_for_hover_hide.clone();
-        let resizing = resize_active_for_leave.clone();
-        let immersive = immersive_for_sidebar_leave.clone();
-        if immersive.get() {
-            // An immersive session owns the overlay: its window-level
-            // controller watches the pointer position and hides the sidebar
-            // when it leaves the overlay. The shell only sees enter/leave
-            // pairs when the pointer happens to move across the sidebar, so
-            // it cannot be the authority here.
-            return;
-        }
-        // Let the right-click handler create its popover before checking.
-        // Continue checking while the context menu is open; when it closes,
-        // auto-hide normally unless the pointer returned to the sidebar.
-        glib::timeout_add_local(Duration::from_millis(140), move || {
-            if generation.get() != next || !sidebar::is_hover_open(&sidebar) {
-                return glib::ControlFlow::Break;
-            }
-            if resizing.get() || sidebar_has_visible_popover(&column.clone().upcast()) {
-                return glib::ControlFlow::Continue;
-            }
-            split.set_show_sidebar(false);
-            sidebar::clear_hover_open(&sidebar);
-            glib::ControlFlow::Break
+    {
+        // An immersive session owns its overlay: its window-level controller
+        // watches the pointer and hides the sidebar, so the state machine
+        // ignores this leave there. In the windowed layout, only a hover
+        // peek auto-hides.
+        let widgets = sidebar_widgets.clone();
+        sidebar_leave_motion.connect_leave(move |_| {
+            widgets.dispatch(SidebarEvent::PointerLeftSidebar);
         });
-    });
+    }
+    {
+        // Keep checking while a resize drag or the context menu is active;
+        // when it ends, auto-hide unless the pointer returned.
+        let resizing = sidebar_resize_active.clone();
+        let column = left_column.clone();
+        sidebar_widgets.set_leave_held(Rc::new(move || {
+            resizing.get() || sidebar_has_visible_popover(&column.clone().upcast())
+        }));
+    }
     sidebar_shell.add_controller(sidebar_leave_motion);
 
-    let sidebar_hover_reveal_for_state = sidebar_hover_reveal.clone();
-    let expanded_for_hover_state = sidebar_expanded.clone();
-    let immersive_for_hover_state = immersive_active.clone();
+    let widgets_for_show_state = sidebar_widgets.clone();
     let sidebar_for_show_state = sidebar.clone();
     let sidebar_hover_layout_freeze_for_state = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_state = sidebar_hover_freeze_generation.clone();
     let pin_button_for_state = update_pin_button.clone();
     let gallery_for_sidebar_visibility = gallery.clone();
-    let immersive_shown_for_state = immersive_sidebar_shown.clone();
     main_split.connect_show_sidebar_notify(move |split| {
         // Sidebar reveal/hide is a structural OverlaySplitView transition, not
         // a user window resize. Abort any live-resize FLIP and clear all tile
@@ -1906,20 +1851,9 @@
         gallery_for_sidebar_visibility.cancel_resize_flip();
 
         let sidebar_visible = split.shows_sidebar();
-        // An immersive session owns the sidebar: whatever shows it (edge
-        // reveal, header button, breakpoint restore) it stays a temporary
-        // overlay that hides again when the pointer leaves it.
-        if immersive_for_hover_state.get() {
-            immersive_shown_for_state.set(sidebar_visible);
-        }
-        sidebar_hover_reveal_for_state.set_visible(
-            sidebar_chrome(
-                SidebarMode::from_normal(expanded_for_hover_state.get()),
-                immersive_for_hover_state.get(),
-                sidebar_visible,
-            )
-            .hover_strip,
-        );
+        // A swipe gesture changes the split without an event; the sidebar
+        // presentation module takes the new state and updates the strip.
+        widgets_for_show_state.dispatch(SidebarEvent::SplitShowChanged(sidebar_visible));
         // Every reveal path (hover, pin button, breakpoint restore) funnels
         // through this notify, so this is the one place that keeps the pin
         // button's tooltip/icon in sync with how the sidebar was opened.
@@ -1935,7 +1869,6 @@
             // width through its normal geometry path. If another hover reveal
             // starts first, generation matching prevents this old timeout from
             // unfreezing the new one.
-            sidebar::clear_hover_open(&sidebar_for_show_state);
             let generation = sidebar_hover_freeze_generation_for_state
                 .get()
                 .wrapping_add(1);
@@ -2108,10 +2041,13 @@
     let sidebar_resize_active_for_end = sidebar_resize_active.clone();
     let expanded_for_drag_end = sidebar_expanded.clone();
     let compact_width_for_drag_end = compact_width.clone();
+    let widgets_for_drag_end = sidebar_widgets.clone();
     let gallery_for_sidebar_drag_end = gallery.clone();
     let gallery_surface_for_sidebar_drag_end = gallery_scroll_stack.clone();
     sidebar_drag.connect_drag_end(move |_, _, _| {
         if !expanded_for_drag_end.get() {
+            widgets_for_drag_end
+                .dispatch(SidebarEvent::CompactWidthChanged(compact_width_for_drag_end.get()));
             if let Err(error) = db::set_setting(
                 &connection_for_drag_end.borrow(),
                 COMPACT_SIDEBAR_WIDTH_KEY,
@@ -2124,6 +2060,7 @@
         }
         if main_split_for_drag_end.is_collapsed() {
             let width = collapsed_sidebar_width_for_end.get();
+            widgets_for_drag_end.dispatch(SidebarEvent::DrawerWidthChanged(width));
             if let Err(error) = db::set_setting(
                 &connection_for_drag_end.borrow(),
                 SIDEBAR_COLLAPSED_WIDTH_SETTING_KEY,
@@ -2159,7 +2096,7 @@
     sidebar_drag.connect_cancel(move |_, _| sidebar_resize_active_for_cancel.set(false));
     sidebar_resize_handle.add_controller(sidebar_drag);
 
-    let main_split_for_hide = main_split.clone();
+    let widgets_for_pin = sidebar_widgets.clone();
     let sidebar_for_hide = sidebar.clone();
     let sidebar_layout_settle_for_hide = sidebar_layout_settle.clone();
     let sidebar_hover_layout_freeze_for_unpin = sidebar_hover_layout_freeze.clone();
@@ -2198,9 +2135,9 @@
             );
             sidebar_hover_layout_freeze_for_unpin.set(false);
             gallery_for_unpin.set_photo_wall_width_frozen(false);
-            // set_pinned(true) also clears hover_open, so the shell's
-            // mouse-leave handler no longer auto-hides the sidebar.
-            sidebar::set_pinned(&sidebar_for_hide, true);
+            // Pinning also ends the hover peek, so mouse-leave no longer
+            // auto-hides the sidebar.
+            widgets_for_pin.dispatch(SidebarEvent::PinPressed { pinned: false });
             pin_button_for_menu(true);
             return;
         }
@@ -2214,9 +2151,7 @@
         sidebar_hover_layout_freeze_for_unpin.set(false);
         gallery_for_unpin.set_photo_wall_width_frozen(true);
         sidebar_layout_settle_for_hide.borrow_mut().begin();
-        sidebar::set_pinned(&sidebar_for_hide, false);
-        sidebar::clear_hover_open(&sidebar_for_hide);
-        main_split_for_hide.set_show_sidebar(false);
+        widgets_for_pin.dispatch(SidebarEvent::PinPressed { pinned: true });
         let gallery = gallery_for_unpin.clone();
         let active_generation = sidebar_hover_freeze_generation_for_unpin.clone();
         glib::timeout_add_local_once(Duration::from_millis(400), move || {
@@ -2261,8 +2196,7 @@
     show_sidebar.set_tooltip_text(Some("Show sidebar"));
     show_sidebar.add_css_class("flat");
     show_sidebar.set_visible(false);
-    let main_split_for_show = main_split.clone();
-    let sidebar_for_show = sidebar.clone();
+    let widgets_for_show = sidebar_widgets.clone();
     let sidebar_layout_settle_for_show = sidebar_layout_settle.clone();
     let sidebar_hover_layout_freeze_for_pin = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_pin = sidebar_hover_freeze_generation.clone();
@@ -2292,8 +2226,7 @@
         );
         sidebar_hover_layout_freeze_for_pin.set(false);
         sidebar_layout_settle_for_show.borrow_mut().begin();
-        sidebar::set_pinned(&sidebar_for_show, true);
-        main_split_for_show.set_show_sidebar(true);
+        widgets_for_show.dispatch(SidebarEvent::ShowPressed);
     });
     right_header.pack_start(&show_sidebar);
 
@@ -2651,10 +2584,10 @@
 
     let begin_typed_search: Rc<dyn Fn() -> bool> = {
         let stack = main_stack.downgrade();
-        let split = main_split.downgrade();
+        let dismiss_drawer = dismiss_drawer.clone();
         let reveal_search = immersive_reveal_search_slot.clone();
         Rc::new(move || {
-            let (Some(stack), Some(split)) = (stack.upgrade(), split.upgrade()) else {
+            let Some(stack) = stack.upgrade() else {
                 return false;
             };
             // The current photo viewer remains open while the gallery behind
@@ -2662,9 +2595,7 @@
             if !matches!(stack.visible_child_name().as_deref(), Some("photos" | "library")) {
                 return false;
             }
-            if split.is_collapsed() && split.shows_sidebar() {
-                split.set_show_sidebar(false);
-            }
+            dismiss_drawer();
             if let Some(reveal) = reveal_search.borrow().as_ref() {
                 reveal();
             }

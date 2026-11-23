@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/window/layout.rs'
       - 'src/window/sidebar_presentation.rs'
+      - 'src/window/sidebar_widgets.rs'
       - 'src/window/build.rs'
       - 'src/settings.rs'
       - 'src/css/base.css'
@@ -54,7 +55,7 @@ jobs:
           assert 'dock.set_width_request(width_px.round() as i32)' in src
           assert 'dock_resize_handle.add_controller(dock_drag)' in src
           presentation = Path("src/window/sidebar_presentation.rs").read_text()
-          assert 'split.set_show_sidebar(split_shows_sidebar_after_mode_switch(mode, split.is_collapsed()))' in src
+          assert 'split_shows_sidebar_after_mode_switch(mode, self.collapsed)' in presentation
           assert 'mode.is_normal() && !collapsed' in presentation
           assert 'COMPACT_ICON_RAIL_WIDTH: f64 = 44.0' in src
           assert 'compact-sidebar-width-v2' in src
@@ -62,7 +63,8 @@ jobs:
           assert 'SidebarFilter::Library, folders_reveal' not in src
           assert 'sidebar_pages' not in src, "compact must never be inside Adw sidebar"
           assert "sidebar_has_visible_popover" in src, "right click must not close hover reveal"
-          assert "sidebar_leave_generation" in src, "enter must cancel pending leave"
+          assert "SidebarEvent::PointerEnteredSidebar" in src, "enter must cancel pending leave"
+          assert "fn returning_to_the_sidebar_cancels_the_leave_check" in presentation
           assert ".compact-sidebar-button" in css and "min-width: 0;" in css
           assert 'COMPACT_SIDEBAR_WIDTH_KEY' in src
           print("Compact resize static regression guards passed")

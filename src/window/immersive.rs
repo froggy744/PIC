@@ -458,8 +458,7 @@ fn immersive_install_chrome_edge(
             armed.set(true);
             let token = serial.get().wrapping_add(1);
             serial.set(token);
-            let (split, active, shown, reveal_sidebar) = (
-                split.clone(),
+            let (active, shown, reveal_sidebar) = (
                 active.clone(),
                 shown.clone(),
                 reveal_sidebar_for_motion.clone(),
@@ -483,9 +482,8 @@ fn immersive_install_chrome_edge(
                     // Slide the existing full sidebar in as a temporary
                     // overlay. It lives in a fixed presentation host, so
                     // moving it cannot re-allocate the gallery or move its
-                    // scroll adjustment.
-                    shown.set(true);
-                    split.set_collapsed(true);
+                    // scroll adjustment. The sidebar presentation module
+                    // keeps the split collapsed for the whole session.
                     reveal_sidebar();
                 },
             );
@@ -677,8 +675,6 @@ fn immersive_install_chrome_edge(
         ("immersive-hide-sidebar", false),
     ] {
         let active = immersive_active.clone();
-        let shown = immersive_sidebar_shown.clone();
-        let split = main_split.clone();
         let slide: Rc<dyn Fn()> = if show {
             show_immersive_sidebar.clone()
         } else {
@@ -688,10 +684,6 @@ fn immersive_install_chrome_edge(
             .activate(move |_, _, _| {
                 if !active.get() {
                     return;
-                }
-                shown.set(show);
-                if show {
-                    split.set_collapsed(true);
                 }
                 slide();
             })

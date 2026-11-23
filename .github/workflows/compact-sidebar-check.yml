@@ -13,6 +13,9 @@ on:
       - 'src/css/base.css'
       - 'src/css/components/sidebar_resize.css'
       - 'tests/compact_sidebar_x11_drag.py'
+      - 'src/window/immersive.rs'
+      - 'src/sidebar.rs'
+      - 'scripts/check-presentation-owners.sh'
       - '.github/workflows/compact-sidebar-check.yml'
   workflow_dispatch:
 
@@ -24,6 +27,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Presentation owner guard
+        run: |
+          scripts/check-presentation-owners.sh --self-test
+          scripts/check-presentation-owners.sh
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update

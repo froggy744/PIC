@@ -2476,7 +2476,7 @@
     }
     {
         let open_edit = open_edit.clone();
-        let selected_photo = selected_photo.clone();
+        let current = Rc::downgrade(&info);
         let main_stack = main_stack.clone();
         let one_to_one = info.one_to_one.clone();
         let collage_editing = collage_editing.clone();
@@ -2501,10 +2501,10 @@
                 if collage_editing.get() {
                     // The edit session belongs to a collage: return there.
                     collage_editing.set(false);
-                    if let Some(photo) = selected_photo.borrow().as_ref() {
+                    if let Some(photo) = current.upgrade().and_then(|info| info.current_photo()) {
                         if let Ok(editor_handle) = collage_editor.try_borrow() {
                             if let Some(collage) = editor_handle.as_ref() {
-                                collage.refresh_photo_metadata(std::slice::from_ref(photo));
+                                collage.refresh_photo_metadata(std::slice::from_ref(&photo));
                             }
                         }
                     }
@@ -2515,9 +2515,11 @@
                 return;
             }
             // Copy the id out before open_edit(). That call changes the stack
-            // synchronously, which may trigger a gallery selection callback
-            // that mutably borrows selected_photo.
-            let photo_id = selected_photo.borrow().as_ref().map(|photo| photo.id());
+            // synchronously, which may trigger InfoBar events.
+            let photo_id = current
+                .upgrade()
+                .and_then(|info| info.current_photo())
+                .map(|photo| photo.id());
             if let Some(id) = photo_id {
                 open_edit(id);
             }

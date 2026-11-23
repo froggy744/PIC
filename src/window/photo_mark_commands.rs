@@ -136,7 +136,7 @@ pub(super) fn run(context: &PhotoActionContext, intent: MarkIntent, anchor: &Pho
     }
     // The anchor and the shown photo can be objects the gallery does not own
     // (the lightbox builds its own).
-    let shown = context.selected_photo.borrow().clone();
+    let shown = context.info.current_photo();
     for photo in [Some(anchor), shown.as_ref()].into_iter().flatten() {
         if plan.ids.contains(&photo.id()) {
             set_marks(photo, plan.change);
@@ -190,7 +190,7 @@ pub(super) fn run(context: &PhotoActionContext, intent: MarkIntent, anchor: &Pho
 /// Marks changed outside [`run`] (a whole folder): reload the shown photo's
 /// marks and refresh what shows them. The caller rebuilds the gallery.
 pub(super) fn reload_shown_photo(context: &PhotoActionContext) {
-    let Some(shown) = context.selected_photo.borrow().clone() else {
+    let Some(shown) = context.info.current_photo() else {
         return;
     };
     let Ok(Some(record)) = db::photo(&context.connection.borrow(), shown.id()) else {
@@ -283,8 +283,12 @@ mod tests {
                 direction: SortDirection::Descending,
             })),
             rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            selected_photo: Rc::new(RefCell::new(Some(anchor.clone()))),
+            info: {
+                // The InfoBar owns the current photo.
+                let info = Rc::new(InfoBar::new());
+                info.photo_updated(&anchor);
+                info
+            },
             lightbox: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
@@ -296,7 +300,7 @@ mod tests {
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
             edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|| {}),
+            export: Rc::new(|_| {}),
             window: glib::WeakRef::new(),
             context_menu_host: Rc::new(RefCell::new(None)),
             operation_progress: OperationProgressUi::new(),

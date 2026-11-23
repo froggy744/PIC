@@ -1142,6 +1142,20 @@ impl InfoBar {
         self.dispatch(InfoBarEvent::PhotoCleared, None);
     }
 
+    /// The current photo: the one the metadata page shows, which the photo
+    /// actions (marks, rotate, edit, export, print, albums, Properties)
+    /// anchor on. The presentation model's precedence decides it, so it can
+    /// never disagree with what is on screen. `None` while no photo is shown,
+    /// including after an empty selection or the date overview cleared it.
+    pub(crate) fn current_photo(&self) -> Option<PhotoObject> {
+        let id = self.presentation.borrow().target().photo?;
+        self.written
+            .borrow()
+            .as_ref()
+            .map(|written| written.photo.clone())
+            .filter(|photo| photo.id() == id)
+    }
+
     fn remember_selection(&self, count: usize, photos: &[PhotoObject]) -> SelectionSample {
         self.selection_photos.replace(photos.to_vec());
         SelectionSample::new(count, photos.iter().map(PhotoObject::id).collect())
@@ -1843,6 +1857,60 @@ mod layout_tests {
         assert!(preview.x() >= 16.0, "contents must retain their inset");
         gtk::style_context_remove_provider_for_display(&display, &overlay);
         gtk::style_context_remove_provider_for_display(&display, &base);
+    }
+
+    /// Candidate 10: the current photo the photo actions anchor on is the
+    /// shown photo, so it can no longer go stale behind the InfoBar.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn current_photo_follows_the_shown_photo() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+        let photo = |id: i64| {
+            let photo: PhotoObject = glib::Object::new();
+            photo.set_id(id);
+            photo.set_filename(format!("{id}.jpg").as_str());
+            photo
+        };
+        let (first, second, third) = (photo(1), photo(2), photo(3));
+        let current = |info: &InfoBar| info.current_photo().map(|photo| photo.id());
+
+        assert_eq!(current(&info), None);
+        info.show_gallery_focus(Some(&first));
+        info.show_gallery_selection(1, &[first.clone()]);
+        assert_eq!(current(&info), Some(1));
+        assert!(
+            info.current_photo().unwrap() == first,
+            "the shown object itself"
+        );
+
+        // The lightbox photo wins while it is open; hidden gallery focus
+        // does not replace it.
+        info.set_lightbox_shown(true);
+        info.show_lightbox_photo(&second);
+        info.show_gallery_focus(Some(&third));
+        assert_eq!(current(&info), Some(2));
+        // Closing over an empty selection clears it (the old cell kept the
+        // lightbox photo here).
+        info.show_gallery_selection(0, &[]);
+        info.set_lightbox_shown(false);
+        assert_eq!(current(&info), None);
+
+        // The date overview clears it; the date browser's first selected
+        // photo becomes current even for a multi-selection.
+        info.show_gallery_focus(Some(&first));
+        info.set_date_overview_shown(true);
+        assert_eq!(current(&info), None);
+        info.set_date_overview_shown(false);
+        info.show_date_browser_selection(2, &[third.clone(), second.clone()]);
+        assert_eq!(current(&info), Some(3));
+        assert!(info.favorite.is_sensitive(), "strip actions have an anchor");
+
+        // An update makes the updated object current; clearing empties it.
+        info.photo_updated(&first);
+        assert_eq!(current(&info), Some(1));
+        info.clear_photo();
+        assert_eq!(current(&info), None);
     }
 
     #[test]

@@ -1,6 +1,9 @@
 # Architecture review status
 
-The single source of truth for the deepening candidates from the 2026-11-22 architecture review. The review itself, with its before/after diagrams and evidence, is [`architecture-review-2026-11-22.html`](architecture-review-2026-11-22.html) (taken at `main` @ `5356ef20`). Open it in a browser. Its Status box is history; update this file instead.
+The single source of truth for the deepening candidates from the architecture reviews. Open the reports in a browser; their status boxes are history, so update this file instead.
+
+- Round one, candidates 1-8: [`architecture-review-2026-11-22.html`](architecture-review-2026-11-22.html), taken at `main` @ `5356ef20`.
+- Round two, re-checks 5-8 and adds 9-12: [`architecture-review-2026-11-23.html`](architecture-review-2026-11-23.html), taken at `main` @ `07cabed4`. The report labels the new candidates N1-N4; they are 9-12 here.
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -22,6 +25,10 @@ Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ..
 | 6 | Zoom slider router | Worth exploring | open | none | `src/window/build.rs` (zoom slider handlers), `src/lightbox/impl.rs` |
 | 7 | Editor preview plan | Worth exploring | open | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
+| 9 | Photo mark commands (favourite, rating) | Strong | open | none | `src/window/build.rs` (InfoBar favourite, rating buttons, digit keys), `src/window/photo_actions.rs` (context-menu favourite) |
+| 10 | Current photo (`selected_photo`) | Strong | open | none | `src/window/build.rs`, `src/window/photo_actions.rs`, `src/window/layout.rs` |
+| 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
+| 12 | Front surface (widens 6) | Worth exploring | open | none | `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
 
 ## Outstanding work
 
@@ -89,14 +96,30 @@ About 12 refresh calls of `set_photo(Some(&photo))` follow a change to the photo
 
 Add one display test that rates a photo with no explicit refresh.
 
-### Next: 7 · Editor preview plan (recommended 2026-11-23)
-Re-checked at `2745dbd6`; 5-8 still match the code. 7 goes first because CPU/GPU parity is an engineering priority and it has a verified disagreement:
-- `cpu_fallback_reason` (`src/edit/editor.rs`) names clarity, grain, filter and B&W/sepia as CPU-fallback reasons.
-- The real rule, `gpu_tone_supported` (`src/edit/live_gpu.rs`), allows all four on the GPU. It only forces CPU for auto brightness or enhance, partial or filtered or cropped auto colour/contrast, smooth and vignette.
+### Next: 9 · Photo mark commands (recommended 2026-11-23, round two)
+Recommended over 7 because it is the only open candidate with behaviour users can hit today. Verified at `1e627b0a` (`build.rs` unchanged since):
+- Favourite toggle: the InfoBar uses `ids.len() > 1 || !photo.favorite()` (`build.rs:4173`); the context menu uses `!favorite_photo.favorite()` (`photo_actions.rs:578`).
+- Rating: the button toggles back to 0 on the same rating (`build.rs:4229`); the digit key does not (`:5512`).
+- The InfoBar favourite re-runs `refresh_grid` under active filters (`:4192`); the context menu doesn't, and doesn't refresh Properties.
+- Sidebar counts: the favourite paths use `refresh_library_counts`; both rating paths use `update_library_counts`.
+- The target rule `lightbox visible ? [photo] : gallery.selected_photo_ids(Some(id))` is written 3 times (`:4168, :4224, :5507`). Export (`:5258`) and Print (`:5331`) use the selection without the lightbox guard; not confirmed whether that is intended.
 
-**First step:** find every caller of `cpu_fallback_reason`, `gpu_tone_supported`, `gpu_tone_supported_for_view` and `gpu_base_recipe`. Work out whether the wrong reason only mislabels traces, or also changes which renderer the preview uses. Then design the one planning module: the renderer choice, base recipe, rotation and reason together, with pure recipe-table tests. CI: `editor-quality.yml`.
+**First step:** decide with the owner which toggle and refresh rules are correct, then a pure module that returns the target set, the new values and a refresh plan, with table tests; one GTK adapter applies the plan.
 
-### 5, 6, 8
-Not started. The problem statements are in the review report.
-- 5: `smooth_scroll.rs` still has no callers, and both `install_*_smooth_gallery_scroll` functions remain; the galleries already share `WheelGlide`.
-- 6: `window/build.rs` still has 43 `is_visible()` checks.
+### 7 · Editor preview plan
+Re-checked 2026-11-23 (round two): the wrong reason only mislabels the trace; it never changes the renderer.
+- `cpu_fallback_reason` (`src/edit/editor.rs:166`) is used only in the `PIC_EDIT_RENDERER renderer=cpu_fallback` trace (`:1415`, gated on `PICASA_TRACE`), plus a test at `:3018` that locks in the wrong `"clarity"` reason.
+- It names clarity, grain, filter and B&W/sepia, which the GPU allows, and never names the real reasons: partial `filter_amount`, crop or straighten with auto, a view that is not 1:1, rotation, or `gpu_failed`. The trace fires inside `if let Some(gpu_canvas)`, so a `gpu_failed` fallback is reported as a recipe reason.
+- The renderer choice is `gpu_tone_supported_for_view` (`live_gpu.rs:1600-1632`), called at `editor.rs:1270` (renderer, `decode_rotation`, base recipe via `gpu_base_recipe` at `:1278`) and rebuilt by hand at `:1529` (`has_source_for`). Those two copies can drift.
+- `gpu_tone_supported` alone decides the filter tiles (`editor.rs:889`), deliberately without the view and rotation check.
+
+The planning module is still the design: renderer, base recipe, rotation and reason together, with pure recipe-table tests. CI: `editor-quality.yml`.
+
+### 5, 6, 8, 10, 11, 12
+Not started. The problem statements are in the review reports. Re-checked 2026-11-23:
+- 5: `smooth_scroll.rs` (274 lines) still has no callers; both `install_*_smooth_gallery_scroll` functions remain; the galleries already share `WheelGlide`. Scrub and settle are written twice inline in `build.rs` with different constants: All Photos scrubs at 1.75 pages (≥ 900 px) and settles after 90 ms; Folder scrubs at 1.60 pages and settles after 110 ms. None of it is tested.
+- 6: `window/build.rs` still has 43 `is_visible()` checks. The zoom slider has 10 writers of its value or range (2 unguarded: `build.rs:580`, `:7233`), the 0..7 range setup is copied 3 times (`build.rs:4045`, `:4667`, `layout.rs:2465`), and `lightbox_scale_from_slider` / `lightbox_slider_from_scale` are untested nested functions in `build()`. Best done after 12, as its consumer.
+- 8: still Speculative: 12 styles, about 63 style matches across `screensaver.rs` and `screensaver/gpu*.rs`.
+- 10: `selected_photo` is written in 9 places (`build.rs:248, :632, :2671, :2777, :4074, :7189`; `photo_actions.rs:272, :1369, :1453`) with no precedence rule. None of the 6 `lightbox.root.connect_visible_notify` handlers writes it, so it may go stale when the lightbox closes; needs checking. This is the candidate 4 follow-up (decision 2) and pairs with 9.
+- 11: defaults differ: with no saved last view, startup lands on Recently Added (`window.rs:368`) but a library switch lands on Library (`build.rs:7130`). The sidebar default `0.22` is copied at `layout.rs:1255` and `sidebar_widgets.rs:400`, and only `layout.rs` clamps it. Scroll and anchor are saved only on close, not before a library switch.
+- 12: "which surface is in front" is re-derived at about 35 sites (28 `lightbox.root.is_visible()` and 7 `visible_child_name() == Some("edit")` in `build.rs`, plus `layout.rs` and `photo_actions.rs`). One owner would serve 6, 9, 10 and the InfoBar's cover rule.

@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PIC architecture review</title>
+<script src="https://cdn.tailwindcss.com/3.4.5"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+</script>
+<style>
+  .seam { border-style: dashed; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #f8fafc; }
+  .mermaid { display: flex; justify-content: center; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-5xl mx-auto px-4 sm:px-6 py-12 space-y-12">
+
+<header class="space-y-3">
+  <p class="text-xs uppercase tracking-wider text-slate-500">PIC · main @ 07cabed4 · 2026-11-23</p>
+  <h1 class="font-serif text-4xl">Architecture review: round two</h1>
+  <p class="text-sm text-slate-600 max-w-3xl">Candidates 1–4 from the 2026-11-22 review are merged. This round re-checks 5–8 against current code and adds four new candidates from the hot spots since (<code>window/build.rs</code>, <code>photo_actions.rs</code>, <code>layout.rs</code>).</p>
+  <div class="flex flex-wrap gap-4 text-xs text-slate-600 pt-2">
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 border-2 border-slate-400 bg-white"></span>module</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-0 border-t-2 border-dashed border-slate-500"></span>seam</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-0 border-t-2 border-red-600"></span>leakage / disagreement</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 deep rounded-sm"></span>deep module</span>
+  </div>
+</header>
+
+<section class="rounded-xl border border-slate-200 bg-white p-5">
+  <h2 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Candidates at a glance</h2>
+  <table class="w-full text-sm">
+    <thead class="text-left text-slate-500"><tr><th class="py-1 pr-2">#</th><th class="pr-2">Candidate</th><th>Strength</th></tr></thead>
+    <tbody class="divide-y divide-slate-100">
+      <tr><td class="py-1.5 pr-2 font-mono">N1</td><td class="pr-2"><a class="underline" href="#n1">Photo mark commands</a></td><td><span class="rounded bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs">Strong</span></td></tr>
+      <tr><td class="py-1.5 pr-2 font-mono">N2</td><td class="pr-2"><a class="underline" href="#n2">Current photo</a></td><td><span class="rounded bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs">Strong</span></td></tr>
+      <tr><td class="py-1.5 pr-2 font-mono">7</td><td class="pr-2"><a class="underline" href="#c7">Editor preview plan</a></td><td><span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span></td></tr>
+      <tr><td class="py-1.5 pr-2 font-mono">6 + N4</td><td class="pr-2"><a class="underline" href="#c6">Front surface and zoom slider router</a></td><td><span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span></td></tr>
+      <tr><td class="py-1.5 pr-2 font-mono">5</td><td class="pr-2"><a class="underline" href="#c5">One gallery scroll-motion module</a></td><td><span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span></td></tr>
+      <tr><td class="py-1.5 pr-2 font-mono">N3</td><td class="pr-2"><a class="underline" href="#n3">Window session state</a></td><td><span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span></td></tr>
+      <tr><td class="py-1.5 pr-2 font-mono">8</td><td class="pr-2"><a class="underline" href="#c8">Screensaver style descriptor</a></td><td><span class="rounded bg-slate-200 text-slate-700 px-2 py-0.5 text-xs">Speculative</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="candidates" class="space-y-10">
+
+<!-- N1 -->
+<article id="n1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">N1 · Deepen photo mark commands</h2>
+    <span class="rounded bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs">Strong</span>
+    <span class="rounded bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-700 space-y-0.5">
+    <li>src/window/build.rs:4164-4205 — InfoBar favourite</li>
+    <li>src/window/build.rs:4220-4260 — rating buttons</li>
+    <li>src/window/build.rs:5505-5530 — digit-key rating</li>
+    <li>src/window/photo_actions.rs:577-620 — context-menu favourite</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before</p>
+      <pre class="mermaid">
+flowchart LR
+  F1[InfoBar favourite] --> T1{{"ids.len()>1 || !fav"}}
+  F2[Menu favourite] --> T2{{"!fav"}}
+  R1[Rating button] --> T3{{"same rating → 0"}}
+  R2[Digit key] --> T4{{"no toggle"}}
+  T1 --> G[gallery]
+  T1 --> RG[refresh_grid]
+  T1 --> C1[refresh_library_counts]
+  T2 --> G
+  T2 --> C1
+  T3 --> G
+  T3 --> C2[update_library_counts]
+  T4 --> G
+  T4 --> C2
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class T1,T2,T3,T4 leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After</p>
+      <pre class="mermaid">
+flowchart LR
+  F1[InfoBar favourite] --> M
+  F2[Menu favourite] --> M
+  R1[Rating button] --> M
+  R2[Digit key] --> M
+  M["Photo mark module<br/>target · toggle · refresh plan"]:::deep --> P[(plan)]
+  P --> W[GTK adapter applies plan]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a,stroke-width:3px;
+      </pre>
+    </div>
+  </div>
+  <p><span class="font-semibold">Problem:</span> four callers each work out the target photos, the toggle rule and the follow-up refreshes on their own, and they disagree.</p>
+  <ul class="text-sm list-disc pl-5 space-y-1 text-slate-700">
+    <li>Favourite toggle: InfoBar uses <code>ids.len() &gt; 1 || !photo.favorite()</code> (<code>build.rs:4173</code>); the menu uses <code>!favorite_photo.favorite()</code> (<code>photo_actions.rs:578</code>).</li>
+    <li>Rating: the button toggles back to 0 on the same rating (<code>:4229</code>); the digit key does not (<code>:5512</code>).</li>
+    <li>InfoBar favourite re-runs <code>refresh_grid</code> under active filters (<code>:4192</code>); the menu doesn't, and doesn't refresh Properties.</li>
+    <li>Counts: favourite paths use <code>refresh_library_counts</code>; rating paths use <code>update_library_counts</code>.</li>
+    <li>The target rule <code>lightbox visible ? [photo] : selected_photo_ids(Some(id))</code> is written 3 times (<code>:4168, :4224, :5507</code>).</li>
+  </ul>
+  <p><span class="font-semibold">Solution:</span> one pure module takes (surface, selection, the mark request, active filters) and returns the target set, the new values and a refresh plan; one GTK adapter applies the plan.</p>
+  <div class="flex flex-wrap gap-2 text-xs">
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">locality: one toggle rule</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">leverage: four callers, one interface</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">table tests replace none</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">disagreements become decisions</span>
+  </div>
+</article>
+
+<!-- N2 -->
+<article id="n2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">N2 · One owner for the current photo</h2>
+    <span class="rounded bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs">Strong</span>
+    <span class="rounded bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-700 space-y-0.5">
+    <li>src/window/build.rs — selected_photo: Rc&lt;RefCell&lt;Option&lt;PhotoObject&gt;&gt;&gt;</li>
+    <li>src/window/photo_actions.rs, src/window/layout.rs — readers and writers</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before: 9 hand writers</p>
+      <div class="relative h-64">
+        <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 border-2 border-red-500 rounded px-3 py-2 text-xs uppercase tracking-wider bg-white">selected_photo</div>
+        <div class="absolute inset-0 grid grid-cols-3 grid-rows-3 gap-2 text-[10px] uppercase tracking-wider text-slate-600">
+          <div class="border border-slate-300 rounded p-1">lightbox nav :248</div>
+          <div class="border border-slate-300 rounded p-1">grid focus :632</div>
+          <div class="border border-slate-300 rounded p-1">date browser :2671</div>
+          <div class="border border-slate-300 rounded p-1">overview :2777</div>
+          <div></div>
+          <div class="border border-slate-300 rounded p-1">editor save :4074</div>
+          <div class="border border-slate-300 rounded p-1">library switch :7189</div>
+          <div class="border border-slate-300 rounded p-1">bulk / rename</div>
+          <div class="border border-slate-300 rounded p-1">trash</div>
+        </div>
+      </div>
+      <p class="text-xs text-red-700 mt-2">No writer runs when the lightbox closes (6 visible-notify handlers, none touch it).</p>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After</p>
+      <div class="space-y-3">
+        <div class="seam border-2 border-slate-400 rounded p-2 text-xs uppercase tracking-wider text-slate-600">events: gallery focus · lightbox photo · lightbox shown · date browser · edit saved · cleared</div>
+        <div class="deep rounded-lg p-4">
+          <p class="text-xs uppercase tracking-wider">Current photo module</p>
+          <p class="text-xs opacity-70 mt-1">who wins: lightbox &gt; date browser &gt; gallery</p>
+        </div>
+        <div class="border-2 border-slate-400 rounded p-2 text-xs uppercase tracking-wider text-slate-600">readers: actions · N1 · Properties</div>
+      </div>
+    </div>
+  </div>
+  <p><span class="font-semibold">Problem:</span> "the photo actions apply to" is a cell written in 9 places with no rule for who wins; it can go stale when the lightbox closes.</p>
+  <p><span class="font-semibold">Solution:</span> derive it from the same events the InfoBar already takes, in one module with a pure precedence rule.</p>
+  <div class="flex flex-wrap gap-2 text-xs">
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">locality: one precedence rule</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">deletes 9 hand writes</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">stale-photo case testable</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">closes candidate 4 follow-up</span>
+  </div>
+  <div class="rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-amber-900">Candidate 4, decision 2 left <code>selected_photo</code> alone for that candidate only. It's listed in STATUS.md as follow-up work, so this doesn't reopen the decision.</div>
+</article>
+
+<!-- 7 -->
+<article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">7 · Editor preview plan</h2>
+    <span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span>
+    <span class="rounded bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-700 space-y-0.5">
+    <li>src/edit/live_gpu.rs:1600-1632 — gpu_tone_supported_for_view (the real rule)</li>
+    <li>src/edit/editor.rs:166 — cpu_fallback_reason (trace label only)</li>
+    <li>src/edit/editor.rs:1270, :1529 — same predicate, rebuilt by hand</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before</p>
+      <pre class="mermaid">
+flowchart TB
+  R[recipe + view] --> A["gpu_tone_supported_for_view<br/>editor.rs:1270"]
+  R --> B["has_source_for<br/>editor.rs:1529 (copy)"]
+  R --> C["cpu_fallback_reason<br/>names clarity, grain…"]
+  A --> REN[renderer · rotation · base recipe]
+  C --> TR[PICASA_TRACE line]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class B,C leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After</p>
+      <pre class="mermaid">
+flowchart TB
+  R[recipe + view + gpu state] --> P["Preview plan<br/>renderer · base recipe · rotation · reason"]:::deep
+  P --> REN[editor preview]
+  P --> TR[trace]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a,stroke-width:3px;
+      </pre>
+    </div>
+  </div>
+  <p><span class="font-semibold">Problem:</span> the trace's fallback reason disagrees with the real rule, and the rule exists twice in <code>editor.rs</code>.</p>
+  <p class="text-sm text-slate-600">Re-checked: the wrong reason only mislabels <code>PICASA_TRACE</code> output. It never changes the renderer. It misses the real reasons (partial filter, crop with auto, view not 1:1, rotation, <code>gpu_failed</code>). A test at <code>editor.rs:3018</code> locks in the wrong "clarity" reason.</p>
+  <p><span class="font-semibold">Solution:</span> one plan function returns renderer, base recipe, rotation and reason together; both editor sites and the trace read it.</p>
+  <div class="flex flex-wrap gap-2 text-xs">
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">trace tells the truth</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">two copies become one</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">recipe-table tests</span>
+  </div>
+  <p class="text-xs text-slate-500">Downgraded from "next" in STATUS.md: parity tracing is wrong, but nothing a user sees is.</p>
+</article>
+
+<!-- 6 + N4 -->
+<article id="c6" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">6 + N4 · Front surface, then the zoom slider router</h2>
+    <span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span>
+    <span class="rounded bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-700 space-y-0.5">
+    <li>src/window/build.rs — 28 lightbox.root.is_visible(), 7 visible_child_name()=="edit"</li>
+    <li>src/window/build.rs:4530-4615 — zoom slider value_changed dispatch</li>
+    <li>src/window/build.rs:4045, :4667 + layout.rs:2465 — 0..7 range setup ×3</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before: cross-section of one zoom change</p>
+      <div class="space-y-1.5 text-[11px] uppercase tracking-wider">
+        <div class="h-8 border-l-4 border-red-400 bg-red-50 pl-2 flex items-center">is lightbox visible?</div>
+        <div class="h-8 border-l-4 border-red-400 bg-red-50 pl-2 flex items-center">is page "edit"?</div>
+        <div class="h-8 border-l-4 border-red-400 bg-red-50 pl-2 flex items-center">date browser active? overview?</div>
+        <div class="h-8 border-l-4 border-red-400 bg-red-50 pl-2 flex items-center">else gallery</div>
+        <div class="h-8 border-l-4 border-slate-300 bg-slate-50 pl-2 flex items-center">10 writers of value / range, 2 unguarded</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After</p>
+      <div class="space-y-2">
+        <div class="deep rounded-lg p-4 text-xs uppercase tracking-wider">Front surface: lightbox · editor · date overview · collage · gallery</div>
+        <div class="seam border-2 border-slate-400 rounded p-3 text-xs uppercase tracking-wider text-slate-600">zoom router: range + value per surface</div>
+        <div class="grid grid-cols-3 gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+          <div class="border border-slate-300 rounded p-1 text-center">InfoBar cover</div>
+          <div class="border border-slate-300 rounded p-1 text-center">N1 target</div>
+          <div class="border border-slate-300 rounded p-1 text-center">N2 precedence</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p><span class="font-semibold">Problem:</span> "which surface is in front" is re-derived at about 35 sites. The zoom slider is the worst case: 10 writers, 3 copies of the range setup, and untested slider↔scale conversions nested inside <code>build()</code>.</p>
+  <p><span class="font-semibold">Solution:</span> one front-surface module first, then the zoom router as a thin consumer of it.</p>
+  <div class="flex flex-wrap gap-2 text-xs">
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">leverage: shared by N1, N2, 6</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">range setup once</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">conversions get tests</span>
+  </div>
+</article>
+
+<!-- 5 -->
+<article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">5 · One gallery scroll-motion module</h2>
+    <span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span>
+    <span class="rounded bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-700 space-y-0.5">
+    <li>src/window/build.rs:2049-2210 — All Photos scrub/settle</li>
+    <li>src/window/build.rs:2393-2459 — Folder scrub/settle</li>
+    <li>src/smooth_scroll.rs — 274 lines, no callers</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before: two copies, drifting</p>
+      <table class="w-full text-xs">
+        <tr class="text-slate-500"><td></td><td>All Photos</td><td>Folder</td></tr>
+        <tr><td class="py-1 text-slate-500">scrub</td><td class="text-red-700">1.75 page, ≥900</td><td class="text-red-700">1.60 page</td></tr>
+        <tr><td class="py-1 text-slate-500">settle</td><td class="text-red-700">90 ms</td><td class="text-red-700">110 ms</td></tr>
+        <tr><td class="py-1 text-slate-500">tests</td><td>0</td><td>0</td></tr>
+      </table>
+      <p class="text-xs text-slate-500 mt-3">14 cells cloned for scrub state alone.</p>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After</p>
+      <div class="deep rounded-lg p-4 text-xs uppercase tracking-wider">Scroll motion: scrub · settle · glide<br/><span class="opacity-70 normal-case">per-scroller constants in one table</span></div>
+      <p class="text-xs text-slate-500 mt-3">smooth_scroll.rs deleted.</p>
+    </div>
+  </div>
+  <p><span class="font-semibold">Problem:</span> the Scrub and Settle decisions are written twice inline with different constants, and none of it is tested.</p>
+  <p><span class="font-semibold">Solution:</span> one module per Gallery scroller takes adjustment events and returns scrub/settle transitions.</p>
+  <div class="flex flex-wrap gap-2 text-xs">
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">delete 274 dead lines</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">constants side by side</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">timer-free tests</span>
+  </div>
+</article>
+
+<!-- N3 -->
+<article id="n3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">N3 · Window session state</h2>
+    <span class="rounded bg-amber-100 text-amber-800 px-2 py-0.5 text-xs">Worth exploring</span>
+    <span class="rounded bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">local-substitutable</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-700 space-y-0.5">
+    <li>src/window/build.rs:69-120 restore · :7124 library switch · :7296-7353 close</li>
+    <li>src/window/layout.rs:1255 · src/window/sidebar_widgets.rs:400</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before: mass</p>
+      <div class="flex items-end gap-6 h-40">
+        <div class="flex flex-col items-center gap-1"><div class="w-14 bg-red-200 border border-red-400" style="height:130px"></div><span class="text-[10px] uppercase tracking-wider">interface</span></div>
+        <div class="flex flex-col items-center gap-1"><div class="w-14 bg-slate-200 border border-slate-400" style="height:140px"></div><span class="text-[10px] uppercase tracking-wider">impl</span></div>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">265 setting() / set_setting() / saved_bool() calls; defaults differ (startup lands on Recently Added, library switch on Library).</p>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4">
+      <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After: mass</p>
+      <div class="flex items-end gap-6 h-40">
+        <div class="flex flex-col items-center gap-1"><div class="w-14 bg-emerald-200 border border-emerald-500" style="height:30px"></div><span class="text-[10px] uppercase tracking-wider">interface</span></div>
+        <div class="flex flex-col items-center gap-1"><div class="w-14 deep" style="height:140px"></div><span class="text-[10px] uppercase tracking-wider">impl</span></div>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">load once · save on close and library switch.</p>
+    </div>
+  </div>
+  <p><span class="font-semibold">Problem:</span> last view, scroll, anchor photo, size and sidebar fraction are read and written in separate places; scroll position is not saved before a library switch.</p>
+  <p><span class="font-semibold">Solution:</span> one session-state module owns defaults, clamps, load and save; SQLite and an in-memory store are the two adapters.</p>
+  <div class="flex flex-wrap gap-2 text-xs">
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">defaults in one place</span>
+    <span class="rounded-full bg-emerald-50 text-emerald-800 px-3 py-1">two adapters: real seam</span>
+  </div>
+</article>
+
+<!-- 8 -->
+<article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">8 · Screensaver style descriptor</h2>
+    <span class="rounded bg-slate-200 text-slate-700 px-2 py-0.5 text-xs">Speculative</span>
+    <span class="rounded bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-700 space-y-0.5">
+    <li>src/screensaver.rs:58-263 — enum Style, 9 per-style match methods</li>
+    <li>src/screensaver/gpu.rs, gpu/pile.rs, gpu/cinema.rs — 35 more style matches</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-4 text-xs">
+      <p class="uppercase tracking-wider text-slate-500 mb-2">Before</p>
+      <p>12 styles × properties spread over 63 match sites in 4 files.</p>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-4 text-xs">
+      <p class="uppercase tracking-wider text-slate-500 mb-2">After</p>
+      <p>One descriptor table per style; renderers read fields.</p>
+    </div>
+  </div>
+  <p><span class="font-semibold">Problem:</span> adding a style means touching every match. <span class="font-semibold">Solution:</span> a style descriptor. Still speculative: styles rarely change.</p>
+</article>
+
+</section>
+
+<section id="top-recommendation" class="rounded-2xl deep p-8 space-y-3">
+  <p class="text-xs uppercase tracking-wider opacity-70">Top recommendation</p>
+  <h2 class="font-serif text-3xl"><a href="#n1" class="underline decoration-emerald-400">N1 · Photo mark commands</a></h2>
+  <p class="opacity-90 max-w-3xl">It's the only candidate with behaviour users can hit today: favourite and rating act differently depending on where you click. Deepening it settles those rules in one tested module. It also defines the photo target that N2 and the front-surface work then build on.</p>
+</section>
+
+</main>
+</body>
+</html>

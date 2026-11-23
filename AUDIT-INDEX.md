@@ -92,7 +92,7 @@
 | `metadata_panel.rs` | 2226 | Right-side metadata/facet explorer panel; queries run off-thread. | `db/filters.rs` |
 | `library.rs` | 1563 | Folder navigation, grid refresh, viewport anchoring per `SidebarFilter`. | `sidebar`, `grid`, `db` |
 | `print.rs` | 1308 | Print dialog + page layout (size presets, extras, oriented paper). | `edit::render` |
-| `navigation.rs` | 936 | Navigation helpers: folder wheel, sidebar crossfade, destination planning, search focus. | `sidebar`, `grid` |
+| `navigation.rs` | 972 | Navigation helpers: wheel glide, sidebar crossfade, destination planning, search focus. | `sidebar`, `grid` |
 | `immersive.rs` | 816 | Immersive (chrome-hidden) mode; **`include!`d inside `build.rs`** after the live widgets exist. Presentation-only: chrome edges are `gtk::Revealer` overlays over the gallery, so revealing never reflows Honeycomb/Photo Wall cells. State cells (`immersive_active`, `immersive_sidebar_shown`, toggle/reveal slots) live in `build.rs`. | `window/build.rs` |
 | `onboarding.rs` | 684 | In-app onboarding UI + `ImportTracker` wiring. | `onboarding/`, `scanner` |
 | `operation_progress.rs` | 501 | `OperationProgressUi` - status row (scan/export/import progress). | `window/build.rs` |
@@ -296,8 +296,7 @@ All of these sit in `grid/presentation.rs`. Each gallery surface answers one que
 After a scroll settles, a 16 ms timer prefetches ahead, capped by `Gallery::thumbnail_prefetch_allowance()` (half of what the RAM cache can hold).
 
 **Wheel scrolling** (`window/navigation.rs`):
-- `install_smooth_gallery_scroll`: All Photos GridView and Albums home, a critically damped spring (k 240, c 31) on an absolute target.
-- `install_folder_smooth_gallery_scroll`: Folder surface, the same spring applied to the *remaining* distance (`folder_wheel_spring_step`), with whole-pixel writes and sub-pixel carry.
+- `install_smooth_gallery_scroll` (All Photos GridView, Albums home) and `install_folder_smooth_gallery_scroll` (Folder surface) both drive one `WheelGlider`: each wheel click (`GALLERY_WHEEL_STEP_PX`, 160 px) retargets a `WheelGlide`, a cubic Hermite curve from the current position and speed to the destination at rest over 180-360 ms. Whole-pixel writes, relative to where the view is; a pointer press or a jump of more than half a page stops it. `PIC_WHEEL_GLIDE_TRACE=1` logs clicks and frames.
 - Touchpad (`ScrollUnit::Surface`) stays native GTK kinetic scrolling in both.
 - `src/smooth_scroll.rs` is **dead code** (`#[allow(dead_code)]`, no callers), and so are its `PIC_SMOOTH_SCROLL*` env vars.
 
@@ -306,12 +305,8 @@ After a scroll settles, a 16 ms timer prefetches ahead, capped by `Gallery::thum
 - **`thumbnail_display::replace_visible_requests` discards every queued visible job** and keeps only the list it is given. Passing a too-small "visible" list cancels the requests bind paths just made.
 - **Prefetch must fit the RAM cache.** If the prefetch band exceeds the cache (at High quality the 64 MB cap holds only ~58 full 640 px thumbnails), each pass evicts the previous one and the loop never ends, starving visible tiles.
 - **The High-quality upgrade check must use the cache file's own dimensions** (`DisplayImage::cached_width/height`), never the reduced decode. Otherwise every zoomed-out tile rebuilds its thumbnail from the original, in a loop.
-- **Tiles must not follow the pointer while a gallery scrolls** (`Gallery::set_tiles_follow_pointer(GalleryScroller, bool)`):
-  - Folder: off in the folder scroll handler, back on at the 110 ms settle timer;
-  - All Photos: off in the grid scroll handler, back on whenever its motion pump is idle (about 100 ms after the last change). It is checked on every idle frame, so a view switch mid-scroll cannot leave tiles ignoring clicks.
-
-  As content slides under a hand on the mouse, hover restyling and tooltip restarts cause out-of-step redraws. Folder hand scrolling went from 18-28% to about 2% late frames; All Photos with a resting pointer from 16.8% to 1.9%. Scripts and frame traces without a pointer over the window cannot show this.
-- **Wheel easing must ease in.** An ease-out that restarts at full speed on each notch moves in a sawtooth that reads as stutter with zero dropped frames; frame traces cannot show it, so check the curve itself (`folder_wheel_spring_tests`).
+- **Tiles keep following the pointer while scrolling.** Making them ignore it (`set_tiles_follow_pointer`, removed) cut hover redraws, but clicks landed on the scroller instead of the photo until scrolling had been still for ~100 ms, so opening a photo took several clicks.
+- **Wheel easing must end at rest on time.** A spring's asymptotic tail, shown in whole pixels, crawls 1, 0, 1, 0, 0, 1 px and steps again after the view looks still; an ease-out restarting at full speed on each click moves in a sawtooth. Frame traces show neither reliably, so check the curve itself (`wheel_glide_tests`).
 - Visibility tests: `sectioned_folder_visibility_uses_scroll_viewport_not_content_height` (ignored; run under xvfb) covers both the viewport band and the fast-drag case.
 
 ## 6. Quick-Edit Guide (task -> files)
@@ -323,7 +318,7 @@ After a scroll settles, a 16 ms timer prefetches ahead, capped by `Gallery::thum
 | **Honeycomb** (hex layout, border/gap, performance, scrolling) | `src/grid/honeycomb.rs` (hex math), `src/grid/honeycomb_surface.rs` (clip widget), `src/grid/honeycomb_raster.rs` (mask workers), `src/grid/photo_wall.rs` (`PhotoLayout::Honeycomb`), `src/grid/tile.rs` | `src/grid/photo_wall_layout.rs` (geometry), `src/settings/honeycomb.rs` (border-width pref), `src/grid/view.rs` / `src/window/layout.rs` as applicable; test Grid/Wall/Masonry regression alongside Honeycomb (`grid/photo_wall_tests.rs`) |
 | **Gallery scroll anchoring / restoration** | `src/grid/view.rs`, `src/grid/navigation.rs`, `src/grid/virtualization.rs` | `src/window/library.rs`, `src/window/layout.rs`; validate scroll position after sidebar toggles and layout changes (`src/smooth_scroll.rs` is dead code) |
 | **Gallery thumbnail loading, pop-in, blank tiles, scroll performance** | [Gallery thumbnail & scroll pipeline](#gallery-thumbnail--scroll-pipeline) first; then `src/grid/virtualization.rs`, `src/grid/tile.rs`, `src/thumbnail_display.rs` | pumps and settle prefetch in `src/window/build.rs` (search `motion_frames`, `thumbnail_prefetch_allowance`); measure on the live app with `PIC_SCROLL_FRAME_TRACE` (Section 7) |
-| **Wheel scroll feel / easing** | `src/window/navigation.rs` (`install_smooth_gallery_scroll`, `install_folder_smooth_gallery_scroll`, `folder_wheel_spring_step`) | keep Folder and All Photos curves identical; run `folder_wheel_spring_tests` |
+| **Wheel scroll feel / easing** | `src/window/navigation.rs` (`WheelGlide`, `WheelGlider`) | both galleries share one glide; run `wheel_glide_tests` |
 | Header toolbar | `src/window/toolbar.rs` | same; assembled in `window/build.rs` |
 | Bottom InfoBar | `src/infobar.rs` (`InfoBar`) | `infobar.rs`; photo rows via `window/photo_actions.rs`, album menu via `window/albums.rs` |
 | Gallery grid / tiles / zoom | `src/grid.rs` (size defaults, `ZOOM_LEVELS` at top), `src/grid/view.rs` (`Gallery`), `src/grid/tile.rs` | grid files; virtualization in `grid/virtualization.rs`; layouts in `window/layout.rs` |
@@ -361,7 +356,7 @@ After a scroll settles, a 16 ms timer prefetches ahead, capped by `Gallery::thum
   - `PIC_SCROLL_TRACE`: wheel/touchpad input routing.
   - `PIC_THUMBNAIL_TRACE_URI=<substring>`: per-thumbnail pipeline stages; `/` matches everything and is useful to count decodes.
   - `PIC_HONEYCOMB_MASK_TRACE`, `PICASA_TRACE_SCROLL_STACKS`.
-  - `PIC_SCROLL_BENCH=folder|photos` (+ optional `PIC_SCROLL_BENCH_RATE=<notches/s>`, default 12): scripted wheel scroll of the Folder view or All Photos on the live app (it waits up to 2 minutes for that view to be on screen) through the real spring (cold, warm, cold2 phases marked `PIC_SCROLL_BENCH phase=`), then closes the window. Combine with `PIC_SCROLL_FRAME_TRACE=1`. Run it once with the pointer resting on the photos and once without, because pointer effects only show with a pointer over the window.
+  - `PIC_SCROLL_BENCH=folder|photos` (+ optional `PIC_SCROLL_BENCH_RATE=<notches/s>`, default 12): scripted wheel scroll of the Folder view or All Photos on the live app (it waits up to 2 minutes for that view to be on screen) through the real wheel glide (cold, warm, cold2 phases marked `PIC_SCROLL_BENCH phase=`), then closes the window. Combine with `PIC_SCROLL_FRAME_TRACE=1`. Run it once with the pointer resting on the photos and once without, because pointer effects only show with a pointer over the window.
   - `PIC_HONEYCOMB_RENDER_MODE=live|gsk` (Honeycomb render path).
 - **Measuring scroll performance:** `PICASA_TRACE` prints per tile bind/assign and itself inflates frame times; it once made zoom steps look like 70-120 ms that were 21-32 ms without it. Use `PIC_SCROLL_FRAME_TRACE` alone, or Sysprof: `sysprof-cli --gtk --use-trace-fd --no-perf <file>.syscap -- ./target/debug/pic-rs` records GTK's per-frame phase marks (update, layout, Validate CSS, snapshot, render, presentation). Stop the capture with SIGINT to `sysprof-cli`. The `.syscap` MARK frames can be read with a small script: 256-byte header, 24-byte frame headers, type 10 = mark.
 - Other behavioral env vars: `PIC_EDIT_RENDERER` (auto/gpu/cpu editor renderer),

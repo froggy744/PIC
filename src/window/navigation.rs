@@ -1,43 +1,218 @@
-/// Spring constants shared with the All Photos wheel animation
-/// (`install_smooth_gallery_scroll`): critically damped, so each notch eases
-/// in and out without overshoot.
-const FOLDER_WHEEL_SPRING: f64 = 240.0;
-const FOLDER_WHEEL_DAMPING: f64 = 31.0;
-const FOLDER_WHEEL_STOP_DISTANCE_PX: f64 = 0.35;
-const FOLDER_WHEEL_STOP_SPEED_PX_S: f64 = 4.0;
+/// Distance one mouse-wheel notch scrolls a gallery, in All Photos and
+/// Folders.
+const GALLERY_WHEEL_STEP_PX: f64 = 160.0;
 
-/// One frame of the Folder wheel spring.
+/// One wheel glide: smooth mouse-wheel scrolling as browsers do it.
 ///
-/// `remaining` is the distance still to travel from the current (fractional)
-/// position and `velocity` the current speed in px/s. Returns the distance to
-/// move this frame, the new velocity, and whether the motion is finished (in
-/// which case the returned distance is exactly `remaining`).
-///
-/// The spring acts on the remaining distance rather than an absolute target,
-/// so the animation always continues from wherever the view currently is.
-fn folder_wheel_spring_step(remaining: f64, velocity: f64, dt: f64) -> (f64, f64, bool) {
-    if remaining.abs() <= FOLDER_WHEEL_STOP_DISTANCE_PX
-        && velocity.abs() <= FOLDER_WHEEL_STOP_SPEED_PX_S
-    {
-        return (remaining, 0.0, true);
-    }
-    let acceleration = FOLDER_WHEEL_SPRING * remaining - FOLDER_WHEEL_DAMPING * velocity;
-    let velocity = velocity + acceleration * dt;
-    let step = velocity * dt;
-    if step.signum() == remaining.signum() && step.abs() >= remaining.abs() {
-        return (remaining, 0.0, true);
-    }
-    (step, velocity, false)
+/// Every wheel click retargets a glide that ends at exactly zero speed exactly
+/// on its destination after a fixed duration: a cubic Hermite curve from the
+/// current position and speed to the destination at rest. A click during a
+/// glide starts a new curve from the current position *and speed*, so
+/// continuous scrolling has no speed jumps; a reversal starts from rest.
+/// The view moves in whole pixels and the curve has no asymptotic tail, so
+/// it never crawls 1, 0, 1 px or steps again after it looks still (what the
+/// former critically damped spring did).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct WheelGlide {
+    active: bool,
+    /// Frame-clock time the curve started, in microseconds.
+    start_us: i64,
+    duration_s: f64,
+    /// Whole pixels from the curve's start to its destination.
+    distance: f64,
+    /// Speed at the start, in px/s.
+    start_speed: f64,
+    /// Whole pixels already applied.
+    shown: f64,
 }
 
-fn folder_wheel_remaining(current: f64, lower: f64, upper: f64, old: f64, impulse: f64) -> f64 {
-    let remaining = if old != 0.0 && old.signum() != impulse.signum() {
-        impulse
-    } else {
-        old + impulse
-    };
-    // Keep every reachable impulse, but never queue distance past either edge.
-    remaining.clamp(lower - current, upper - current)
+impl WheelGlide {
+    /// Short hops are quick; long accumulated runs take a little longer.
+    fn duration_for(distance: f64) -> f64 {
+        (0.16 + 0.0004 * distance.abs()).clamp(0.18, 0.36)
+    }
+
+    fn progress(&self, now_us: i64) -> f64 {
+        ((now_us - self.start_us) as f64 / 1_000_000.0 / self.duration_s).clamp(0.0, 1.0)
+    }
+
+    /// Offset from the start at progress `s`.
+    fn offset(&self, s: f64) -> f64 {
+        let h10 = s * s * s - 2.0 * s * s + s;
+        let h01 = -2.0 * s * s * s + 3.0 * s * s;
+        h10 * self.duration_s * self.start_speed + h01 * self.distance
+    }
+
+    /// Speed in px/s at progress `s`.
+    fn speed(&self, s: f64) -> f64 {
+        let h10 = 3.0 * s * s - 4.0 * s + 1.0;
+        let h01 = -6.0 * s * s + 6.0 * s;
+        h10 * self.start_speed + h01 * self.distance / self.duration_s
+    }
+
+    /// Add one wheel click of `delta` px. `room` is how far the view can
+    /// still move (negative, positive) from where it is shown now.
+    fn notch(&mut self, now_us: i64, delta: f64, room: (f64, f64)) {
+        let (left, speed) = if self.active {
+            (self.distance - self.shown, self.speed(self.progress(now_us)))
+        } else {
+            (0.0, 0.0)
+        };
+        let reversing = left * delta < 0.0 || speed * delta < 0.0;
+        let (left, speed) = if reversing { (delta, 0.0) } else { (left + delta, speed) };
+        let distance = left.clamp(room.0, room.1).round();
+        if distance == 0.0 {
+            *self = Self::default();
+            return;
+        }
+        let mut duration_s = Self::duration_for(distance);
+        // A cubic from speed v to rest overshoots once v * T > 3 * distance;
+        // arrive sooner instead.
+        if speed.abs() * duration_s > 3.0 * distance.abs() {
+            duration_s = 3.0 * distance.abs() / speed.abs();
+        }
+        *self = Self {
+            active: true,
+            start_us: now_us,
+            duration_s,
+            distance,
+            start_speed: speed,
+            shown: 0.0,
+        };
+    }
+
+    /// Whole pixels to move for the frame at `now_us`.
+    fn advance(&mut self, now_us: i64) -> f64 {
+        if !self.active {
+            return 0.0;
+        }
+        let s = self.progress(now_us);
+        let at = if s >= 1.0 {
+            self.active = false;
+            self.distance
+        } else if self.shown == 0.0 {
+            // Move on the very first frame, even if the curve has barely
+            // started: the write takes over the view, cancelling a reveal
+            // still pending in GTK (keyboard navigation), so the newer wheel
+            // input wins instead of being undone by it.
+            let at = self.offset(s).round();
+            if at == 0.0 { self.distance.signum() } else { at }
+        } else {
+            self.offset(s).round()
+        };
+        let step = at - self.shown;
+        self.shown = at;
+        step
+    }
+}
+
+/// `PIC_WHEEL_GLIDE_TRACE=1` logs every wheel click and glide frame.
+fn wheel_glide_trace() -> bool {
+    thread_local! {
+        static ENABLED: bool = std::env::var_os("PIC_WHEEL_GLIDE_TRACE").is_some();
+    }
+    ENABLED.with(|enabled| *enabled)
+}
+
+/// Drives a [`WheelGlide`] on `scrolled`'s vertical adjustment.
+#[derive(Clone)]
+struct WheelGlider {
+    scrolled: gtk::ScrolledWindow,
+    glide: Rc<Cell<WheelGlide>>,
+}
+
+impl WheelGlider {
+    /// Starts gliding on `scrolled`. A pointer press (a scrollbar drag, a
+    /// click) or a programmatic jump of more than half a page stops it; other
+    /// adjustment corrections are absorbed, because each frame moves relative
+    /// to where the view is.
+    fn install(scrolled: &gtk::ScrolledWindow) -> Self {
+        let glider = Self {
+            scrolled: scrolled.clone(),
+            glide: Rc::new(Cell::new(WheelGlide::default())),
+        };
+        let click = gtk::GestureClick::new();
+        click.set_button(0);
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        {
+            let glider = glider.clone();
+            click.connect_pressed(move |_, _, _, _| glider.cancel());
+        }
+        scrolled.add_controller(click);
+
+        let written = Rc::new(Cell::new(f64::NAN));
+        {
+            let glide = glider.glide.clone();
+            let written = written.clone();
+            let adjustment = scrolled.vadjustment();
+            scrolled.add_tick_callback(move |_, clock| {
+                let mut state = glide.get();
+                if !state.active {
+                    return glib::ControlFlow::Continue;
+                }
+                let current = adjustment.value();
+                let last = written.get();
+                if last.is_finite() && (current - last).abs() > adjustment.page_size() * 0.5 {
+                    if wheel_glide_trace() {
+                        eprintln!("PIC_WHEEL_GLIDE external value={current} written={last}");
+                    }
+                    // Someone else scrolled the view (navigation, zoom).
+                    glide.set(WheelGlide::default());
+                    written.set(f64::NAN);
+                    return glib::ControlFlow::Continue;
+                }
+                let lower = adjustment.lower();
+                let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+                let step = state.advance(clock.frame_time());
+                let next = (current + step).clamp(lower, upper);
+                if next != current + step {
+                    // Reached an end of the gallery.
+                    state = WheelGlide::default();
+                }
+                if next != current {
+                    adjustment.set_value(next);
+                }
+                if wheel_glide_trace() {
+                    eprintln!(
+                        "PIC_WHEEL_GLIDE frame t={} step={step} from={current} to={next} active={}",
+                        clock.frame_time(),
+                        state.active
+                    );
+                }
+                written.set(if state.active { next } else { f64::NAN });
+                glide.set(state);
+                glib::ControlFlow::Continue
+            });
+        }
+        glider
+    }
+
+    /// Add one wheel click of `delta` px.
+    fn notch(&self, delta: f64) {
+        let adjustment = self.scrolled.vadjustment();
+        let lower = adjustment.lower();
+        let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+        let current = adjustment.value();
+        let now = self
+            .scrolled
+            .frame_clock()
+            .map_or_else(glib::monotonic_time, |clock| clock.frame_time());
+        let mut glide = self.glide.get();
+        glide.notch(now, delta, (lower - current, upper - current));
+        if wheel_glide_trace() {
+            eprintln!(
+                "PIC_WHEEL_GLIDE notch t={now} at={current} distance={} speed={:.0} duration_ms={:.0}",
+                glide.distance,
+                glide.start_speed,
+                glide.duration_s * 1000.0
+            );
+        }
+        self.glide.set(glide);
+    }
+
+    fn cancel(&self) {
+        self.glide.set(WheelGlide::default());
+    }
 }
 
 pub(crate) fn install_smooth_gallery_scroll(
@@ -45,279 +220,11 @@ pub(crate) fn install_smooth_gallery_scroll(
     gallery: Rc<grid::Gallery>,
     ctrl_zoom: bool,
 ) {
-    // GtkScrolledWindow does not ease normal mouse-wheel detents. Its built-in
-    // kinetic-scrolling property is for touchscreen scrolling. Keep native
-    // touchpad/surface-pixel scrolling, but turn discrete wheel clicks into a
-    // short critically-damped animation of the vertical adjustment.
-    const WHEEL_STEP_PX: f64 = 120.0;
-    const SPRING: f64 = 240.0;
-    const DAMPING: f64 = 31.0;
-    const STOP_DISTANCE_PX: f64 = 0.35;
-    const STOP_SPEED_PX_S: f64 = 4.0;
-
-    // GtkListView keeps its scroll anchor on device-pixel boundaries. Feeding
-    // it fractional adjustment values makes GTK immediately write a rounded
-    // value back, fighting the animation. Only quantize the Folder ListView
-    // path; GridView retains fractional spring progress separately below.
-    let quantize_to_pixels = scrolled
-        .child()
-        .and_then(|child| child.downcast::<gtk::ListView>().ok())
-        .is_some();
-    let preserve_fractional_progress = scrolled
-        .child()
-        .is_some_and(|child| child.is::<gtk::GridView>());
-
+    // GtkScrolledWindow does not ease mouse-wheel detents (its kinetic
+    // scrolling is for touchscreens). Wheel clicks glide (`WheelGlide`);
+    // touchpad pixel scrolling stays native.
     let adjustment = scrolled.vadjustment();
-    let target = Rc::new(Cell::new(adjustment.value()));
-    let velocity = Rc::new(Cell::new(0.0_f64));
-    let active = Rc::new(Cell::new(false));
-    let last_frame_us = Rc::new(Cell::new(0_i64));
-    let last_animation_value = Rc::new(Cell::new(f64::NAN));
-    // Counts consecutive frames where the spring error does not shrink. GTK's
-    // ListView anchor corrections can pin the adjustment between two quantized
-    // values, which previously left the animation looping "up and down" until
-    // an unrelated click/scroll reset it.
-    let stall_frames = Rc::new(Cell::new(0_u32));
-    let last_error_abs = Rc::new(Cell::new(f64::INFINITY));
-    // A scrollbar drag begins with a button press, unlike mouse-wheel motion.
-    // Cancel any old wheel spring immediately so the scrollbar cannot be pulled
-    // back toward a stale target. This is especially important for folder
-    // GtkListView, where value-change based detection conflicts with GTK's own
-    // scroll-anchor corrections.
-    {
-        let adjustment = adjustment.clone();
-        let target = target.clone();
-        let velocity = velocity.clone();
-        let active = active.clone();
-        let last_error_abs = last_error_abs.clone();
-        let stall_frames = stall_frames.clone();
-        let click = gtk::GestureClick::new();
-        click.set_button(0);
-        click.set_propagation_phase(gtk::PropagationPhase::Capture);
-        click.connect_pressed(move |_, _, _, _| {
-            active.set(false);
-            velocity.set(0.0);
-            target.set(adjustment.value());
-            stall_frames.set(0);
-            last_error_abs.set(f64::INFINITY);
-        });
-        scrolled.add_controller(click);
-    }
-
-    // Keep the value-change stale-target protection only on the ordinary photo
-    // grid. The folder view is a GtkListView; during upward scrolling it
-    // performs anchor corrections that look like external adjustment jumps.
-    // Cancelling on those corrections breaks/warps the smooth wheel animation.
-    // Cancel a pending wheel spring when the adjustment moves by an amount we
-    // did not animate to. The sensitivity differs by view:
-    //
-    // - GridView's subpixel corrections fit within the 2 px tolerance;
-    //   larger unsolicited movement cancels immediately.
-    // - GtkListView performs sub-row anchor corrections while scrolling, which
-    //   must NOT cancel the spring. Only a jump larger than roughly half a
-    //   viewport (a programmatic folder navigation, selection scroll, or model
-    //   swap) is treated as external. Without this, a stale wheel target fought
-    //   the programmatic scroll and produced a large snap (measured 592 px).
-    {
-        let target = target.clone();
-        let velocity = velocity.clone();
-        let active = active.clone();
-        let last_animation_value = last_animation_value.clone();
-        let stall_frames = stall_frames.clone();
-        let last_error_abs = last_error_abs.clone();
-        adjustment.connect_value_changed(move |adjustment| {
-            let value = adjustment.value();
-            if active.get() {
-                let animated = last_animation_value.get();
-                let threshold = if quantize_to_pixels {
-                    (adjustment.page_size() * 0.5).max(200.0)
-                } else {
-                    2.0
-                };
-                if animated.is_finite() && (value - animated).abs() <= threshold {
-                    return;
-                }
-                // Folder ListView path: a mid-animation jump larger than the
-                // tolerance but under ~2 viewports is an anchor re-correction
-                // (row-estimate drift, recycled-row range change). Shift the
-                // destination by the same delta so the spring keeps
-                // converging on the same visual target instead of being
-                // cancelled mid-notch and restarted by the next wheel click.
-                // Genuine programmatic navigation (zoom anchor restore, model
-                // swap) is far larger and still cancels below.
-                if quantize_to_pixels
-                    && animated.is_finite()
-                    && (value - animated).abs() <= adjustment.page_size() * 2.0
-                {
-                    target.set(target.get() + (value - animated));
-                    last_animation_value.set(value);
-                    return;
-                }
-                active.set(false);
-                velocity.set(0.0);
-                stall_frames.set(0);
-                last_error_abs.set(f64::INFINITY);
-            }
-            target.set(value);
-        });
-    }
-
-    {
-        let adjustment = adjustment.clone();
-        let target = target.clone();
-        let velocity = velocity.clone();
-        let active = active.clone();
-        let last_frame_us = last_frame_us.clone();
-        let last_animation_value = last_animation_value.clone();
-        let stall_frames = stall_frames.clone();
-        let last_error_abs = last_error_abs.clone();
-        scrolled.add_tick_callback(move |_, clock| {
-            let now = clock.frame_time();
-            let previous = last_frame_us.replace(now);
-
-            if !active.get() {
-                velocity.set(0.0);
-                stall_frames.set(0);
-                last_error_abs.set(f64::INFINITY);
-                return glib::ControlFlow::Continue;
-            }
-
-            if previous <= 0 || now <= previous {
-                return glib::ControlFlow::Continue;
-            }
-
-            // Frame times are microseconds. Clamp long frames so a temporary
-            // stall cannot make the spring jump past its destination.
-            let dt = ((now - previous) as f64 / 1_000_000.0).clamp(1.0 / 240.0, 0.033);
-            let lower = adjustment.lower();
-            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-            let destination = target.get().clamp(lower, upper);
-            target.set(destination);
-
-            let actual = adjustment.value().clamp(lower, upper);
-            let requested = last_animation_value.get();
-            // GridView floors fractional requests during allocation. Retain
-            // subpixel progress in the spring instead of losing it every frame.
-            // Larger GTK changes still establish the authoritative position.
-            let current = if preserve_fractional_progress
-                && requested.is_finite()
-                && (actual - requested).abs() <= 1.0
-            {
-                requested.clamp(lower, upper)
-            } else {
-                actual
-            };
-            let error = destination - current;
-            let mut speed = velocity.get();
-
-            if error.abs() <= STOP_DISTANCE_PX && speed.abs() <= STOP_SPEED_PX_S {
-                last_animation_value.set(destination);
-                adjustment.set_value(destination);
-                velocity.set(0.0);
-                active.set(false);
-                stall_frames.set(0);
-                last_error_abs.set(f64::INFINITY);
-                return glib::ControlFlow::Continue;
-            }
-
-            // Folder ListView path pins were previously detected here by
-            // distance alone; that fired mid-approach (speed ~134 px/s at the
-            // 12 px boundary) and truncated every wheel run with an abrupt
-            // halt. Pin detection now lives in the stall guard below, which
-            // requires the error to actually stop shrinking first.
-
-            // Critically damped spring: smooth acceleration into the movement
-            // and smooth deceleration at the target. Clamp overshoot explicitly:
-            // GtkListView can quantize/anchor-correct folder scrolling, and a
-            // tiny spring overshoot around the destination can otherwise look
-            // like the view is stuck bouncing up/down until the next click.
-            let acceleration = SPRING * error - DAMPING * speed;
-            speed += acceleration * dt;
-            let proposed = (current + speed * dt).clamp(lower, upper);
-            let current_dist = (destination - current).abs();
-            let proposed_dist = (destination - proposed).abs();
-            // Crossing the destination in one step, or moving *away* from it,
-            // both mean the spring has overshot. The divergence case matters
-            // for the folder ListView: GTK can push the adjustment past our
-            // target while the spring is still moving in that direction, so the
-            // spring keeps accelerating away and the stall guard later snaps a
-            // large distance (measured 563 px).
-            let sign_flip = current_dist > f64::EPSILON
-                && (destination - proposed).signum()
-                    != (destination - current).signum();
-            let diverging = proposed_dist > current_dist;
-            if sign_flip || diverging {
-                last_animation_value.set(destination);
-                adjustment.set_value(destination);
-                velocity.set(0.0);
-                active.set(false);
-                return glib::ControlFlow::Continue;
-            }
-
-            let next = if quantize_to_pixels {
-                proposed.round().clamp(lower, upper)
-            } else {
-                proposed
-            };
-
-            // Avoid sending a no-op value back through GtkListView's anchor
-            // machinery on every frame. If pixel quantization leaves us within
-            // one device pixel of the destination, finish the animation instead
-            // of accumulating velocity against an unmoving adjustment.
-            let moved = (next - current).abs() > f64::EPSILON;
-            if moved {
-                last_animation_value.set(next);
-                adjustment.set_value(next);
-            } else if quantize_to_pixels && error.abs() <= 1.0 {
-                last_animation_value.set(destination);
-                adjustment.set_value(destination);
-                velocity.set(0.0);
-                active.set(false);
-                stall_frames.set(0);
-                last_error_abs.set(f64::INFINITY);
-                return glib::ControlFlow::Continue;
-            }
-            velocity.set(speed);
-
-            // Stall guard: when GTK pins the adjustment (anchor correction, or
-            // the scrollable range shrinking as recycled rows are unbound), the
-            // absolute error stops shrinking and the spring oscillates without
-            // converging. Detect that and finish deterministically instead of
-            // leaving the view stuck until the next click/scroll.
-            //
-            // A pin with only a few pixels of residual error (observed 2-12 px
-            // on the folder ListView and ~7 px on the GridView) is confirmed
-            // after just two frames, and finishes by *accepting* the pinned
-            // value with no write-back: snapping to the destination at that
-            // point reads as a small jump at the end of a wheel run. Distance
-            // alone must never trigger this - during a normal approach the
-            // spring legitimately passes through small errors at high speed -
-            // only a value that refuses to move further while close counts.
-            let error_abs = error.abs();
-            let progressed = error_abs < last_error_abs.get() - 0.05;
-            last_error_abs.set(error_abs);
-            if progressed {
-                stall_frames.set(0);
-            } else {
-                let stalled = stall_frames.get().saturating_add(1);
-                stall_frames.set(stalled);
-                let near_pin = error_abs <= 12.0;
-                if stalled >= if near_pin { 2 } else { 8 } {
-                    if near_pin {
-                        last_animation_value.set(current);
-                    } else {
-                        last_animation_value.set(destination);
-                        adjustment.set_value(destination);
-                    }
-                    velocity.set(0.0);
-                    active.set(false);
-                    stall_frames.set(0);
-                    last_error_abs.set(f64::INFINITY);
-                }
-            }
-            glib::ControlFlow::Continue
-        });
-    }
+    let glider = WheelGlider::install(scrolled);
 
     // Keep the latest pointer position in the scroller's coordinate space.
     // Ctrl+wheel uses this to choose one realized photo as the stable zoom
@@ -351,51 +258,11 @@ pub(crate) fn install_smooth_gallery_scroll(
     scrolled.add_controller(motion);
     let zoom_viewport: gtk::Widget = scrolled.clone().upcast();
 
-    // One wheel notch (dy = +1 down, -1 up) through the spring. Shared by
-    // the real wheel handler and the opt-in scripted scroll benchmark.
+    // One wheel notch (dy = +1 down, -1 up). Shared by the real wheel
+    // handler and the opt-in scripted scroll benchmark.
     let wheel_notch: Rc<dyn Fn(f64)> = {
-        let adjustment = adjustment.clone();
-        let target = target.clone();
-        let velocity = velocity.clone();
-        let active = active.clone();
-        let last_animation_value = last_animation_value.clone();
-        let last_error_abs = last_error_abs.clone();
-        Rc::new(move |dy: f64| {
-            let lower = adjustment.lower();
-            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-
-            let current = adjustment.value().clamp(lower, upper);
-            if preserve_fractional_progress && !active.get() {
-                last_animation_value.set(current);
-            }
-            let delta = dy * WHEEL_STEP_PX;
-            let pending = target.get() - current;
-            let reversing =
-                active.get() && pending.abs() > STOP_DISTANCE_PX && pending.signum() != delta.signum();
-
-            // Rapid clicks in the same direction accumulate naturally. If
-            // the wheel reverses direction, however, do not make the user
-            // first consume the old queued destination: reverse NOW from
-            // the current viewport and discard the old spring velocity.
-            let base = if reversing {
-                velocity.set(0.0);
-                current
-            } else if active.get() {
-                target.get()
-            } else {
-                current
-            };
-            let destination = (base + delta).clamp(lower, upper);
-            target.set(if quantize_to_pixels {
-                destination.round().clamp(lower, upper)
-            } else {
-                destination
-            });
-            // New input is a fresh convergence attempt; clear the stall
-            // history so the first frame cannot be mistaken for a stall.
-            last_error_abs.set(f64::INFINITY);
-            active.set(true);
-        })
+        let glider = glider.clone();
+        Rc::new(move |dy: f64| glider.notch(dy * GALLERY_WHEEL_STEP_PX))
     };
     // Only the All Photos grid installs this with Ctrl+wheel zoom; Albums
     // home does not.
@@ -408,9 +275,7 @@ pub(crate) fn install_smooth_gallery_scroll(
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
 
     let adjustment_for_scroll = adjustment.clone();
-    let target_for_scroll = target.clone();
-    let velocity_for_scroll = velocity.clone();
-    let active_for_scroll = active.clone();
+    let glider_for_scroll = glider.clone();
     let last_pointer_for_scroll = last_pointer.clone();
     let zoom_viewport_for_scroll = zoom_viewport.clone();
     controller.connect_scroll(move |controller, dx, dy| {
@@ -419,18 +284,14 @@ pub(crate) fn install_smooth_gallery_scroll(
         // controller in capture phase, so consuming here silently steals
         // detents even when the page adjustment has no scrollable range.
         if zoom_viewport_for_scroll.has_css_class("albums-coverflow-active") {
-            active_for_scroll.set(false);
-            velocity_for_scroll.set(0.0);
-            target_for_scroll.set(adjustment_for_scroll.value());
+            glider_for_scroll.cancel();
             return glib::Propagation::Proceed;
         }
         if controller
             .current_event_state()
             .contains(gtk::gdk::ModifierType::CONTROL_MASK)
         {
-            active_for_scroll.set(false);
-            velocity_for_scroll.set(0.0);
-            target_for_scroll.set(adjustment_for_scroll.value());
+            glider_for_scroll.cancel();
 
             if ctrl_zoom {
                 let pointer = last_pointer_for_scroll.get();
@@ -479,9 +340,7 @@ pub(crate) fn install_smooth_gallery_scroll(
             gtk::gdk::ScrollUnit::Surface => {
                 // Precision touchpads already provide pixel deltas. Let GTK
                 // consume them directly so native touchpad scrolling is kept.
-                active_for_scroll.set(false);
-                velocity_for_scroll.set(0.0);
-                target_for_scroll.set(adjustment_for_scroll.value());
+                glider_for_scroll.cancel();
                 glib::Propagation::Proceed
             }
             _ => glib::Propagation::Proceed,
@@ -497,140 +356,30 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     scrolled: &gtk::ScrolledWindow,
     gallery: Rc<grid::Gallery>,
 ) {
-    // Animate only the *remaining wheel distance*: every frame advances from
-    // GTK's current authoritative adjustment value, so an external correction
-    // never leaves a stale target to pull the viewport backwards.
-    //
-    // The distance follows the same critically damped spring as All Photos.
-    // The former exponential ease-out started every notch at full speed and
-    // then decayed, so continuous wheel scrolling moved in a sawtooth (speed
-    // jumping ~11 px/frame at each notch at 120 Hz) that read as stutter even
-    // with no dropped frames.
-    const WHEEL_STEP_PX: f64 = 120.0;
-
-    let adjustment = scrolled.vadjustment();
-    let remaining = Rc::new(Cell::new(0.0_f64));
-    let velocity = Rc::new(Cell::new(0.0_f64));
-    // Sub-pixel progress not yet written. Folder scrolling stays on whole
-    // pixels, but the spring's slow first and last frames move less than one.
-    let carry = Rc::new(Cell::new(0.0_f64));
-    let active = Rc::new(Cell::new(false));
-    let last_frame_us = Rc::new(Cell::new(0_i64));
-
-    // A scrollbar drag or pointer press owns the viewport immediately.
-    {
-        let remaining = remaining.clone();
-        let velocity = velocity.clone();
-        let carry = carry.clone();
-        let active = active.clone();
-        let click = gtk::GestureClick::new();
-        click.set_button(0);
-        click.set_propagation_phase(gtk::PropagationPhase::Capture);
-        click.connect_pressed(move |_, _, _, _| {
-            remaining.set(0.0);
-            velocity.set(0.0);
-            carry.set(0.0);
-            active.set(false);
-        });
-        scrolled.add_controller(click);
-    }
-
-    {
-        let adjustment = adjustment.clone();
-        let remaining = remaining.clone();
-        let velocity = velocity.clone();
-        let carry = carry.clone();
-        let active = active.clone();
-        let last_frame_us = last_frame_us.clone();
-        scrolled.add_tick_callback(move |_, clock| {
-            let now = clock.frame_time();
-            let previous = last_frame_us.replace(now);
-
-            if !active.get() {
-                return glib::ControlFlow::Continue;
-            }
-            if previous <= 0 || now <= previous {
-                return glib::ControlFlow::Continue;
-            }
-
-            let dt = ((now - previous) as f64 / 1_000_000.0).clamp(1.0 / 240.0, 0.033);
-            let lower = adjustment.lower();
-            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-            let current = adjustment.value().clamp(lower, upper);
-            let left = remaining.get();
-
-            let (step, next_velocity, done) =
-                folder_wheel_spring_step(left, velocity.get(), dt);
-            // Relative to GTK's current value, never an absolute destination.
-            let desired = current + carry.get() + step;
-            let next = desired.round();
-            let clamped = next.clamp(lower, upper);
-            if done || clamped != next {
-                remaining.set(0.0);
-                velocity.set(0.0);
-                carry.set(0.0);
-                active.set(false);
-            } else {
-                remaining.set(left - step);
-                velocity.set(next_velocity);
-                carry.set(desired - next);
-            }
-            if (clamped - current).abs() > f64::EPSILON {
-                adjustment.set_value(clamped);
-            }
-            glib::ControlFlow::Continue
-        });
-    }
+    // Wheel clicks glide like All Photos (`WheelGlide`). Each frame moves
+    // relative to where the view is, so the sectioned surface's own scroll
+    // corrections never pull the view back to a stale target.
+    let glider = WheelGlider::install(scrolled);
 
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
 
-    // One wheel notch (dy = +1 down, -1 up) through the Folder spring. Shared
-    // by the real wheel handler and the opt-in scripted scroll benchmark, so
-    // the benchmark measures exactly the code path a mouse wheel drives.
+    // One wheel notch (dy = +1 down, -1 up). Shared by the real wheel
+    // handler and the opt-in scripted scroll benchmark, so the benchmark
+    // measures exactly the code path a mouse wheel drives.
     let wheel_notch: Rc<dyn Fn(f64)> = {
         let gallery = gallery.clone();
-        let adjustment = adjustment.clone();
-        let remaining = remaining.clone();
-        let velocity = velocity.clone();
-        let carry = carry.clone();
-        let active = active.clone();
+        let glider = glider.clone();
         Rc::new(move |dy: f64| {
             gallery.cancel_folder_keyboard_scroll_animation();
-            let lower = adjustment.lower();
-            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-            let current = adjustment.value().clamp(lower, upper);
-            if (dy < 0.0 && current <= lower) || (dy > 0.0 && current >= upper) {
-                remaining.set(0.0);
-                velocity.set(0.0);
-                carry.set(0.0);
-                active.set(false);
-                return;
-            }
-
-            let impulse = dy * WHEEL_STEP_PX;
-            let old = remaining.get();
-            // Direction reversal should react immediately rather than first
-            // consuming momentum queued in the opposite direction.
-            let next_remaining = folder_wheel_remaining(current, lower, upper, old, impulse);
-            // A reversal starts from rest instead of first braking the
-            // speed built up in the other direction.
-            if velocity.get() * next_remaining < 0.0 {
-                velocity.set(0.0);
-                carry.set(0.0);
-            }
-            remaining.set(next_remaining);
-            active.set(true);
+            glider.notch(dy * GALLERY_WHEEL_STEP_PX);
         })
     };
     if std::env::var("PIC_SCROLL_BENCH").as_deref() == Ok("folder") {
         start_scroll_bench(scrolled, wheel_notch.clone());
     }
 
-    let remaining_for_scroll = remaining.clone();
-    let velocity_for_scroll = velocity.clone();
-    let carry_for_scroll = carry.clone();
-    let active_for_scroll = active.clone();
+    let glider_for_scroll = glider.clone();
     let wheel_notch_for_scroll = wheel_notch.clone();
     controller.connect_scroll(move |controller, dx, dy| {
         crate::scroll_trace::log_scroll_input("folder_gallery", controller, dx, dy);
@@ -638,10 +387,7 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
             .current_event_state()
             .contains(gtk::gdk::ModifierType::CONTROL_MASK)
         {
-            remaining_for_scroll.set(0.0);
-            velocity_for_scroll.set(0.0);
-            carry_for_scroll.set(0.0);
-            active_for_scroll.set(false);
+            glider_for_scroll.cancel();
             // Match All Photos: commit each wheel step immediately and let
             // the gallery's frame-clock animation retarget on the next step.
             // The former +/- request path used a 150 ms trailing debounce,
@@ -666,10 +412,7 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
             gtk::gdk::ScrollUnit::Surface => {
                 // Precision touchpads already deliver smooth pixel deltas.
                 // Leave those native and cancel any stale wheel easing.
-                remaining_for_scroll.set(0.0);
-                velocity_for_scroll.set(0.0);
-                carry_for_scroll.set(0.0);
-                active_for_scroll.set(false);
+                glider_for_scroll.cancel();
                 glib::Propagation::Proceed
             }
             _ => glib::Propagation::Proceed,
@@ -765,77 +508,115 @@ fn start_scroll_bench(scrolled: &gtk::ScrolledWindow, wheel_notch: Rc<dyn Fn(f64
 }
 
 #[cfg(test)]
-mod folder_wheel_spring_tests {
-    use super::folder_wheel_spring_step;
+mod wheel_glide_tests {
+    use super::{WheelGlide, GALLERY_WHEEL_STEP_PX};
 
-    /// Run the Folder wheel animation the way its tick callback does (whole
-    /// pixels plus sub-pixel carry), adding 120 px at each notch time.
-    /// Returns the pixels moved in every frame.
-    fn simulate(notches: &[f64], hz: f64, seconds: f64) -> Vec<f64> {
-        let dt = 1.0 / hz;
-        let (mut position, mut remaining, mut velocity, mut carry) = (0.0, 0.0, 0.0, 0.0);
-        let mut active = false;
-        let mut next_notch = 0;
+    const ROOM: (f64, f64) = (-1.0e6, 1.0e6);
+
+    /// Pixels moved in every frame at `hz`, with a wheel click at each time
+    /// in `clicks` (seconds; negative values click upward).
+    fn run(clicks: &[f64], hz: f64, seconds: f64) -> Vec<f64> {
+        let frame_us = (1_000_000.0 / hz) as i64;
+        let mut glide = WheelGlide::default();
+        let mut next = 0;
         let mut moves = Vec::new();
-        let mut t = 0.0;
-        while t < seconds {
-            while next_notch < notches.len() && notches[next_notch] <= t {
-                remaining += 120.0;
-                active = true;
-                next_notch += 1;
+        let mut now = 0_i64;
+        while now < (seconds * 1_000_000.0) as i64 {
+            while next < clicks.len() && (clicks[next].abs() * 1_000_000.0) as i64 <= now {
+                let delta = if clicks[next] < 0.0 { -GALLERY_WHEEL_STEP_PX } else { GALLERY_WHEEL_STEP_PX };
+                glide.notch(now, delta, ROOM);
+                next += 1;
             }
-            let before = position;
-            if active {
-                let (step, next_velocity, done) = folder_wheel_spring_step(remaining, velocity, dt);
-                let desired = position + carry + step;
-                let next = f64::round(desired);
-                position = next;
-                if done {
-                    remaining = 0.0;
-                    velocity = 0.0;
-                    carry = 0.0;
-                    active = false;
-                } else {
-                    remaining -= step;
-                    velocity = next_velocity;
-                    carry = desired - next;
-                }
-            }
-            moves.push(position - before);
-            t += dt;
+            now += frame_us;
+            moves.push(glide.advance(now));
         }
         moves
     }
 
+    fn motion(moves: &[f64]) -> &[f64] {
+        let first = moves.iter().position(|step| *step != 0.0).unwrap();
+        let last = moves.iter().rposition(|step| *step != 0.0).unwrap();
+        &moves[first..=last]
+    }
+
     #[test]
-    fn one_notch_eases_in_and_out_and_lands_exactly() {
-        for hz in [60.0, 120.0, 144.0] {
-            let moves = simulate(&[0.0], hz, 1.0);
-            let total: f64 = moves.iter().sum();
-            assert_eq!(total, 120.0, "{hz} Hz must travel exactly one notch");
-            assert!(moves.iter().all(|step| *step >= 0.0), "{hz} Hz overshot: {moves:?}");
-            let peak = moves.iter().cloned().fold(0.0, f64::max);
-            assert!(moves[0] < peak, "{hz} Hz must ease in: {moves:?}");
-            assert!(moves.iter().rev().take(5).all(|step| *step <= 2.0), "{hz} Hz must ease out");
+    fn one_click_glides_to_an_exact_stop() {
+        for hz in [60.0, 75.0, 120.0, 144.0] {
+            let moves = run(&[0.0], hz, 1.0);
+            assert_eq!(moves.iter().sum::<f64>(), GALLERY_WHEEL_STEP_PX, "{hz} Hz: {moves:?}");
+            let motion = motion(&moves);
+            assert!(motion.iter().all(|step| *step >= 0.0), "{hz} Hz went back: {motion:?}");
+            // Finite: done within the glide duration, no tail.
+            assert!(motion.len() as f64 / hz <= 0.25, "{hz} Hz took too long: {motion:?}");
+            // Eases in and out: the speed rises, then only falls.
+            let peak = motion.iter().cloned().fold(0.0, f64::max);
+            let top = motion.iter().position(|step| *step == peak).unwrap();
+            assert!(top > 0 && top < motion.len() - 1, "{hz} Hz: {motion:?}");
+            assert!(
+                motion[top..].windows(2).all(|pair| pair[1] <= pair[0] + 1.0),
+                "{hz} Hz sped up while stopping: {motion:?}"
+            );
         }
     }
 
     #[test]
-    fn continuous_wheel_has_no_speed_spike_at_each_notch() {
-        for rate in [8.0, 15.0] {
-            let notches: Vec<f64> = (0..(rate * 0.8) as usize).map(|i| i as f64 / rate).collect();
-            // Long enough for the last notch to finish easing out.
-            let moves = simulate(&notches, 120.0, 2.0);
-            // The former ease-out jumped ~11 px/frame at every notch.
-            let steady = &moves[18..90];
-            let worst_jump = steady
-                .windows(2)
-                .map(|pair| (pair[1] - pair[0]).abs())
-                .fold(0.0, f64::max);
-            assert!(worst_jump <= 3.0, "{rate} notches/s: speed jumped {worst_jump} px/frame");
-            let total: f64 = moves.iter().sum();
-            assert_eq!(total, 120.0 * notches.len() as f64, "distance must be kept");
+    fn the_stop_has_no_late_step() {
+        // A still frame followed by another move is the "last bit of jump".
+        // Below 7 ms (one 144 Hz frame) it cannot be seen.
+        for hz in [60.0, 75.0, 120.0, 144.0] {
+            let moves = run(&[0.0], hz, 1.0);
+            let motion = motion(&moves);
+            let mut still = 0;
+            for step in motion {
+                if *step == 0.0 {
+                    still += 1;
+                } else {
+                    assert!(still as f64 / hz < 0.008, "{hz} Hz stepped after a pause: {motion:?}");
+                    still = 0;
+                }
+            }
         }
+    }
+
+    #[test]
+    fn continuous_clicks_keep_an_even_speed() {
+        for rate in [8.0, 15.0] {
+            let clicks: Vec<f64> = (0..(rate * 0.8) as usize).map(|i| i as f64 / rate).collect();
+            let moves = run(&clicks, 120.0, 2.0);
+            assert_eq!(moves.iter().sum::<f64>(), GALLERY_WHEEL_STEP_PX * clicks.len() as f64);
+            // Retargeting keeps the speed, so it never jumps at a click.
+            let steady = &moves[20..90];
+            let worst = steady.windows(2).map(|pair| (pair[1] - pair[0]).abs()).fold(0.0, f64::max);
+            assert!(worst <= 3.0, "{rate} clicks/s: speed jumped {worst} px/frame: {steady:?}");
+        }
+    }
+
+    #[test]
+    fn reversing_starts_from_rest_without_overshoot() {
+        let moves = run(&[0.0, -0.1], 120.0, 1.0);
+        let total: f64 = moves.iter().sum();
+        let reversal = moves.iter().position(|step| *step < 0.0).unwrap();
+        let before: f64 = moves[..reversal].iter().sum();
+        assert_eq!(total, before - GALLERY_WHEEL_STEP_PX, "{moves:?}");
+        assert!(moves[reversal..].iter().all(|step| *step <= 0.0), "{moves:?}");
+    }
+
+    #[test]
+    fn a_new_glide_moves_on_its_first_frame() {
+        let mut glide = WheelGlide::default();
+        glide.notch(1_000, 160.0, ROOM);
+        assert_eq!(glide.advance(1_000), 1.0, "the click's own frame must write");
+    }
+
+    #[test]
+    fn the_end_of_the_gallery_bounds_the_glide() {
+        let mut glide = WheelGlide::default();
+        glide.notch(0, 160.0, (-10.0, 40.0));
+        let mut moved = 0.0;
+        for frame in 1..100 {
+            moved += glide.advance(frame * 8_000);
+        }
+        assert_eq!(moved, 40.0);
     }
 }
 
@@ -845,7 +626,7 @@ mod grid_wheel_fraction_tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn grid_spring_preserves_wheel_distance_across_pixel_corrections() {
+    fn grid_wheel_glides_whole_pixels_to_an_exact_stop() {
         fn settle(milliseconds: u64) {
             let context = glib::MainContext::default();
             let until = Instant::now() + Duration::from_millis(milliseconds);
@@ -895,14 +676,14 @@ mod grid_wheel_fraction_tests {
         adjustment.set_value(1000.0);
         settle(30);
         let start = adjustment.value();
-        let corrections = Rc::new(Cell::new(0_u32));
-        let previous = Rc::new(Cell::new(start));
-        let observed = corrections.clone();
+        // Every distinct value the view shows, with when it appeared.
+        let changes = Rc::new(RefCell::new(Vec::<(Instant, f64)>::new()));
+        let observed = changes.clone();
         adjustment.connect_value_changed(move |adjustment| {
             let value = adjustment.value();
-            let old = previous.replace(value);
-            if old.fract() != 0.0 && value == old.floor() {
-                observed.set(observed.get() + 1);
+            let mut changes = observed.borrow_mut();
+            if changes.last().map_or(true, |(_, last)| *last != value) {
+                changes.push((Instant::now(), value));
             }
         });
         let controllers = scroll.observe_controllers();
@@ -916,17 +697,32 @@ mod grid_wheel_fraction_tests {
                     })
             })
             .unwrap();
+        let clicked = Instant::now();
         assert!(wheel.emit_by_name::<bool>("scroll", &[&0.0_f64, &1.0_f64]));
         settle(800);
         let distance = adjustment.value() - start;
         window.close();
+        let changes = changes.borrow();
         assert!(
-            corrections.get() > 1,
-            "GTK did not repeatedly correct fractional requests"
+            changes.iter().all(|(_, value)| value.fract() == 0.0),
+            "the grid must be given whole pixels: {changes:?}"
         );
+        assert_eq!(distance, GALLERY_WHEEL_STEP_PX, "{changes:?}");
+        // The glide ends on time with no late step after a pause.
+        let (last, _) = changes.last().expect("the wheel moved the grid");
         assert!(
-            (distance - 120.0).abs() <= 1.0,
-            "wheel travelled {distance} px instead of 120 px"
+            *last - clicked < Duration::from_millis(400),
+            "the glide ended {:?} after the click: {changes:?}",
+            *last - clicked
+        );
+        let longest_pause = changes
+            .windows(2)
+            .map(|pair| pair[1].0 - pair[0].0)
+            .max()
+            .unwrap_or_default();
+        assert!(
+            longest_pause < Duration::from_millis(60),
+            "a late step followed a {longest_pause:?} pause: {changes:?}"
         );
     }
 }

@@ -264,12 +264,9 @@ fn run_bulk_recipe_chunk(work: &mut BulkRecipeState) {
             if let Some(lightbox) = work.context.lightbox.upgrade() {
                 lightbox.update_edit_recipes_batch(&updates);
             }
-            let selected = work.context.selected_photo.borrow().as_ref().cloned();
-            if let Some(selected) = selected {
-                if let Some((_, recipe)) = updates.iter().find(|(id, _)| *id == selected.id()) {
-                    let recipe = recipe.clone();
-                    selected.set_edit_recipe(recipe);
-                    work.context.selected_photo.replace(Some(selected));
+            if let Some(current) = work.context.info.current_photo() {
+                if let Some((_, recipe)) = updates.iter().find(|(id, _)| *id == current.id()) {
+                    current.set_edit_recipe(recipe.clone());
                     work.touched_selected = true;
                 }
             }
@@ -284,9 +281,8 @@ fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
         lightbox.refresh_current_after_edit();
     }
     if work.touched_selected {
-        let selected = work.context.selected_photo.borrow().as_ref().cloned();
-        if let Some(selected) = selected {
-            work.context.info.photo_updated(&selected);
+        if let Some(current) = work.context.info.current_photo() {
+            work.context.info.photo_updated(&current);
         }
     }
     if work.refresh_grid_when_done || work.context.filter.get() == sidebar::SidebarFilter::History
@@ -665,13 +661,10 @@ fn show_photo_context_menu(
         let dismiss_menu_for_export = dismiss_menu.clone();
         export.connect_clicked(move |_| {
             dismiss_menu_for_export();
-            // Info-bar export anchors on the current photo slot; make the
-            // right-clicked photo current so a single-tile export always works
-            // (multi-select still comes from the gallery selection).
-            export_context
-                .selected_photo
-                .replace(Some(export_photo.clone()));
-            (export_context.export)();
+            // Export anchors on the right-clicked photo, so a single-tile
+            // export always works (multi-select still comes from the gallery
+            // selection). The current photo is left alone.
+            (export_context.export)(&export_photo);
         });
     }
     {
@@ -1330,7 +1323,6 @@ fn show_rename_dialog(
             }
         }
         context.info.photo_updated(&photo);
-        context.selected_photo.replace(Some(photo.clone()));
     });
     dialog.present(Some(parent));
 }
@@ -1414,7 +1406,6 @@ fn show_delete_confirmation(
         if let Some(lightbox) = context.lightbox.upgrade() {
             lightbox.close();
         }
-        context.selected_photo.replace(None);
         context.info.clear_photo();
         refresh_photo_actions_grid(&context);
     });
@@ -1924,7 +1915,8 @@ fn scrapbook_inspector_extra(
     actions.append(&new_album);
     let export = make_action("Export", "document-save-symbolic");
     let export_action = context.export.clone();
-    export.connect_clicked(move |_| export_action());
+    let export_photo = photo.clone();
+    export.connect_clicked(move |_| export_action(&export_photo));
     actions.append(&export);
     action_section.append(&actions);
     root.append(&action_section);
@@ -2341,8 +2333,12 @@ mod photo_actions_tests {
                 direction: SortDirection::Descending,
             })),
             rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            selected_photo: Rc::new(RefCell::new(Some(destination.clone()))),
+            info: {
+                // The InfoBar owns the current photo.
+                let info = Rc::new(InfoBar::new());
+                info.photo_updated(&destination);
+                info
+            },
             lightbox: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
@@ -2354,7 +2350,7 @@ mod photo_actions_tests {
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
             edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|| {}),
+            export: Rc::new(|_| {}),
             window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
             operation_progress: OperationProgressUi::new(),
@@ -2379,7 +2375,7 @@ mod photo_actions_tests {
         assert_eq!(stored, encoded, "paste must persist the copied recipe");
         assert_eq!(destination.edit_recipe(), encoded,
             "the selected photo object must refresh so Export sees the pasted recipe");
-        assert_eq!(context.selected_photo.borrow().as_ref().unwrap().edit_recipe(), encoded);
+        assert_eq!(context.info.current_photo().unwrap().edit_recipe(), encoded);
 
         let record = db::photo(&connection.borrow(), 2).unwrap().unwrap();
         let job = ExportJob::from_record(
@@ -2439,7 +2435,6 @@ mod photo_actions_tests {
             })),
             rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: Rc::new(InfoBar::new()),
-            selected_photo: Rc::new(RefCell::new(None)),
             lightbox: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
@@ -2451,7 +2446,7 @@ mod photo_actions_tests {
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
             edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|| {}),
+            export: Rc::new(|_| {}),
             window: glib::WeakRef::new(),
             context_menu_host: Rc::new(RefCell::new(None)),
             operation_progress: OperationProgressUi::new(),
@@ -2522,7 +2517,6 @@ mod photo_actions_tests {
             })),
             rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: Rc::new(InfoBar::new()),
-            selected_photo: Rc::new(RefCell::new(None)),
             lightbox: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
@@ -2534,7 +2528,7 @@ mod photo_actions_tests {
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
             edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|| {}),
+            export: Rc::new(|_| {}),
             window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
             operation_progress: OperationProgressUi::new(),

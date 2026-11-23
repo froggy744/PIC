@@ -207,7 +207,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // The one owner of the Properties inspector's presentation.
     let properties = PropertiesWidgets::new(info.clone());
 
-    let selected_photo = Rc::new(RefCell::new(None));
     let date_browser_overview_visible = Rc::new(Cell::new(false));
 
     let lightbox = Rc::new(Lightbox::new());
@@ -219,7 +218,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
     let properties_for_lightbox = properties.clone();
     let info_for_lightbox = info.clone();
-    let selected_photo_for_lightbox = selected_photo.clone();
     let last_activated_for_lightbox = last_activated_photo_id.clone();
     let connection_for_lightbox = connection.clone();
 
@@ -245,7 +243,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         properties_for_lightbox.show_photo(PropertiesSurface::Lightbox, Some(&photo));
         // Navigating to another photo restores the viewer's normal fit state.
         info_for_lightbox.one_to_one.set_active(false);
-        selected_photo_for_lightbox.replace(Some(photo));
     });
 
     // Space opens the fullscreen viewer from the gallery. While the viewer
@@ -280,7 +277,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     include!("shortcuts.rs");
 
     let info_for_grid = info.clone();
-    let selected_photo_for_grid = selected_photo.clone();
     let lightbox_for_grid = lightbox.clone();
     let lightbox_for_grid_selection = lightbox.clone();
     let properties_for_grid_selection = properties.clone();
@@ -330,14 +326,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         })
     };
-    // Filled with the shared info-bar `export_clicked` once it is built;
-    // the context-menu Export item invokes this same callback.
-    let export_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
-    let export_photos: Rc<dyn Fn()> = {
+    // Filled with the shared export (anchored on a photo) once it is
+    // built; the InfoBar button and the context-menu Export item use it.
+    type ExportAnchored = Rc<dyn Fn(&crate::photo_object::PhotoObject)>;
+    let export_slot: Rc<RefCell<Option<ExportAnchored>>> = Rc::new(RefCell::new(None));
+    let export_photos: ExportAnchored = {
         let slot = export_slot.clone();
-        Rc::new(move || {
+        Rc::new(move |photo| {
             if let Some(callback) = slot.borrow().as_ref() {
-                callback();
+                callback(photo);
             }
         })
     };
@@ -550,7 +547,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         sort: sort.clone(),
         rating_filter: rating_filter.clone(),
         info: info.clone(),
-        selected_photo: selected_photo.clone(),
         lightbox: Rc::downgrade(&lightbox),
         sidebar: sidebar_for_unavailable.clone(),
         create_album: create_album.clone(),
@@ -630,7 +626,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             info_for_grid.show_gallery_focus(photo.as_ref());
             properties_for_grid_selection.show_photo(PropertiesSurface::Gallery, photo.as_ref());
-            selected_photo_for_grid.replace(photo);
         },
         {
             let availability_refresh = availability_refresh.clone();
@@ -816,7 +811,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // and rebuilding the complete library model here blocked the GTK thread.
     {
         let gallery = gallery.clone();
-        let selected_photo = selected_photo.clone();
+        let info = Rc::downgrade(&info);
         let lightbox = lightbox.clone();
         let availability_refresh = availability_refresh.clone();
         let filter = filter.clone();
@@ -827,9 +822,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 return;
             }
             let photos = gallery.photo_objects();
-            let selected_id = selected_photo
-                .borrow()
-                .as_ref()
+            let selected_id = info
+                .upgrade()
+                .and_then(|info| info.current_photo())
                 .map(|photo| photo.id())
                 .filter(|id| photos.iter().any(|photo| photo.id() == *id))
                 .or_else(|| gallery.selected_photo_ids(None).into_iter().next());
@@ -886,11 +881,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Right-click on InfoBar metadata opens Properties; right-click again
     // closes it, without opening the photo context menu.
     {
-        let selection = selected_photo.clone();
+        let current = Rc::downgrade(&info);
         let properties = properties.clone();
         info.connect_metadata_right_click(move || {
-            if let Some(photo) = selection.borrow().as_ref() {
-                properties.toggle(photo);
+            if let Some(photo) = current.upgrade().and_then(|info| info.current_photo()) {
+                properties.toggle(&photo);
             }
         });
     }
@@ -1199,7 +1194,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_for_collection_nav = gallery.clone();
     let lightbox_for_collection_nav = lightbox.clone();
     let sidebar_selection_for_collection_nav = sidebar_selection_slot.clone();
-    let selected_photo_for_collection_nav = selected_photo.clone();
+    let current_for_collection_nav = Rc::downgrade(&info);
     let collection_navigation: Rc<dyn Fn(i32)> = Rc::new(move |direction| {
         if direction == 0 {
             return;
@@ -1716,9 +1711,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
                 // Library views contain photos from multiple folders. Use the
                 // selected thumbnail's folder as the current position.
-                let Some(current_folder_id) = selected_photo_for_collection_nav
-                    .borrow()
-                    .as_ref()
+                let Some(current_folder_id) = current_for_collection_nav
+                    .upgrade()
+                    .and_then(|info| info.current_photo())
                     .map(|photo| photo.folder_id())
                     .filter(|folder_id| *folder_id > 0)
                 else {
@@ -2663,13 +2658,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sync_date_browser_photo_info: Rc<dyn Fn()> = {
         let gallery = Rc::downgrade(&gallery);
         let info = Rc::downgrade(&info);
-        let selected_photo = selected_photo.clone();
         Rc::new(move || {
             let (Some(gallery), Some(info)) = (gallery.upgrade(), info.upgrade()) else {
                 return;
             };
             let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
-            selected_photo.replace(photos.first().cloned());
             info.show_date_browser_selection(count, &photos);
         })
     };
@@ -2772,10 +2765,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let heading = gallery.group_header.clone();
             let overview_visible = date_browser_overview_visible.clone();
             let info = info.clone();
-            let selected_photo = selected_photo.clone();
             Rc::new(move || {
                 overview_visible.set(true);
-                selected_photo.replace(None);
                 info.set_date_overview_shown(true);
                 scroll.set_visible(false);
                 heading.set_visible(false);
@@ -3959,7 +3950,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let edit_page = edit_page.clone();
         let edit_editor = edit_editor.clone();
         let gallery = gallery.clone();
-        let selected_photo = selected_photo.clone();
         let info = info.clone();
         let lightbox = lightbox.clone();
         let edit_space_slot = edit_space_slot.clone();
@@ -4066,13 +4056,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             };
             let saved = {
                 let gallery = gallery.clone();
-                let selected_photo = selected_photo.clone();
                 let info = info.clone();
                 let trace_uri = trace_uri.clone();
                 Rc::new(move |photo: crate::photo_object::PhotoObject| {
                     crate::thumbnail_trace::event(&trace_uri, "editor", "saved");
                     gallery.update_edit_recipe(photo.id(), &photo.edit_recipe());
-                    selected_photo.replace(Some(photo.clone()));
                     info.photo_updated(&photo);
                 }) as Rc<dyn Fn(crate::photo_object::PhotoObject)>
             };
@@ -4152,21 +4140,19 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     // Photo mark commands decide the targets, values and refreshes; the
     // controls only report what the user asked for.
-    let selected_for_favorite = selected_photo.clone();
     let marks_for_favorite = action_context.clone();
     info.favorite.connect_clicked(move |_| {
-        let Some(photo) = selected_for_favorite.borrow().clone() else {
+        let Some(photo) = marks_for_favorite.info.current_photo() else {
             return;
         };
         photo_mark_commands::run(&marks_for_favorite, MarkIntent::ToggleFavorite, &photo);
     });
 
     for (index, button) in info.rating_buttons.iter().enumerate() {
-        let selected_for_rating = selected_photo.clone();
         let marks_for_rating = action_context.clone();
         let stars = (index + 1) as u8;
         button.connect_clicked(move |_| {
-            let Some(photo) = selected_for_rating.borrow().clone() else {
+            let Some(photo) = marks_for_rating.info.current_photo() else {
                 return;
             };
             photo_mark_commands::run(&marks_for_rating, MarkIntent::ToggleRating(stars), &photo);
@@ -4672,7 +4658,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         });
 
-    let selected_for_rotate = selected_photo.clone();
     let db_for_rotate = connection.clone();
     let info_rotate = info.clone();
     let gallery_for_rotate = gallery.clone();
@@ -4682,7 +4667,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let main_stack_for_rotate = main_stack.clone();
 
     let rotate_photo: Rc<dyn Fn(bool)> = Rc::new(move |counter_clockwise| {
-        let Some(photo) = selected_for_rotate.borrow().clone() else {
+        let Some(photo) = info_rotate.current_photo() else {
             return;
         };
         let rotation = (photo.rotation() + if counter_clockwise { 270 } else { 90 }) % 360;
@@ -5147,20 +5132,15 @@ fn start_photo_export_single(
     });
 }
 
-    let selected_for_export = selected_photo.clone();
     let parent_for_export = window.clone();
     let gallery_for_export = gallery.clone();
     let progress_for_export = operation_progress.clone();
 
-    let export_clicked: Rc<dyn Fn()> = {
-        let selected_for_export = selected_for_export;
+    let export_anchored: ExportAnchored = {
         let parent_for_export = parent_for_export;
         let gallery_for_export = gallery_for_export;
         let progress_for_export = progress_for_export;
-        Rc::new(move || {
-            let Some(photo) = selected_for_export.borrow().clone() else {
-                return;
-            };
+        Rc::new(move |photo: &crate::photo_object::PhotoObject| {
             let ids = gallery_for_export.selected_photo_ids(Some(photo.id()));
             let known: std::collections::HashMap<i64, _> = gallery_for_export
                 .photo_objects()
@@ -5192,10 +5172,15 @@ fn start_photo_export_single(
         })
     };
     info.export.connect_clicked({
-        let export_clicked = export_clicked.clone();
-        move |_| export_clicked()
+        let info = Rc::downgrade(&info);
+        let export_anchored = export_anchored.clone();
+        move |_| {
+            if let Some(photo) = info.upgrade().and_then(|info| info.current_photo()) {
+                export_anchored(&photo);
+            }
+        }
     });
-    export_slot.replace(Some(export_clicked.clone()));
+    export_slot.replace(Some(export_anchored));
     // The Scrapbook Library selection is independent of the photo grid;
     // export the exact clicked photo through PIC's normal export dialog.
     scrapbook_export_slot.replace(Some(Rc::new({
@@ -5219,13 +5204,13 @@ fn start_photo_export_single(
         }
     })));
 
-    let selected_for_print = selected_photo.clone();
+    let info_for_print = Rc::downgrade(&info);
     let window_for_print = window.clone();
     let connection_for_print = connection.clone();
     let gallery_for_print = gallery.clone();
 
     info.print.connect_clicked(move |_| {
-        let Some(photo) = selected_for_print.borrow().clone() else {
+        let Some(photo) = info_for_print.upgrade().and_then(|info| info.current_photo()) else {
             return;
         };
 
@@ -5282,7 +5267,6 @@ fn start_photo_export_single(
         let filter_for_keys = filter.clone();
         let stack_for_keys = main_stack.clone();
         let lightbox_for_keys = lightbox.clone();
-        let selected_for_keys = selected_photo.clone();
         let marks_for_keys = action_context.clone();
         let search_for_keys = search_text.clone();
 
@@ -5349,10 +5333,10 @@ fn start_photo_export_single(
                             | gtk::gdk::Key::Down
                     );
                     if !arrow || !focus_is_in_gallery || control {
-                        let current_photo_id = selected_for_keys
-                            .borrow()
-                            .as_ref()
-                            .map(crate::photo_object::PhotoObject::id);
+                        let current_photo_id = marks_for_keys
+                            .info
+                            .current_photo()
+                            .map(|photo| photo.id());
                         if gallery_for_keys.navigate_browser_key(key, control, current_photo_id) {
                             return glib::Propagation::Stop;
                         }
@@ -5403,7 +5387,7 @@ fn start_photo_export_single(
                     .and_then(|character| character.to_digit(10))
                 {
                     if digit <= 5 && (photos_page || lightbox_for_keys.root.is_visible()) {
-                        if let Some(photo) = selected_for_keys.borrow().clone() {
+                        if let Some(photo) = marks_for_keys.info.current_photo() {
                             photo_mark_commands::run(
                                 &marks_for_keys,
                                 MarkIntent::SetRating(digit as u8),
@@ -6229,7 +6213,6 @@ fn start_photo_export_single(
     let lightbox_for_events = lightbox.clone();
     let connection_for_events = connection.clone();
     let info_for_events = info.clone();
-    let selected_photo_for_events = selected_photo.clone();
     let availability_refresh_for_events = availability_refresh.clone();
     let filter_for_events = filter.clone();
     let search_for_events = search_text.clone();
@@ -6486,9 +6469,9 @@ fn start_photo_export_single(
                     for photo in photos {
                         if let Some(queued)=pending_photos.iter_mut().find(|queued|queued.id==photo.id) { *queued=photo.clone(); }
                         gallery_for_events.update_photo(photo);
-                        if let Some(selected)=selected_photo_for_events.borrow().as_ref().filter(|selected|selected.id()==photo.id) {
-                            selected.set_from_photo(photo);
-                            info_for_events.photo_updated(selected);
+                        if let Some(current)=info_for_events.current_photo().filter(|current|current.id()==photo.id) {
+                            current.set_from_photo(photo);
+                            info_for_events.photo_updated(&current);
                         }
                     }
                 }
@@ -6513,19 +6496,15 @@ fn start_photo_export_single(
                                 pending_photos.push_back(photo.clone());
                             } else if !indexed.newly_discovered {
                                 gallery_for_events.update_photo(photo);
-                                if selected_photo_for_events
-                                    .borrow()
-                                    .as_ref()
-                                    .is_some_and(|selected| selected.id() == photo.id)
+                                // Folder refreshes deliberately avoid a full
+                                // gallery rebuild. Keep an independently held
+                                // current object up to date as well.
+                                if let Some(current) = info_for_events
+                                    .current_photo()
+                                    .filter(|current| current.id() == photo.id)
                                 {
-                                    let selected = selected_photo_for_events.borrow().clone();
-                                    // Folder refreshes deliberately avoid a full
-                                    // gallery rebuild. Keep an independently held
-                                    // selected object current as well.
-                                    if let Some(selected) = selected.as_ref() {
-                                        selected.set_from_photo(photo);
-                                        info_for_events.photo_updated(selected);
-                                    }
+                                    current.set_from_photo(photo);
+                                    info_for_events.photo_updated(&current);
                                 }
                             }
                         }
@@ -6909,7 +6888,6 @@ fn start_photo_export_single(
         let connection = connection.clone();
         let scan_job = scan_job.clone();
         let lightbox = lightbox.clone();
-        let selected_photo = selected_photo.clone();
         let info = info.clone();
         let folder_cache = folder_cache.clone();
         let gallery = gallery.clone();
@@ -7044,7 +7022,6 @@ fn start_photo_export_single(
             connection.replace(new_connection);
             settings_window.menu_controls.reload(&connection.borrow());
             folder_cache.replace(folders.clone());
-            selected_photo.replace(None);
             info.clear_photo();
             filter.set(new_filter);
             date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);

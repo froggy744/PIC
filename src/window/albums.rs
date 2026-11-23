@@ -31,9 +31,8 @@ fn configure_infobar_album_menu(button: &gtk::MenuButton, context: PhotoActionCo
     let selection_context = context.clone();
     let selected_ids: Rc<dyn Fn() -> Vec<i64>> = Rc::new(move || {
         let fallback = selection_context
-            .selected_photo
-            .borrow()
-            .as_ref()
+            .info
+            .current_photo()
             .map(|photo| photo.id());
         selected_photo_ids(&selection_context, fallback)
     });

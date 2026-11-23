@@ -662,8 +662,8 @@ struct PhotoActionContext {
     sort: Rc<Cell<PhotoSort>>,
     /// The toolbar rating filter, for photo mark commands.
     rating_filter: Rc<Cell<RatingFilter>>,
+    /// Owns the current photo (`InfoBar::current_photo`).
     info: Rc<InfoBar>,
-    selected_photo: Rc<RefCell<Option<crate::photo_object::PhotoObject>>>,
     lightbox: Weak<Lightbox>,
     sidebar: Rc<RefCell<Option<gtk::ScrolledWindow>>>,
     create_album: Rc<dyn Fn()>,
@@ -676,7 +676,8 @@ struct PhotoActionContext {
     open_edit: Rc<dyn Fn(i64)>,
     edit_clipboard: Rc<RefCell<Option<String>>>,
     /// Same pipeline as the info-bar Export button (size + file type + Stop bar).
-    export: Rc<dyn Fn()>,
+    /// Export the selection anchored on the given photo.
+    export: Rc<dyn Fn(&crate::photo_object::PhotoObject)>,
     window: glib::WeakRef<gtk::Window>,
     context_menu_host: Rc<RefCell<Option<glib::WeakRef<gtk::Overlay>>>>,
     operation_progress: Rc<OperationProgressUi>,

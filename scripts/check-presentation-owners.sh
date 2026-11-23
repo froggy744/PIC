@@ -10,6 +10,9 @@
 # Photo mark commands (candidate 9) are likewise the only writer of photo
 # favourites and ratings:
 #   - src/window/photo_mark_commands.rs (the decision is window::photo_marks)
+# The current photo (candidate 10) has one owner, the InfoBar
+# (`InfoBar::current_photo`); no window code may keep a hand-synced copy in a
+# `selected_photo` cell again.
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -40,6 +43,7 @@ RULES=(
   "sidebar-split~$SIDEBAR_OWNER~main_split$ID*\.(set_show_sidebar|set_collapsed|set_pin_sidebar|set_enable_show_gesture|set_enable_hide_gesture|set_sidebar)\(~main split visibility, pin, gestures and sidebar child"
   "infobar-actions~$INFOBAR_OWNER~\.(favorite|rating|edit|add_to_album|rotate|export|print|more|view_toggle|grid_zoom)\.set_sensitive\(~InfoBar photo-action and gallery-control enabled state"
   "photo-marks~$MARKS_OWNER src/library_home_tests.rs~(db::set_(favorite|favorite_for_photos|rating_for_photos)|\.update_(favorites|ratings))\(~favourite and rating writes (library and gallery objects)"
+  "current-photo~$INFOBAR_OWNER~(^|[^[:alnum:]_])selected_(photo|for)$ID*(\.replace\(|\.borrow_mut\(|:[[:space:]]*Rc<)~a hand-kept copy of the current photo (read InfoBar::current_photo)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -126,7 +130,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -223,6 +227,8 @@ self_test() {
     "favourite written in build.rs|src/window/build.rs|db::set_favorite(&db.borrow(), id, true)|photo-marks"
     "ratings written in photo_actions.rs|src/window/photo_actions.rs|db::set_rating_for_photos(&c, &ids, 3)|photo-marks"
     "gallery objects marked in build.rs|src/window/build.rs|gallery_for_keys.update_ratings(&ids, rating);|photo-marks"
+    "current photo copied in build.rs|src/window/build.rs|selected_photo_for_grid.replace(photo);|current-photo"
+    "current photo cell in window.rs|src/window/photo_actions.rs|selected_photo: Rc<RefCell<Option<PhotoObject>>>,|current-photo"
     "dock shown in build.rs|src/window/build.rs|compact_dock.set_visible(true);|sidebar-parts"
     "column hidden in immersive.rs|src/window/immersive.rs|left_column.set_visible(false);|sidebar-parts"
     "shell child in build.rs|src/window/build.rs|sidebar_shell.set_child(Some(&compact_sidebar_page));|sidebar-parts"

@@ -42,8 +42,8 @@ pub(crate) enum InfoBarEvent {
     GalleryFocus(Option<PhotoId>),
     /// The gallery's selection changed.
     GallerySelection(SelectionSample),
-    /// The date browser handed the gallery selection back: a single
-    /// selected photo also becomes the shown photo.
+    /// The date browser handed the gallery selection back: its first
+    /// selected photo becomes the shown (current) photo.
     DateBrowserSelection(SelectionSample),
     LightboxShown(bool),
     /// The lightbox moved to another photo.
@@ -68,7 +68,9 @@ pub(crate) enum InfoBarMode {
 }
 
 /// Everything the InfoBar writes. The photo is kept while the selection
-/// strip is visible: the photo actions stay enabled for it.
+/// strip is visible: the photo actions stay enabled for it. `photo` is also
+/// the window's current photo (`InfoBar::current_photo`), the one every
+/// photo action anchors on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InfoBarTarget {
     pub(crate) mode: InfoBarMode,
@@ -143,8 +145,10 @@ impl InfoBarPresentation {
             InfoBarEvent::DateBrowserSelection(selection) => {
                 self.selection = selection;
                 self.apply_selection();
-                if self.selection.count == 1 {
-                    self.photo = self.selection.ids.first().copied();
+                // The first selected photo becomes current, whatever the
+                // count: the strip's actions anchor on it.
+                if let Some(first) = self.selection.ids.first() {
+                    self.photo = Some(*first);
                 }
             }
             InfoBarEvent::LightboxShown(true) => {
@@ -397,6 +401,26 @@ mod tests {
                     DateBrowserSelection(sel(3, &[1, 2, 3])),
                 ],
                 strip(3, &[1, 2, 3], Some(1)),
+            ),
+            (
+                // The current photo the actions anchor on (candidate 10):
+                // the date browser hands back its first selected photo.
+                "a date browser multi-selection makes its first photo current",
+                vec![
+                    GalleryFocus(Some(1)),
+                    DateBrowserSelection(sel(3, &[4, 5, 6])),
+                ],
+                strip(3, &[4, 5, 6], Some(4)),
+            ),
+            (
+                "a multi-selection after the date overview has a current photo",
+                vec![
+                    GalleryFocus(Some(1)),
+                    DateOverviewShown(true),
+                    DateOverviewShown(false),
+                    DateBrowserSelection(sel(2, &[4, 5])),
+                ],
+                strip(2, &[4, 5], Some(4)),
             ),
         ]);
     }

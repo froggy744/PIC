@@ -378,9 +378,19 @@ Merged 2026-11-23 (`888408e0`) on the owner's standing instruction to merge on s
 - The remaining behaviour handlers (close-return, close-on-page-change, teardown, fade cancel, Immersive, trace) still connect to GTK directly; move them only with a reason.
 - The mirrors still keep their own copies of the inputs (decision 6).
 
-### Next (chosen by the owner 2026-11-23)
-1. ~~**Front-surface change event**~~: done as candidate 13.
-2. ~~**Candidate 6 · zoom slider router**~~: merged.
+### Next (updated 2026-11-23, after 6 and 13 merged)
+Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router); the GUI harness was fixed separately (`467b3ee1`).
+
+Open candidates, in order:
+1. **5 · One gallery scroll-motion module.** Next. The owner is testing glide scrolling because "something feels off"; nothing from 12, 13 or 6 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
+2. **11 · Window session state.** After 5. Facts in the same section below.
+3. 7 (diagnostic only) and 8 (speculative) can wait, or be closed with a note.
+
+How the owner works with these (from this session):
+- Each candidate: investigation, then decisions recorded here, then a branch, staged commits (pure module test-first, GTK adapter, owner rule, docs), then verification, merge with a merge commit, push.
+- Verification each time: unit and display tests (Xvfb, one process each), `cargo check`, owner script and `--self-test`, GUI harness `viewer` and `editing` (`scripts/test-gui.sh`), and scripted interaction checks with `cargo run` on the branch and on `main`.
+- The owner has allowed deciding open questions autonomously and merging and pushing on success; say what was decided and why.
+- Pre-existing, not caused by today's work: two metadata panel display tests fail on `main` too (see 13); 3 dead-code warnings in `db/photos.rs` and `grid/honeycomb_raster.rs`.
 
 ### 7 · Editor preview plan
 **Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.

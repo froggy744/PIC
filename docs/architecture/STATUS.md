@@ -40,7 +40,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
-| 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | in progress (`refactor/front-surface-events`) | none | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
+| 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 
 ## Outstanding work
 
@@ -288,7 +288,7 @@ Settled by the agent, accepted with the plan: one file `src/window/front_surface
 - The owner rule does not catch `matches!` over page names (see above).
 - `scripts/gui_test.py` still clicks fixed points in the `browse-navigation` suite (`click_at(118, 524)` for the folder row) and elsewhere outside the library, viewer and editing paths.
 
-### 13 · Front-surface change event (started 2026-11-23)
+### 13 · Front-surface change event (merged 2026-11-23)
 Branch `refactor/front-surface-events`. Follow-up to 12 (its decision 1); candidate 6 (zoom slider router) is to be the event's first behaviour consumer.
 
 #### Investigation (at `38e89e45`, no code changed)
@@ -329,8 +329,15 @@ Hazards: re-entrancy (a page change closes the viewer and may switch the page ag
 - GUI harness: `viewer` COMPLETE 19/19 (`20261123T170514Z-385101`), `editing` COMPLETE 39/39 (`20261123T170817Z-389860`).
 - Scripted interaction checks (gallery/viewer/editor zoom, Space, 1:1, Escape, date overview, sort) with `cargo run`: 16/16 on this branch and on `main`.
 
+Merged 2026-11-23 (`888408e0`) on the owner's standing instruction to merge on success.
+
+**Follow-up after merge:**
+- Candidate 6 (zoom slider router) is next: the zoom range (4 writers) becomes a `connect_changed` listener.
+- The remaining behaviour handlers (close-return, close-on-page-change, teardown, fade cancel, Immersive, trace) still connect to GTK directly; move them only with a reason.
+- The mirrors still keep their own copies of the inputs (decision 6).
+
 ### Next (chosen by the owner 2026-11-23)
-1. **Front-surface change event**, as its own refactor: design `FrontSurface::connect_changed` (candidate 12, decision 1) so the zoom slider can be its first consumer. Design and the owner's decisions first, then a branch.
+1. ~~**Front-surface change event**~~: done as candidate 13.
 2. **Candidate 6 · zoom slider router**, built on that event.
 
 ### 7 · Editor preview plan

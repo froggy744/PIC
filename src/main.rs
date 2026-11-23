@@ -116,6 +116,12 @@ fn main() {
     }));
 
     adw::init().expect("libadwaita initialization failed");
+    // PIC's sidebar, drawer and immersive slides are part of its design, so
+    // they animate even when the desktop turns animations off. A value the
+    // application sets takes precedence over the desktop setting.
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_enable_animations(true);
+    }
     startup_trace::mark("adw_init_done", None);
     register_bundled_icons();
     let application = adw::Application::new(

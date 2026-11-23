@@ -5,6 +5,7 @@
     let window_escape = gtk::EventControllerKey::new();
     window_escape.set_propagation_phase(gtk::PropagationPhase::Capture);
     let lightbox_for_window_escape = lightbox.clone();
+    let front_for_key = front.clone();
     let space_open_slot_for_key = space_open_slot.clone();
     let edit_space_slot_for_key = edit_space_slot.clone();
     let edit_escape_slot_for_key = edit_escape_slot.clone();
@@ -67,7 +68,7 @@
         }
 
         if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
-            && lightbox_for_window_escape.root.is_visible()
+            && front_for_key.current() == Front::Lightbox
         {
             
             lightbox_for_window_escape.request_close();
@@ -103,7 +104,7 @@
                 window_for_fullscreen_key.fullscreen();
             }
             glib::Propagation::Stop
-        } else if lightbox_for_window_escape.root.is_visible()
+        } else if front_for_key.current() == Front::Lightbox
             && (key == gtk::gdk::Key::Up || key == gtk::gdk::Key::Down)
             && search_popup_for_key
                 .borrow()
@@ -113,12 +114,12 @@
             // Search suggestions own Up/Down while visible, even with the
             // photo viewer open underneath.
             glib::Propagation::Proceed
-        } else if lightbox_for_window_escape.root.is_visible()
+        } else if front_for_key.current() == Front::Lightbox
             && (key == gtk::gdk::Key::Left || key == gtk::gdk::Key::Right)
         {
             lightbox_for_window_escape.navigate_photo(if key == gtk::gdk::Key::Left { -1 } else { 1 });
             glib::Propagation::Stop
-        } else if lightbox_for_window_escape.root.is_visible()
+        } else if front_for_key.current() == Front::Lightbox
             && (key == gtk::gdk::Key::Up || key == gtk::gdk::Key::Down)
         {
             lightbox_for_window_escape.navigate_collection(if key == gtk::gdk::Key::Up { -1 } else { 1 });
@@ -135,7 +136,7 @@
             if edit_handled {
                 return glib::Propagation::Stop;
             }
-            if lightbox_for_window_escape.root.is_visible() {
+            if front_for_key.current() == Front::Lightbox {
                 if one_to_one_for_key.is_active() {
                     space_toggle_in_progress_for_key.set(true);
                     one_to_one_for_key.set_active(false);

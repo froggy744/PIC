@@ -30,6 +30,7 @@
         let folder_cache = folder_cache.clone();
         let gallery = gallery.clone();
         let lightbox = lightbox.clone();
+        let front = front.clone();
         let sort = sort.clone();
         let group_mode = group_mode.clone();
         let date_browser_exit = date_browser_discard_slot.clone();
@@ -102,7 +103,7 @@
                 filter.get(),
                 new_filter,
                 exact_photo_target,
-                lightbox.root.is_visible(),
+                front.current() == Front::Lightbox,
                 reuse_folder_stream,
             ) {
                 crate::nav_transition_trace!(
@@ -2478,6 +2479,7 @@
         let open_edit = open_edit.clone();
         let current = Rc::downgrade(&info);
         let main_stack = main_stack.clone();
+        let front = front.clone();
         let one_to_one = info.one_to_one.clone();
         let collage_editing = collage_editing.clone();
         let collage_editor = collage_editor.clone();
@@ -2486,14 +2488,14 @@
             // The bottom Edit button is only for normal photo editing. Collage
             // photos use the collage editor's own Edit Photo action, which
             // preserves the return-to-collage state.
-            if main_stack.visible_child_name().as_deref() == Some("collage") {
+            if front.current() == Front::Collage {
                 return;
             }
 
             // The bottom Edit button is a true open/close toggle. This keeps
             // the editing workspace optional instead of forcing users to use
             // Back/Done just to return to normal browsing.
-            if main_stack.visible_child_name().as_deref() == Some("edit") {
+            if front.current() == Front::Editor {
                 one_to_one.set_active(false);
                 // Drop the edit Space slot so gallery/lightbox Space works
                 // again once the toggle leaves the edit page.
@@ -2528,7 +2530,7 @@
     {
         let open_collage = open_collage.clone();
         let gallery = gallery.clone();
-        let main_stack = main_stack.clone();
+        let front = front.clone();
         let collage_editor = collage_editor.clone();
         let connection = connection.clone();
         info.collage.connect_clicked(move |_| {
@@ -2536,7 +2538,7 @@
             // before the normal stack teardown can save the live project.
             // Persist it here so Resume always refers to what the user is
             // actually looking at, not an older database draft.
-            if main_stack.visible_child_name().as_deref() == Some("collage") {
+            if front.current() == Front::Collage {
                 if let Ok(editor_handle) = collage_editor.try_borrow() {
                     if let Some(editor) = editor_handle.as_ref() {
                         let json = editor.draft_json();
@@ -2580,16 +2582,16 @@
     window.add_controller(search_keyboard);
 
     let begin_typed_search: Rc<dyn Fn() -> bool> = {
-        let stack = main_stack.downgrade();
+        let front = front.clone();
         let dismiss_drawer = dismiss_drawer.clone();
         let reveal_search = immersive_reveal_search_slot.clone();
         Rc::new(move || {
-            let Some(stack) = stack.upgrade() else {
-                return false;
-            };
             // The current photo viewer remains open while the gallery behind
             // it updates to the new search results.
-            if !matches!(stack.visible_child_name().as_deref(), Some("photos" | "library")) {
+            if !matches!(
+                front.current(),
+                Front::Gallery | Front::DateOverview | Front::Lightbox | Front::LibraryHome
+            ) {
                 return false;
             }
             dismiss_drawer();
@@ -2683,6 +2685,7 @@
     let suggestion_list_for_search = suggestion_list.clone();
     let stack_for_home_search = main_stack.clone();
     let lightbox_for_search = lightbox.clone();
+    let front_for_search = front.clone();
     let clear_search_after_photo = clear_search_after_result.clone();
     let exit_browser_for_search = date_browser_discard_slot.clone();
     let date_browser_button_for_search = date_browser_button.clone();
@@ -2744,7 +2747,7 @@
                 }
             }
             
-            if lightbox_for_search.root.is_visible() && !query.is_empty() {
+            if front_for_search.current() == Front::Lightbox && !query.is_empty() {
                 let mut photos = db::browse_photos_limited(
                     &connection_for_search.borrow(),
                     None,

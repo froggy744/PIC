@@ -2340,6 +2340,7 @@ mod photo_actions_tests {
                 info
             },
             lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
             import_folder: Rc::new(|| {}),
@@ -2436,6 +2437,7 @@ mod photo_actions_tests {
             rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: Rc::new(InfoBar::new()),
             lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
             import_folder: Rc::new(|| {}),
@@ -2518,6 +2520,7 @@ mod photo_actions_tests {
             rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: Rc::new(InfoBar::new()),
             lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
             import_folder: Rc::new(|| {}),

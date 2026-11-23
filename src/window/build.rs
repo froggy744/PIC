@@ -207,9 +207,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // The one owner of the Properties inspector's presentation.
     let properties = PropertiesWidgets::new(info.clone());
 
-    let date_browser_overview_visible = Rc::new(Cell::new(false));
-
     let lightbox = Rc::new(Lightbox::new());
+    // The front surface is read live from these three; see front_surface.rs.
+    let main_stack = gtk::Stack::new();
+    let date_browser_slot: Rc<RefCell<Option<date_browser::DateBrowser>>> = Rc::new(RefCell::new(None));
+    let date_browser_active = Rc::new(Cell::new(false));
+    let front = FrontSurface::new(
+        &main_stack,
+        &lightbox,
+        date_browser_active.clone(),
+        date_browser_slot.clone(),
+    );
     {
         let properties = properties.clone();
         lightbox.root.connect_visible_notify(move |root| {
@@ -278,9 +286,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let info_for_grid = info.clone();
     let lightbox_for_grid = lightbox.clone();
-    let lightbox_for_grid_selection = lightbox.clone();
+    let front_for_grid_selection = front.clone();
     let properties_for_grid_selection = properties.clone();
-    let date_browser_overview_for_grid_selection = date_browser_overview_visible.clone();
     let filter = Rc::new(Cell::new(initial_filter));
     let search_text = Rc::new(RefCell::new(String::new()));
     let search_entry_slot: Rc<RefCell<Option<gtk::SearchEntry>>> = Rc::new(RefCell::new(None));
@@ -548,6 +555,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         rating_filter: rating_filter.clone(),
         info: info.clone(),
         lightbox: Rc::downgrade(&lightbox),
+        front: Rc::downgrade(&front),
         sidebar: sidebar_for_unavailable.clone(),
         create_album: create_album.clone(),
         import_folder: import_folder.clone(),
@@ -619,9 +627,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         move |photo| {
             // A hidden gallery refresh must not replace the photo currently
             // displayed by the lightbox or its info bar.
-            if lightbox_for_grid_selection.root.is_visible()
-                || date_browser_overview_for_grid_selection.get()
-            {
+            if front_for_grid_selection.gallery_covered() {
                 return;
             }
             info_for_grid.show_gallery_focus(photo.as_ref());
@@ -684,7 +690,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let connection = connection.clone();
             let grid_zoom = info.grid_zoom.clone();
             let grid_zoom_syncing = grid_zoom_syncing.clone();
-            let lightbox = lightbox.clone();
+            let front = front.clone();
             move |width| {
                 if let Err(error) = db::set_setting(
                     &connection.borrow(),
@@ -697,7 +703,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 // A gallery zoom may finish just after the viewer opens.
                 // Never let that stale completion overwrite the lightbox's
                 // 0..100 zoom slider.
-                if !lightbox.root.is_visible() {
+                if front.current() != Front::Lightbox {
                     grid_zoom_syncing.set(true);
                     grid_zoom.set_value(grid_zoom_slider_value(width));
                     grid_zoom_syncing.set(false);
@@ -1193,6 +1199,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let group_mode_for_collection_nav = group_mode.clone();
     let gallery_for_collection_nav = gallery.clone();
     let lightbox_for_collection_nav = lightbox.clone();
+    let front_for_collection_nav = front.clone();
     let sidebar_selection_for_collection_nav = sidebar_selection_slot.clone();
     let current_for_collection_nav = Rc::downgrade(&info);
     let collection_navigation: Rc<dyn Fn(i32)> = Rc::new(move |direction| {
@@ -1276,7 +1283,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, 0);
                         }
                         return;
@@ -1362,7 +1369,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, photos.len() - 1);
                         }
                         return;
@@ -1416,7 +1423,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, 0);
                         }
                         return;
@@ -1460,7 +1467,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, 0);
                         }
                         return;
@@ -1510,7 +1517,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, 0);
                         }
                         return;
@@ -1558,7 +1565,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, photos.len() - 1);
                         }
                         return;
@@ -1607,7 +1614,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, 0);
                         }
                         return;
@@ -1652,7 +1659,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, photos.len() - 1);
                         }
                         return;
@@ -1702,7 +1709,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, 0);
                         }
                         return;
@@ -1777,7 +1784,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
                             .collect::<Vec<_>>();
-                        if lightbox_for_collection_nav.root.is_visible() {
+                        if front_for_collection_nav.current() == Front::Lightbox {
                             lightbox_for_collection_nav.open(objects, 0);
                         }
                         return;
@@ -2652,8 +2659,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     date_browser_button.add_css_class("pic-header-action");
     date_browser_button.set_visible(filter.get() == sidebar::SidebarFilter::All);
     let date_browser_snapshot: Rc<RefCell<Option<grid::DateBrowserSnapshot>>> = Rc::new(RefCell::new(None));
-    let date_browser_slot: Rc<RefCell<Option<date_browser::DateBrowser>>> = Rc::new(RefCell::new(None));
-    let date_browser_active = Rc::new(Cell::new(false));
     let date_browser_resume = Rc::new(RefCell::new(None::<(Option<(i32, u32)>, Option<i64>)>));
     let sync_date_browser_photo_info: Rc<dyn Fn()> = {
         let gallery = Rc::downgrade(&gallery);
@@ -2677,12 +2682,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let sort = sort.clone();
         let group_mode = group_mode.clone();
         let search = search_text.clone();
-        let overview_visible = date_browser_overview_visible.clone();
         let info = info.clone();
         let sync_info = sync_date_browser_photo_info.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
-            overview_visible.set(false);
             info.set_date_overview_shown(false);
             let active_photo_id = gallery.selected_photo_ids(None).first().copied();
             if let Some(snapshot) = snapshot.borrow_mut().take() {
@@ -2711,13 +2714,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let snapshot = date_browser_snapshot.clone();
         let browser_slot = Rc::downgrade(&date_browser_slot);
         let active = date_browser_active.clone();
-        let overview_visible = date_browser_overview_visible.clone();
         let info = info.clone();
         let button = date_browser_button.downgrade();
         let scroll = gallery_scroll_stack.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
-            overview_visible.set(false);
             info.set_date_overview_shown(false);
             snapshot.borrow_mut().take();
             if let Some(slot) = browser_slot.upgrade() {
@@ -2740,12 +2741,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let snapshot = date_browser_snapshot.clone();
             let gallery = gallery.clone();
             let scroll = gallery_scroll_stack.clone();
-            let overview_visible = date_browser_overview_visible.clone();
             let info = info.clone();
             let sync_info = sync_date_browser_photo_info.clone();
             let exit = exit_date_browser.clone();
             Rc::new(move |month| {
-                overview_visible.set(false);
                 info.set_date_overview_shown(false);
                 let indices = slot.upgrade().and_then(|slot| slot.borrow().as_ref().map(|browser| browser.indices(month)));
                 let mut snapshot = snapshot.borrow_mut();
@@ -2763,10 +2762,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         {
             let scroll = gallery_scroll_stack.clone();
             let heading = gallery.group_header.clone();
-            let overview_visible = date_browser_overview_visible.clone();
             let info = info.clone();
             Rc::new(move || {
-                overview_visible.set(true);
                 info.set_date_overview_shown(true);
                 scroll.set_visible(false);
                 heading.set_visible(false);
@@ -2982,7 +2979,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // easing as the photo views. Ctrl+wheel must not zoom the hidden gallery.
     install_smooth_gallery_scroll(&albums_home, gallery.clone(), false);
     albums_view::connect_create_album(&albums_home, create_album.clone());
-    let main_stack = gtk::Stack::new();
     // Hidden pages must not impose a width on the active gallery. In
     // particular, the Albums landing page has a wider introductory toolbar.
     main_stack.set_hhomogeneous(false);
@@ -2992,9 +2988,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let browser = browser.clone();
         let active = date_browser_active.clone();
-        let stack = main_stack.downgrade();
+        let front = front.clone();
         date_browser_back_slot.replace(Some(Rc::new(move || {
-            if !active.get() || !stack.upgrade().is_some_and(|stack| stack.visible_child_name().as_deref() == Some("photos")) {
+            if !active.get() || !matches!(front.current(), Front::Gallery | Front::DateOverview) {
                 return false;
             }
             browser.back()
@@ -3092,6 +3088,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let nav_fade_begin: Rc<dyn Fn(bool, bool, bool, bool)> = {
         let page_overlay = page_overlay.clone();
         let main_stack = main_stack.clone();
+        let front = front.clone();
         let source = nav_fade_source.clone();
         let composite_source = nav_fade_composite_source.clone();
         let gallery = gallery.clone();
@@ -3117,8 +3114,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     && main_stack.width() > 1
                     && main_stack.height() > 1
                     && matches!(
-                        main_stack.visible_child_name().as_deref(),
-                        Some("photos" | "library" | "albums")
+                        front.current(),
+                        Front::Gallery
+                            | Front::DateOverview
+                            | Front::Lightbox
+                            | Front::LibraryHome
+                            | Front::Albums
                     )
                 {
                     Some(source.current_image())
@@ -3281,10 +3282,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let filter_for_mode = filter.clone();
         let fade = nav_fade_begin.clone();
         let cancel = nav_fade_cancel.clone();
-        let viewer = lightbox.clone();
+        let front = front.clone();
         info.connect_photo_layout(move |mode| {
             if gallery_for_mode.layout() != mode {
-                if viewer.root.is_visible() {
+                if front.current() == Front::Lightbox {
                     cancel();
                 } else {
                     fade(false, false, true, false);
@@ -3947,6 +3948,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let parent = window.clone().upcast::<gtk::Window>();
         let connection = connection.clone();
         let main_stack = main_stack.clone();
+        let front = front.clone();
         let edit_page = edit_page.clone();
         let edit_editor = edit_editor.clone();
         let gallery = gallery.clone();
@@ -4081,9 +4083,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             {
                 let zoom_scale = info.grid_zoom.clone();
                 let syncing = grid_zoom_syncing_for_editor.clone();
-                let stack = main_stack.clone();
+                let front = front.clone();
                 editor.set_zoom_sync_handler(move |native_scale, fit_scale| {
-                    if stack.visible_child_name().as_deref() != Some("edit") {
+                    if front.current() != Front::Editor {
                         return;
                     }
                     let value = lightbox_slider_from_scale(native_scale, fit_scale);
@@ -4119,11 +4121,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             {
                 let text_toggle = editor.text_toggle_handle();
                 edit_editor.replace(Some(editor));
-                let main_stack = main_stack.clone();
+                let front = front.clone();
                 let one_to_one = info.one_to_one.clone();
                 let edit_space_slot = edit_space_slot.clone();
                 edit_space_slot.replace(Some(Rc::new(move || {
-                    if main_stack.visible_child_name().as_deref() != Some("edit") {
+                    if front.current() != Front::Editor {
                         // Editor left via the Edit toggle (slot not cleared);
                         // let Space fall through to lightbox/grid open.
                         return false;
@@ -4169,31 +4171,33 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         });
     }
     let edit_editor_for_one_to_one = edit_editor.clone();
-    let main_stack_for_one_to_one = main_stack.clone();
+    let front_for_one_to_one = front.clone();
     let space_toggle_in_progress_for_toggle = space_toggle_in_progress.clone();
     let space_open_slot_for_one_to_one = space_open_slot.clone();
     info.one_to_one.connect_toggled(move |button| {
         let enabled = button.is_active();
-        if main_stack_for_one_to_one.visible_child_name().as_deref() == Some("edit") {
-            if let Some(editor) = edit_editor_for_one_to_one.borrow().as_ref() {
-                editor.set_one_to_one(enabled);
-            }
-        } else if !lightbox_for_one_to_one.root.is_visible() {
-            if enabled {
-                // The grid toolbar 1:1 control follows Space: first open the
-                // selected photo in Fit, then toggle native pixels on the next
-                // press while the viewer is visible.
-                if let Some(open_selected) = space_open_slot_for_one_to_one.borrow().as_ref() {
-                    open_selected();
-                }
-                // Reset even if no photo could be opened (e.g. no selection).
-                // The photo-changed callback may already have reset it.
-                if button.is_active() {
-                    button.set_active(false);
+        match front_for_one_to_one.current() {
+            Front::Editor => {
+                if let Some(editor) = edit_editor_for_one_to_one.borrow().as_ref() {
+                    editor.set_one_to_one(enabled);
                 }
             }
-        } else {
-            lightbox_for_one_to_one.set_one_to_one(enabled);
+            Front::Lightbox => lightbox_for_one_to_one.set_one_to_one(enabled),
+            _ => {
+                if enabled {
+                    // The grid toolbar 1:1 control follows Space: first open the
+                    // selected photo in Fit, then toggle native pixels on the next
+                    // press while the viewer is visible.
+                    if let Some(open_selected) = space_open_slot_for_one_to_one.borrow().as_ref() {
+                        open_selected();
+                    }
+                    // Reset even if no photo could be opened (e.g. no selection).
+                    // The photo-changed callback may already have reset it.
+                    if button.is_active() {
+                        button.set_active(false);
+                    }
+                }
+            }
         }
         if space_toggle_in_progress_for_toggle.get() {
             space_toggle_in_progress_for_toggle.set(false);
@@ -4202,8 +4206,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             eprintln!(
                 "PIC_ZOOM_UI one_to_one enabled={} lightbox_visible={} edit_visible={}",
                 button.is_active(),
-                lightbox_for_one_to_one.root.is_visible(),
-                main_stack_for_one_to_one.visible_child_name().as_deref() == Some("edit"),
+                front_for_one_to_one.current() == Front::Lightbox,
+                front_for_one_to_one.current() == Front::Editor,
             );
         }
     });
@@ -4396,10 +4400,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let gallery_for_zoom_slider = gallery.clone();
     let date_browser_for_zoom_slider = date_browser_slot.clone();
-    let date_browser_active_for_zoom_slider = date_browser_active.clone();
     let lightbox_for_zoom_slider = lightbox.clone();
     let edit_editor_for_zoom_slider = edit_editor.clone();
-    let main_stack_for_zoom_slider = main_stack.clone();
+    let front_for_zoom_slider = front.clone();
     let grid_zoom_syncing_for_slider = grid_zoom_syncing.clone();
     let slider_last_value = Rc::new(Cell::new(info.grid_zoom.value()));
     let slider_last_value_for_change = slider_last_value.clone();
@@ -4424,8 +4427,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             eprintln!(
                 "PIC_ZOOM_UI event=value_changed value={:.3} lightbox_visible={} edit_visible={} syncing={} last={:.3}",
                 scale.value(),
-                lightbox_for_zoom_slider.root.is_visible(),
-                main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit"),
+                front_for_zoom_slider.current() == Front::Lightbox,
+                front_for_zoom_slider.current() == Front::Editor,
                 grid_zoom_syncing_for_slider.get(),
                 slider_last_value_for_change.get(),
             );
@@ -4437,7 +4440,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             return;
         }
 
-        if lightbox_for_zoom_slider.root.is_visible() {
+        let front = front_for_zoom_slider.current();
+        if front == Front::Lightbox {
             let value = scale.value();
             lightbox_slider_latest_for_change.set(value);
             if std::env::var_os("PICASA_TRACE").is_some() {
@@ -4487,7 +4491,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     glib::ControlFlow::Continue
                 });
             }
-        } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
+        } else if front == Front::Editor {
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
                 let fit_scale = editor.current_fit_scale();
                 editor.set_manual_zoom_scale(lightbox_scale_from_slider(
@@ -4495,15 +4499,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     fit_scale,
                 ));
             }
-        } else if date_browser_active_for_zoom_slider.get() {
+        } else if front == Front::DateOverview {
             if let Some(browser) = date_browser_for_zoom_slider.borrow().as_ref() {
-                if browser.is_overview_visible() {
-                    let width = grid_zoom_width_from_slider(scale.value());
-                    browser.set_tile_width(width);
-                    gallery_for_zoom_slider.request_slider_zoom(width);
-                } else {
-                    gallery_for_zoom_slider.request_slider_zoom(grid_zoom_width_from_slider(scale.value()));
-                }
+                let width = grid_zoom_width_from_slider(scale.value());
+                browser.set_tile_width(width);
+                gallery_for_zoom_slider.request_slider_zoom(width);
             }
         } else {
             gallery_for_zoom_slider
@@ -4518,8 +4518,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let grid_zoom_syncing_for_lightbox = grid_zoom_syncing.clone();
     let slider_last_value_for_sync = slider_last_value.clone();
     let lightbox_for_zoom_sync = lightbox.clone();
+    let front_for_zoom_sync = front.clone();
     lightbox.set_zoom_sync_handler(move |native_scale| {
-        if !lightbox_for_zoom_sync.root.is_visible() {
+        if front_for_zoom_sync.current() != Front::Lightbox {
             return;
         }
         // Fit is always the left endpoint and native 100% is always the
@@ -4572,8 +4573,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     zoom_scale_scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
     let zoom_scale_for_scroll = info.grid_zoom.clone();
-    let lightbox_for_scale_scroll = lightbox.clone();
-    let main_stack_for_scale_scroll = main_stack.clone();
+    let front_for_scale_scroll = front.clone();
     zoom_scale_scroll.connect_scroll(move |controller, dx, dy| {
         crate::scroll_trace::log_scroll_input("zoom_slider", controller, dx, dy);
         if controller
@@ -4586,12 +4586,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             return glib::Propagation::Stop;
         }
 
-        let step = if lightbox_for_scale_scroll.root.is_visible() {
-            20.0
-        } else if main_stack_for_scale_scroll.visible_child_name().as_deref() == Some("edit") {
-            10.0
-        } else {
-            1.0
+        let step = match front_for_scale_scroll.current() {
+            Front::Lightbox => 20.0,
+            Front::Editor => 10.0,
+            _ => 1.0,
         };
         let direction = if dy > 0.0 { -1.0 } else { 1.0 };
         let adjustment = zoom_scale_for_scroll.adjustment();
@@ -4620,10 +4618,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let gallery_for_zoom_reset = gallery.clone();
     let date_browser_for_zoom_reset = date_browser_slot.clone();
-    let date_browser_active_for_zoom_reset = date_browser_active.clone();
     let lightbox_for_zoom_reset = lightbox.clone();
     let edit_editor_for_zoom_reset = edit_editor.clone();
-    let main_stack_for_zoom_reset = main_stack.clone();
+    let front_for_zoom_reset = front.clone();
     let grid_zoom_for_reset = info.grid_zoom.clone();
     let grid_zoom_reset_press_x_for_release = grid_zoom_reset_press_x.clone();
     info.grid_zoom_reset
@@ -4639,19 +4636,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 return;
             }
 
-            if lightbox_for_zoom_reset.root.is_visible() {
+            let front = front_for_zoom_reset.current();
+            if front == Front::Lightbox {
                 lightbox_for_zoom_reset.set_manual_zoom_scale(1.0);
-            } else if main_stack_for_zoom_reset.visible_child_name().as_deref() == Some("edit") {
+            } else if front == Front::Editor {
                 if let Some(editor) = edit_editor_for_zoom_reset.borrow().as_ref() {
                     editor.fit();
                 }
-            } else if date_browser_active_for_zoom_reset.get() {
+            } else if front == Front::DateOverview {
                 if let Some(browser) = date_browser_for_zoom_reset.borrow().as_ref() {
-                    if browser.is_overview_visible() {
-                        gallery_for_zoom_reset.reset_zoom();
-                        browser.set_tile_width(gallery_for_zoom_reset.current_zoom_width());
-                    }
-                    else { gallery_for_zoom_reset.reset_zoom(); }
+                    gallery_for_zoom_reset.reset_zoom();
+                    browser.set_tile_width(gallery_for_zoom_reset.current_zoom_width());
                 }
             } else {
                 gallery_for_zoom_reset.reset_zoom();
@@ -4664,7 +4659,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_for_rotate = lightbox.clone();
     let properties_for_rotate = properties.clone();
     let edit_editor_for_rotate = edit_editor.clone();
-    let main_stack_for_rotate = main_stack.clone();
+    let front_for_rotate = front.clone();
 
     let rotate_photo: Rc<dyn Fn(bool)> = Rc::new(move |counter_clockwise| {
         let Some(photo) = info_rotate.current_photo() else {
@@ -4683,7 +4678,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         properties_for_rotate.show_photo(PropertiesSurface::Gallery, Some(&photo));
         gallery_for_rotate.refresh_rotated_photo(&photo.path());
         lightbox_for_rotate.refresh_current();
-        if main_stack_for_rotate.visible_child_name().as_deref() == Some("edit") {
+        if front_for_rotate.current() == Front::Editor {
             if let Some(editor) = edit_editor_for_rotate.borrow().as_ref() {
                 if editor.photo_id() == photo.id() {
                     editor.set_library_rotation(rotation);
@@ -5265,8 +5260,7 @@ fn start_photo_export_single(
         let window_for_keys = window.clone();
         let gallery_for_keys = gallery.clone();
         let filter_for_keys = filter.clone();
-        let stack_for_keys = main_stack.clone();
-        let lightbox_for_keys = lightbox.clone();
+        let front_for_keys = front.clone();
         let marks_for_keys = action_context.clone();
         let search_for_keys = search_text.clone();
 
@@ -5288,14 +5282,16 @@ fn start_photo_export_single(
                     | gtk::gdk::ModifierType::SUPER_MASK
                     | gtk::gdk::ModifierType::META_MASK,
             );
-            let photos_page =
-                stack_for_keys.visible_child_name().as_deref() == Some("photos");
+            // The Photos gallery (with or without the date overview) owns
+            // browse keys; the viewer keeps its own key map.
+            let gallery_front =
+                || matches!(front_for_keys.current(), Front::Gallery | Front::DateOverview);
 
             // Browse navigation is handled at the window boundary so it is
             // independent of whether a thumbnail, the grid, or a sidebar row
             // retained focus. Text fields, Edit, Collage, and the Lightbox
             // keep their own key maps.
-            if photos_page && !lightbox_for_keys.root.is_visible() && !disallowed_modifier {
+            if gallery_front() && !disallowed_modifier {
                 let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
                 let mut browser_command = false;
                 if control && !shift {
@@ -5345,7 +5341,7 @@ fn start_photo_export_single(
             }
 
             if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
-                if photos_page && !lightbox_for_keys.root.is_visible() {
+                if gallery_front() {
                     // Ctrl+A should select the complete visible result set.
                     // A folder normally scopes selection to the active folder,
                     // but search can return matches from elsewhere in the
@@ -5370,7 +5366,7 @@ fn start_photo_export_single(
             }
 
             if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::d | gtk::gdk::Key::D) {
-                if photos_page && !lightbox_for_keys.root.is_visible() {
+                if gallery_front() {
                     gallery_for_keys.clear_keyboard_selection();
                     return glib::Propagation::Stop;
                 }
@@ -5386,7 +5382,12 @@ fn start_photo_export_single(
                     .to_unicode()
                     .and_then(|character| character.to_digit(10))
                 {
-                    if digit <= 5 && (photos_page || lightbox_for_keys.root.is_visible()) {
+                    if digit <= 5
+                        && matches!(
+                            front_for_keys.current(),
+                            Front::Gallery | Front::DateOverview | Front::Lightbox
+                        )
+                    {
                         if let Some(photo) = marks_for_keys.info.current_photo() {
                             photo_mark_commands::run(
                                 &marks_for_keys,

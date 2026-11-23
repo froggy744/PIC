@@ -39,7 +39,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
-| 12 | Front surface (widens 6) | Worth exploring | in progress (`refactor/front-surface`) | none | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
+| 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 
 ## Outstanding work
 
@@ -227,7 +227,7 @@ Chosen over 12 because candidate 9's controls act on `selected_photo`, so a stal
 
 **First step:** trace every writer and reader of `selected_photo` (the 9 writers are listed under "5, 6, 8, 10, 11, 12" below), confirm whether it goes stale when the lightbox closes, and propose one owner with a precedence rule. 12 (front surface) is the natural follow-on.
 
-### 12 · Front surface (started 2026-11-23)
+### 12 · Front surface (merged 2026-11-23)
 Branch `refactor/front-surface`.
 
 #### Investigation (at `6678d9e3`, no code changed)
@@ -280,7 +280,12 @@ Settled by the agent, accepted with the plan: one file `src/window/front_surface
 - GUI harness: the first runs (`20261123T154312Z-294975`, `20261123T154651Z-296879`) stopped before their own checks on stale fixed click points in `gui_test.py`, failing on `main` too since `7f5a72ec`. Fixed separately on `fix/gui-harness-folder-navigation` (merge `467b3ee1`: controls driven by accessible name through AT-SPI, two pixel checks made layout-independent; on `main`: library 7/7, viewer 19/19, editing 39/39) and merged into this branch (`07c5a43a`). On this branch: `viewer` COMPLETE 19/19 (run `20261123T161240Z-326056`), `editing` COMPLETE 39/39 (run `20261123T161546Z-330946`).
 - Interaction checks (2026-11-23), scripted with `cargo run` on a private Xvfb against a copy of a harness library, judged from `PICASA_TRACE` route lines, the zoom slider's range and value, and screenshots; the same script on this branch and on `main`, 16/16 on both: the gallery slider resizes thumbnails (`lightbox_visible=false edit_visible=false`); the viewer opens on Space, its slider zooms, Space selects 1:1 (slider at 100%), the 1:1 button returns to Fit, Escape closes it (all `lightbox_visible=true`); the editor's slider and Space route to the editor (`edit_visible=true`) and Escape leaves it; the date overview opens, the slider resizes its tiles, Sort flips the direction (icon) without opening the menu, Escape leaves the overview; no panic or GTK critical. The script could not read the saved sort direction back reliably (unchanged by the press on both branches); the live result was used.
 - Earlier checks rerun after merging `main`: `front_surface` tests, `cargo check` (the 3 dead-code warnings are in untouched files), `cargo check --tests`, owner script and `--self-test`, the 5 display tests: all pass.
-- Awaiting the owner's approval before merging.
+- Approved by the owner and merged 2026-11-23 (`16e816e3`).
+
+**Follow-up after merge:**
+- Events stage (decision 1): a `FrontSurface::connect_changed` to replace the ~17 viewer, page and date-overview change handlers and the private copies in the InfoBar (`covered`, `InfoBarPage`), Properties (`set_lightbox_shown`) and the metadata panel (`set_lightbox_open`). Candidate 6 (zoom slider router) is its first consumer: the zoom range still has 3 writers.
+- The owner rule does not catch `matches!` over page names (see above).
+- `scripts/gui_test.py` still clicks fixed points in the `browse-navigation` suite (`click_at(118, 524)` for the folder row) and elsewhere outside the library, viewer and editing paths.
 
 ### 7 · Editor preview plan
 **Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.

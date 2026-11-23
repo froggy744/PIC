@@ -24,6 +24,10 @@ use layout_settle::{
     should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
 };
 
+mod properties_presentation;
+mod properties_widgets;
+use properties_presentation::PropertiesSurface;
+use properties_widgets::PropertiesWidgets;
 mod sidebar_presentation;
 mod sidebar_widgets;
 use sidebar_widgets::{ImmersiveHost, SidebarCells, SidebarWidgetParts, SidebarWidgets};
@@ -671,6 +675,8 @@ struct PhotoActionContext {
     window: glib::WeakRef<gtk::Window>,
     context_menu_host: Rc<RefCell<Option<glib::WeakRef<gtk::Overlay>>>>,
     operation_progress: Rc<OperationProgressUi>,
+    /// The window's Properties inspector, for the photo menu's Properties item.
+    properties: Weak<PropertiesWidgets>,
 }
 
 include!("window/operation_progress.rs");

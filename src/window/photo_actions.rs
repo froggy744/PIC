@@ -2,19 +2,6 @@ use gio::prelude::{AppInfoExt, SettingsExt};
 
 thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
-    static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
-    static DOCKED_PROPERTIES_SPLIT: RefCell<Option<adw::OverlaySplitView>> = RefCell::new(None);
-    static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
-    static DOCKED_PROPERTIES_SCROLL_Y: Cell<f64> = const { Cell::new(0.0) };
-    static DOCKED_PROPERTIES_SCROLL_GENERATION: Cell<u64> = const { Cell::new(0) };
-    static DOCKED_PROPERTIES_SCROLL_PENDING: Cell<bool> = const { Cell::new(false) };
-    static GALLERY_PROPERTIES_ALLOWED: Cell<bool> = const { Cell::new(false) };
-    static LIGHTBOX_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
-    static LIGHTBOX_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
-    static LIGHTBOX_PROPERTIES_SCROLL_Y: Cell<f64> = const { Cell::new(0.0) };
-    static LIGHTBOX_PROPERTIES_SCROLL_GENERATION: Cell<u64> = const { Cell::new(0) };
-    static LIGHTBOX_PROPERTIES_SCROLL_PENDING: Cell<bool> = const { Cell::new(false) };
-    static LIGHTBOX_PROPERTIES_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -948,7 +935,9 @@ fn show_photo_context_menu(
     let dismiss_menu_for_properties = dismiss_menu.clone();
     properties.connect_clicked(move |_| {
         dismiss_menu_for_properties();
-        show_properties_dialog(&photo_for_properties, &context_for_properties);
+        if let Some(properties) = context_for_properties.properties.upgrade() {
+            properties.open(&photo_for_properties);
+        }
     });
 
     let photo_for_delete = photo;
@@ -1493,41 +1482,6 @@ fn refresh_favorite_sidebar(context: &PhotoActionContext) {
     sidebar::refresh_library_counts(&sidebar, counts, &context.on_unavailable);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PropertiesSurface {
-    Gallery,
-    Lightbox,
-}
-
-fn properties_scroll_state(surface: PropertiesSurface, f: impl FnOnce(&Cell<u64>, &Cell<bool>)) {
-    match surface {
-        PropertiesSurface::Gallery => DOCKED_PROPERTIES_SCROLL_GENERATION.with(|generation| {
-            DOCKED_PROPERTIES_SCROLL_PENDING.with(|pending| f(generation, pending))
-        }),
-        PropertiesSurface::Lightbox => LIGHTBOX_PROPERTIES_SCROLL_GENERATION.with(|generation| {
-            LIGHTBOX_PROPERTIES_SCROLL_PENDING.with(|pending| f(generation, pending))
-        }),
-    }
-}
-
-fn remembered_properties_scroll_y(surface: PropertiesSurface) -> f64 {
-    match surface {
-        PropertiesSurface::Gallery => DOCKED_PROPERTIES_SCROLL_Y.with(Cell::get),
-        PropertiesSurface::Lightbox => LIGHTBOX_PROPERTIES_SCROLL_Y.with(Cell::get),
-    }
-}
-
-fn remember_properties_scroll_y(surface: PropertiesSurface, value: f64) {
-    match surface {
-        PropertiesSurface::Gallery => {
-            DOCKED_PROPERTIES_SCROLL_Y.with(|scroll_y| scroll_y.set(value));
-        }
-        PropertiesSurface::Lightbox => {
-            LIGHTBOX_PROPERTIES_SCROLL_Y.with(|scroll_y| scroll_y.set(value));
-        }
-    }
-}
-
 fn properties_panel_scroll_y(panel: &gtk::Box) -> Option<f64> {
     panel
         .first_child()
@@ -1536,222 +1490,53 @@ fn properties_panel_scroll_y(panel: &gtk::Box) -> Option<f64> {
         .map(|scroll| scroll.vadjustment().value())
 }
 
-fn active_properties_surface() -> PropertiesSurface {
-    if LIGHTBOX_PROPERTIES_ACTIVE.with(Cell::get) {
-        PropertiesSurface::Lightbox
-    } else {
-        PropertiesSurface::Gallery
-    }
-}
-
-pub(crate) fn register_docked_properties_panel(
-    panel: &gtk::Box,
-    split: &adw::OverlaySplitView,
-) {
-    DOCKED_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
-    DOCKED_PROPERTIES_SPLIT.with(|slot| slot.replace(Some(split.clone())));
-    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
-}
-
-pub(crate) fn register_lightbox_properties_panel(panel: &gtk::Box) {
-    LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
-    LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
-}
-
-fn close_properties(surface: PropertiesSurface) {
-    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-        eprintln!("PIC_INSPECTOR_TRACE stage=close surface={surface:?}");
-    }
-    match surface {
-        PropertiesSurface::Gallery => {
-            DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
-            // Keep the inspector child allocated. OverlaySplitView animates the
-            // actual content width without covering or hiding thumbnails.
-            DOCKED_PROPERTIES_SPLIT.with(|slot| {
-                if let Some(split) = slot.borrow().as_ref() {
-                    split.set_show_sidebar(false);
-                }
-            });
-        }
-        PropertiesSurface::Lightbox => {
-            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
-            LIGHTBOX_PROPERTIES_PANEL.with(|slot| {
-                if let Some(panel) = slot.borrow().as_ref() {
-                    panel.set_visible(false);
-                }
-            });
-        }
-    }
-}
-
-pub(crate) fn close_docked_properties() {
-    close_properties(PropertiesSurface::Gallery);
-}
-
 /// The Library and Albums index pages are not photo-selection surfaces.
 /// Keep this gate authoritative for InfoBar and photo-menu calls alike.
 pub(crate) fn page_allows_gallery_properties(page: Option<&str>) -> bool {
     page == Some("photos")
 }
 
-pub(crate) fn set_gallery_properties_allowed(allowed: bool) {
-    GALLERY_PROPERTIES_ALLOWED.with(|state| state.set(allowed));
-    if !allowed {
-        close_docked_properties();
-    }
-    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-        eprintln!("PIC_INSPECTOR_TRACE stage=page_allowed allowed={allowed}");
-    }
+/// The gallery panel's contents while no photo is selected, such as
+/// between folders; `on_close` runs when its close button is clicked.
+fn properties_placeholder(on_close: Rc<dyn Fn()>) -> gtk::Box {
+    let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    empty.set_valign(gtk::Align::Center);
+    empty.set_vexpand(true);
+    empty.set_margin_start(20);
+    empty.set_margin_end(20);
+    let title = gtk::Label::new(Some("Properties"));
+    title.add_css_class("heading");
+    let hint = gtk::Label::new(Some("Select a photo to view its details"));
+    hint.add_css_class("dim-label");
+    hint.set_wrap(true);
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.set_tooltip_text(Some("Close properties"));
+    close.set_halign(gtk::Align::End);
+    close.add_css_class("flat");
+    close.connect_clicked(move |_| on_close());
+    empty.append(&close);
+    empty.append(&title);
+    empty.append(&hint);
+    empty
 }
 
-/// The two inspectors retain independent visibility. Closing the viewer
-/// discards only its overlay, leaving the gallery's selection untouched.
-pub(crate) fn set_lightbox_properties_active(active: bool) {
-    LIGHTBOX_PROPERTIES_ACTIVE.with(|flag| flag.set(active));
-    if !active {
-        close_properties(PropertiesSurface::Lightbox);
-    }
+/// The Properties widgets for one photo: `content` holds `scroll`, which
+/// holds `sections`. A panel that already has a scroller keeps it and swaps
+/// in only `sections`, so its scroll position survives the rebuild.
+struct PropertiesContent {
+    content: gtk::Box,
+    scroll: gtk::ScrolledWindow,
+    sections: gtk::Box,
 }
 
-fn properties_open(surface: PropertiesSurface) -> bool {
-    match surface {
-        PropertiesSurface::Gallery => {
-            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
-                && DOCKED_PROPERTIES_SPLIT.with(|slot| {
-                    slot.borrow().as_ref().is_some_and(|split| split.shows_sidebar())
-                })
-        }
-        PropertiesSurface::Lightbox => {
-            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
-                && LIGHTBOX_PROPERTIES_PANEL.with(|slot| {
-                    slot.borrow().as_ref().is_some_and(|panel| panel.is_visible())
-                })
-        }
-    }
-}
-
-/// The InfoBar is shared by the gallery and the viewer, so route its
-/// right-click toggle to whichever surface is currently visible.
-fn toggle_docked_properties(
-    photo: &crate::photo_object::PhotoObject,
-    context: &PhotoActionContext,
-) {
-    let surface = active_properties_surface();
-    if surface == PropertiesSurface::Gallery
-        && !GALLERY_PROPERTIES_ALLOWED.with(Cell::get)
-    {
-        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-            eprintln!("PIC_INSPECTOR_TRACE stage=ignored reason=index_page photo={}", photo.id());
-        }
-        return;
-    }
-    let is_open = properties_open(surface);
-    if is_open {
-        close_properties(surface);
-    } else {
-        show_properties_dialog_on(photo, context, surface);
-    }
-    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-        eprintln!(
-            "PIC_INSPECTOR_TRACE stage=infobar_toggle surface={surface:?} action={} photo={}",
-            if is_open { "close" } else { "open" },
-            photo.id()
-        );
-    }
-}
-
-/// Viewer navigation changes only the visible lightbox inspector content.
-pub(crate) fn refresh_lightbox_properties(photo: &crate::photo_object::PhotoObject) {
-    let context = LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
-    if let Some(context) = context {
-        show_properties_dialog_on(photo, &context, PropertiesSurface::Lightbox);
-    }
-}
-
-pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
-    if !GALLERY_PROPERTIES_ALLOWED.with(Cell::get) {
-        return;
-    }
-    let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
-    if context.is_some() && std::env::var_os("PICASA_TRACE").is_some() {
-        eprintln!(
-            "PIC_INSPECTOR stage=refresh photo={} has_context=1",
-            photo.map(|photo| photo.id()).unwrap_or_default()
-        );
-    }
-    match (photo, context) {
-        (Some(photo), Some(context)) => {
-            show_properties_dialog_on(photo, &context, PropertiesSurface::Gallery);
-        },
-        (None, Some(_)) => {
-            // Changing folders temporarily clears the grid selection.
-            // Keep the inspector open, but do not show stale photo metadata.
-            DOCKED_PROPERTIES_PANEL.with(|slot| {
-                if let Some(panel) = slot.borrow().as_ref() {
-                    let mut pending = false;
-                    properties_scroll_state(PropertiesSurface::Gallery, |generation, state| {
-                        pending = state.replace(false);
-                        generation.set(generation.get().wrapping_add(1));
-                    });
-                    if !pending && !panel.has_css_class("properties-empty") {
-                        if let Some(scroll_y) = properties_panel_scroll_y(panel) {
-                            remember_properties_scroll_y(PropertiesSurface::Gallery, scroll_y);
-                        }
-                    }
-                    let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
-                    empty.set_valign(gtk::Align::Center);
-                    empty.set_vexpand(true);
-                    empty.set_margin_start(20);
-                    empty.set_margin_end(20);
-                    let title = gtk::Label::new(Some("Properties"));
-                    title.add_css_class("heading");
-                    let hint = gtk::Label::new(Some("Select a photo to view its details"));
-                    hint.add_css_class("dim-label");
-                    hint.set_wrap(true);
-                    let close = gtk::Button::from_icon_name("window-close-symbolic");
-                    close.set_tooltip_text(Some("Close properties"));
-                    close.set_halign(gtk::Align::End);
-                    close.add_css_class("flat");
-                    close.connect_clicked(|_| close_docked_properties());
-                    empty.append(&close);
-                    empty.append(&title);
-                    empty.append(&hint);
-                    let scroll = panel.first_child()
-                        .and_then(|child| child.first_child())
-                        .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
-                    if let Some(scroll) = scroll {
-                        scroll.set_child(Some(&empty));
-                    } else {
-                        while let Some(child) = panel.first_child() {
-                            panel.remove(&child);
-                        }
-                        panel.append(&empty);
-                    }
-                    panel.add_css_class("properties-empty");
-                }
-            });
-        },
-        _ => {}
-    }
-}
-
-fn show_properties_dialog(
-    photo: &crate::photo_object::PhotoObject,
-    context: &PhotoActionContext,
-) {
-    show_properties_dialog_on(photo, context, active_properties_surface());
-}
-
-fn show_properties_dialog_on(
+/// Builds the Properties contents for `photo`; `on_close` runs when the
+/// preview's close button is clicked.
+fn properties_photo_content(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
     surface: PropertiesSurface,
-) {
-    if surface == PropertiesSurface::Gallery
-        && !GALLERY_PROPERTIES_ALLOWED.with(Cell::get)
-    {
-        return;
-    }
+    on_close: Rc<dyn Fn()>,
+) -> PropertiesContent {
     let record = db::photo(&context.connection.borrow(), photo.id())
         .ok()
         .flatten();
@@ -1872,7 +1657,7 @@ fn show_properties_dialog_on(
     close.set_valign(gtk::Align::Start);
     close.set_margin_top(5);
     close.set_margin_end(5);
-    close.connect_clicked(move |_| close_properties(surface));
+    close.connect_clicked(move |_| on_close());
     preview_overlay.add_overlay(&close);
     sections.append(&preview_overlay);
 
@@ -1984,102 +1769,7 @@ fn show_properties_dialog_on(
     location_footer.append(&path_value);
     sections.append(&location_footer);
     sections.append(&scrapbook_inspector_extra(photo, context, surface));
-
-    // Both panels use the same metadata widgets but have independent state.
-    // Their overlay allocation never changes the thumbnail grid dimensions.
-    let panel = match surface {
-        PropertiesSurface::Gallery => {
-            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
-            DOCKED_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
-        }
-        PropertiesSurface::Lightbox => {
-            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
-            LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
-        }
-    };
-    if let Some(panel) = panel {
-        let mut pending = false;
-        let mut serial = 0;
-        properties_scroll_state(surface, |generation, state| {
-            pending = state.replace(true);
-            serial = generation.get().wrapping_add(1);
-            generation.set(serial);
-        });
-        let scroll_y = if pending || panel.has_css_class("properties-empty") {
-            remembered_properties_scroll_y(surface)
-        } else {
-            properties_panel_scroll_y(&panel)
-                .unwrap_or_else(|| remembered_properties_scroll_y(surface))
-        };
-        panel.remove_css_class("properties-empty");
-        remember_properties_scroll_y(surface, scroll_y);
-        let existing_scroll = panel.first_child()
-            .and_then(|child| child.first_child())
-            .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
-        let active_scroll = if let Some(existing) = existing_scroll {
-            scroll.set_child(None::<&gtk::Widget>);
-            existing.set_child(Some(&sections));
-            existing
-        } else {
-            while let Some(child) = panel.first_child() {
-                panel.remove(&child);
-            }
-            panel.append(&content);
-            scroll
-        };
-        // The adjustment's range is updated during allocation, after the new
-        // contents are installed. Restore after layout instead of clamping to
-        // the initial empty range.
-        let adjustment = active_scroll.vadjustment();
-        let lower = adjustment.lower();
-        let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-        if upper > lower {
-            adjustment.set_value(scroll_y.clamp(lower, upper));
-        }
-        let frames = Cell::new(0_u8);
-        active_scroll.add_tick_callback(move |scroll, _| {
-            let mut current = false;
-            properties_scroll_state(surface, |generation, _| current = generation.get() == serial);
-            if !current {
-                return glib::ControlFlow::Break;
-            }
-            let count = frames.get() + 1;
-            frames.set(count);
-            if count < 2 {
-                return glib::ControlFlow::Continue;
-            }
-            let adjustment = scroll.vadjustment();
-            let lower = adjustment.lower();
-            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-            let restored = scroll_y.clamp(lower, upper);
-            adjustment.set_value(restored);
-            remember_properties_scroll_y(surface, restored);
-            properties_scroll_state(surface, |_, pending| pending.set(false));
-            glib::ControlFlow::Break
-        });
-        panel.set_visible(true);
-        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-            eprintln!(
-                "PIC_INSPECTOR_TRACE stage=photo_content surface={surface:?} photo={} panel_width={}",
-                photo.id(), panel.width()
-            );
-        }
-        if surface == PropertiesSurface::Gallery {
-            DOCKED_PROPERTIES_SPLIT.with(|slot| {
-                if let Some(split) = slot.borrow().as_ref() {
-                    split.set_show_sidebar(true);
-                }
-            });
-        }
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_INSPECTOR stage=show surface={surface:?} photo={} visible={} panel_width={}",
-                photo.id(),
-                panel.is_visible(),
-                panel.width()
-            );
-        }
-    }
+    PropertiesContent { content, scroll, sections }
 }
 
 /// Global photo tags are always available from the Properties inspector,
@@ -2713,6 +2403,7 @@ mod photo_actions_tests {
             window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
             operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
         };
 
         show_photo_context_menu(source, overlay.clone().upcast(), context.clone(), 10.0, 10.0);
@@ -2808,6 +2499,7 @@ mod photo_actions_tests {
             window: glib::WeakRef::new(),
             context_menu_host: Rc::new(RefCell::new(None)),
             operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
         };
 
         let popover =
@@ -2889,6 +2581,7 @@ mod photo_actions_tests {
             window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
             operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
         };
 
         // Inside the album the action targets the album being viewed, with no

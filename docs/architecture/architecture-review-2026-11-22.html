@@ -288,7 +288,8 @@ flowchart LR
   <div class="font-semibold">Status (2026-11-23)</div>
   <p>Candidate 1 is done and merged into <span class="font-mono">main</span>: <span class="font-mono">grid/presentation.rs</span> (commits 0df3b918, afa6d54a, a3a71299, 62dff881).</p>
   <p>Candidate 2 is done and merged into <span class="font-mono">main</span> (merge commit 03a2fcb3): a pure state machine <span class="font-mono">window/sidebar_presentation.rs</span>, which also owns the pin, and one GTK adapter <span class="font-mono">window/sidebar_widgets.rs</span> that every sidebar writer dispatches to. All 16 sidebar display tests pass on a 1920x1080 Xvfb display, and hover peek, pin, narrow/wide window, divider drag and Immersive Mode were checked by hand.</p>
-  <p>Candidates 3-8 are open.</p>
+  <p>Candidate 3 is done on branch <span class="font-mono">refactor/properties-presentation</span>, awaiting review (not merged): a pure state machine <span class="font-mono">window/properties_presentation.rs</span> and one GTK adapter <span class="font-mono">window/properties_widgets.rs</span>, the only writer of inspector visibility and the InfoBar button. The 13 inspector thread-locals and the Immersive guards are gone; Immersive Mode suspends the panels instead of hiding them behind a guard, so a selection change in Immersive Mode no longer starts a hidden open/close transition.</p>
+  <p>Candidates 4-8 are open.</p>
 </section>
 
 <section id="top-recommendation" class="rounded-xl deep p-8 space-y-3">

@@ -27,7 +27,8 @@ All facts below were verified from `Cargo.toml`, `build.rs`, `.cargo/config.toml
 
 - All tests are inline `#[cfg(test)]` modules in `src/`; there is no `tests/` directory.
 - Tests needing a display, OpenGL, real photos, or hardware are `#[ignore]`d with a reason string. Run explicitly:
-  - `xvfb-run -a env GSK_RENDERER=cairo cargo test --locked <name> -- --ignored --test-threads=1`
+  - `xvfb-run -a -s "-screen 0 1920x1080x24" env -u WAYLAND_DISPLAY GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --locked <name> -- --ignored --test-threads=1`
+  - Keep the screen size: Xvfb defaults to 640×480, below the 1050 px sidebar breakpoint, so window tests start with a collapsed sidebar and fail misleadingly. Keep `-u WAYLAND_DISPLAY GDK_BACKEND=x11`: on a Wayland session GTK otherwise ignores Xvfb and opens the test windows on the user's real desktop.
   - Real-photo tests need `PIC_TEST_EDIT_REFERENCE=/path/to/original`.
 - Full GUI regression harness: `scripts/test-gui.sh` (see `scripts/README-gui-tests.md`). Private Xvfb display, private D-Bus, temporary `HOME`/`XDG_*` — it never touches your real library. Select a suite via `PIC_GUI_SUITE=all|startup|library|import|viewer|editing|screensaver|native|wayland`. Artifacts land in `reports/gui-tests/` (gitignored). Full-screen coverage needs an EWMH window manager (openbox), otherwise the run reports BLOCKED.
 - Known non-issues, do not chase: transient `canvas=0x0` during collage init; obsolete lightbox decodes cancelled during fast scroll; RADV "not conformant" Vulkan warning on Fedora/AMD; pre-existing build warnings from deprecated GTK APIs.

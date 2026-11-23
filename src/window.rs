@@ -25,6 +25,10 @@ use layout_settle::{
 };
 
 mod properties_presentation;
+mod properties_widgets;
+use properties_presentation::PropertiesSurface;
+#[allow(unused_imports)]
+use properties_widgets::PropertiesWidgets;
 mod sidebar_presentation;
 mod sidebar_widgets;
 use sidebar_widgets::{ImmersiveHost, SidebarCells, SidebarWidgetParts, SidebarWidgets};

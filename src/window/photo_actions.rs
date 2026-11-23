@@ -1493,12 +1493,6 @@ fn refresh_favorite_sidebar(context: &PhotoActionContext) {
     sidebar::refresh_library_counts(&sidebar, counts, &context.on_unavailable);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PropertiesSurface {
-    Gallery,
-    Lightbox,
-}
-
 fn properties_scroll_state(surface: PropertiesSurface, f: impl FnOnce(&Cell<u64>, &Cell<bool>)) {
     match surface {
         PropertiesSurface::Gallery => DOCKED_PROPERTIES_SCROLL_GENERATION.with(|generation| {
@@ -1698,24 +1692,7 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
                             remember_properties_scroll_y(PropertiesSurface::Gallery, scroll_y);
                         }
                     }
-                    let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
-                    empty.set_valign(gtk::Align::Center);
-                    empty.set_vexpand(true);
-                    empty.set_margin_start(20);
-                    empty.set_margin_end(20);
-                    let title = gtk::Label::new(Some("Properties"));
-                    title.add_css_class("heading");
-                    let hint = gtk::Label::new(Some("Select a photo to view its details"));
-                    hint.add_css_class("dim-label");
-                    hint.set_wrap(true);
-                    let close = gtk::Button::from_icon_name("window-close-symbolic");
-                    close.set_tooltip_text(Some("Close properties"));
-                    close.set_halign(gtk::Align::End);
-                    close.add_css_class("flat");
-                    close.connect_clicked(|_| close_docked_properties());
-                    empty.append(&close);
-                    empty.append(&title);
-                    empty.append(&hint);
+                    let empty = properties_placeholder(Rc::new(close_docked_properties));
                     let scroll = panel.first_child()
                         .and_then(|child| child.first_child())
                         .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
@@ -1735,6 +1712,30 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
     }
 }
 
+/// The gallery panel's contents while no photo is selected, such as
+/// between folders; `on_close` runs when its close button is clicked.
+fn properties_placeholder(on_close: Rc<dyn Fn()>) -> gtk::Box {
+    let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    empty.set_valign(gtk::Align::Center);
+    empty.set_vexpand(true);
+    empty.set_margin_start(20);
+    empty.set_margin_end(20);
+    let title = gtk::Label::new(Some("Properties"));
+    title.add_css_class("heading");
+    let hint = gtk::Label::new(Some("Select a photo to view its details"));
+    hint.add_css_class("dim-label");
+    hint.set_wrap(true);
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.set_tooltip_text(Some("Close properties"));
+    close.set_halign(gtk::Align::End);
+    close.add_css_class("flat");
+    close.connect_clicked(move |_| on_close());
+    empty.append(&close);
+    empty.append(&title);
+    empty.append(&hint);
+    empty
+}
+
 fn show_properties_dialog(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
@@ -1752,6 +1753,127 @@ fn show_properties_dialog_on(
     {
         return;
     }
+    let PropertiesContent { content, scroll, sections } = properties_photo_content(
+        photo,
+        context,
+        surface,
+        Rc::new(move || close_properties(surface)),
+    );
+
+    // Both panels use the same metadata widgets but have independent state.
+    // Their overlay allocation never changes the thumbnail grid dimensions.
+    let panel = match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+            DOCKED_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
+        }
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+            LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
+        }
+    };
+    if let Some(panel) = panel {
+        let mut pending = false;
+        let mut serial = 0;
+        properties_scroll_state(surface, |generation, state| {
+            pending = state.replace(true);
+            serial = generation.get().wrapping_add(1);
+            generation.set(serial);
+        });
+        let scroll_y = if pending || panel.has_css_class("properties-empty") {
+            remembered_properties_scroll_y(surface)
+        } else {
+            properties_panel_scroll_y(&panel)
+                .unwrap_or_else(|| remembered_properties_scroll_y(surface))
+        };
+        panel.remove_css_class("properties-empty");
+        remember_properties_scroll_y(surface, scroll_y);
+        let existing_scroll = panel.first_child()
+            .and_then(|child| child.first_child())
+            .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
+        let active_scroll = if let Some(existing) = existing_scroll {
+            scroll.set_child(None::<&gtk::Widget>);
+            existing.set_child(Some(&sections));
+            existing
+        } else {
+            while let Some(child) = panel.first_child() {
+                panel.remove(&child);
+            }
+            panel.append(&content);
+            scroll
+        };
+        // The adjustment's range is updated during allocation, after the new
+        // contents are installed. Restore after layout instead of clamping to
+        // the initial empty range.
+        let adjustment = active_scroll.vadjustment();
+        let lower = adjustment.lower();
+        let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+        if upper > lower {
+            adjustment.set_value(scroll_y.clamp(lower, upper));
+        }
+        let frames = Cell::new(0_u8);
+        active_scroll.add_tick_callback(move |scroll, _| {
+            let mut current = false;
+            properties_scroll_state(surface, |generation, _| current = generation.get() == serial);
+            if !current {
+                return glib::ControlFlow::Break;
+            }
+            let count = frames.get() + 1;
+            frames.set(count);
+            if count < 2 {
+                return glib::ControlFlow::Continue;
+            }
+            let adjustment = scroll.vadjustment();
+            let lower = adjustment.lower();
+            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+            let restored = scroll_y.clamp(lower, upper);
+            adjustment.set_value(restored);
+            remember_properties_scroll_y(surface, restored);
+            properties_scroll_state(surface, |_, pending| pending.set(false));
+            glib::ControlFlow::Break
+        });
+        panel.set_visible(true);
+        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+            eprintln!(
+                "PIC_INSPECTOR_TRACE stage=photo_content surface={surface:?} photo={} panel_width={}",
+                photo.id(), panel.width()
+            );
+        }
+        if surface == PropertiesSurface::Gallery {
+            DOCKED_PROPERTIES_SPLIT.with(|slot| {
+                if let Some(split) = slot.borrow().as_ref() {
+                    split.set_show_sidebar(true);
+                }
+            });
+        }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_INSPECTOR stage=show surface={surface:?} photo={} visible={} panel_width={}",
+                photo.id(),
+                panel.is_visible(),
+                panel.width()
+            );
+        }
+    }
+}
+
+/// The Properties widgets for one photo: `content` holds `scroll`, which
+/// holds `sections`. A panel that already has a scroller keeps it and swaps
+/// in only `sections`, so its scroll position survives the rebuild.
+struct PropertiesContent {
+    content: gtk::Box,
+    scroll: gtk::ScrolledWindow,
+    sections: gtk::Box,
+}
+
+/// Builds the Properties contents for `photo`; `on_close` runs when the
+/// preview's close button is clicked.
+fn properties_photo_content(
+    photo: &crate::photo_object::PhotoObject,
+    context: &PhotoActionContext,
+    surface: PropertiesSurface,
+    on_close: Rc<dyn Fn()>,
+) -> PropertiesContent {
     let record = db::photo(&context.connection.borrow(), photo.id())
         .ok()
         .flatten();
@@ -1872,7 +1994,7 @@ fn show_properties_dialog_on(
     close.set_valign(gtk::Align::Start);
     close.set_margin_top(5);
     close.set_margin_end(5);
-    close.connect_clicked(move |_| close_properties(surface));
+    close.connect_clicked(move |_| on_close());
     preview_overlay.add_overlay(&close);
     sections.append(&preview_overlay);
 
@@ -1984,102 +2106,7 @@ fn show_properties_dialog_on(
     location_footer.append(&path_value);
     sections.append(&location_footer);
     sections.append(&scrapbook_inspector_extra(photo, context, surface));
-
-    // Both panels use the same metadata widgets but have independent state.
-    // Their overlay allocation never changes the thumbnail grid dimensions.
-    let panel = match surface {
-        PropertiesSurface::Gallery => {
-            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
-            DOCKED_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
-        }
-        PropertiesSurface::Lightbox => {
-            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
-            LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
-        }
-    };
-    if let Some(panel) = panel {
-        let mut pending = false;
-        let mut serial = 0;
-        properties_scroll_state(surface, |generation, state| {
-            pending = state.replace(true);
-            serial = generation.get().wrapping_add(1);
-            generation.set(serial);
-        });
-        let scroll_y = if pending || panel.has_css_class("properties-empty") {
-            remembered_properties_scroll_y(surface)
-        } else {
-            properties_panel_scroll_y(&panel)
-                .unwrap_or_else(|| remembered_properties_scroll_y(surface))
-        };
-        panel.remove_css_class("properties-empty");
-        remember_properties_scroll_y(surface, scroll_y);
-        let existing_scroll = panel.first_child()
-            .and_then(|child| child.first_child())
-            .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
-        let active_scroll = if let Some(existing) = existing_scroll {
-            scroll.set_child(None::<&gtk::Widget>);
-            existing.set_child(Some(&sections));
-            existing
-        } else {
-            while let Some(child) = panel.first_child() {
-                panel.remove(&child);
-            }
-            panel.append(&content);
-            scroll
-        };
-        // The adjustment's range is updated during allocation, after the new
-        // contents are installed. Restore after layout instead of clamping to
-        // the initial empty range.
-        let adjustment = active_scroll.vadjustment();
-        let lower = adjustment.lower();
-        let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-        if upper > lower {
-            adjustment.set_value(scroll_y.clamp(lower, upper));
-        }
-        let frames = Cell::new(0_u8);
-        active_scroll.add_tick_callback(move |scroll, _| {
-            let mut current = false;
-            properties_scroll_state(surface, |generation, _| current = generation.get() == serial);
-            if !current {
-                return glib::ControlFlow::Break;
-            }
-            let count = frames.get() + 1;
-            frames.set(count);
-            if count < 2 {
-                return glib::ControlFlow::Continue;
-            }
-            let adjustment = scroll.vadjustment();
-            let lower = adjustment.lower();
-            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-            let restored = scroll_y.clamp(lower, upper);
-            adjustment.set_value(restored);
-            remember_properties_scroll_y(surface, restored);
-            properties_scroll_state(surface, |_, pending| pending.set(false));
-            glib::ControlFlow::Break
-        });
-        panel.set_visible(true);
-        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-            eprintln!(
-                "PIC_INSPECTOR_TRACE stage=photo_content surface={surface:?} photo={} panel_width={}",
-                photo.id(), panel.width()
-            );
-        }
-        if surface == PropertiesSurface::Gallery {
-            DOCKED_PROPERTIES_SPLIT.with(|slot| {
-                if let Some(split) = slot.borrow().as_ref() {
-                    split.set_show_sidebar(true);
-                }
-            });
-        }
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_INSPECTOR stage=show surface={surface:?} photo={} visible={} panel_width={}",
-                photo.id(),
-                panel.is_visible(),
-                panel.width()
-            );
-        }
-    }
+    PropertiesContent { content, scroll, sections }
 }
 
 /// Global photo tags are always available from the Properties inspector,

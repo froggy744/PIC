@@ -238,6 +238,86 @@ def find_accessible(role: str, name: str):
     return None
 
 
+def select_accessible_list_item(name: str, timeout: float = 5):
+    """Select a showing list row by its accessible name, through its list's
+    AT-SPI Selection interface. GTK 4 reports no screen extents for rows, so
+    this replaces clicking a fixed coordinate; selecting the row runs the same
+    `row-selected` path a click does."""
+    if pyatspi is None:
+        raise RuntimeError("pyatspi is required to select a list row")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for node in accessible_nodes() or ():
+            try:
+                if (node.getRoleName() != "list item" or (node.name or "") != name
+                        or not node.getState().contains(pyatspi.STATE_SHOWING)):
+                    continue
+                if node.parent.querySelection().selectChild(node.getIndexInParent()):
+                    return node
+            except Exception:
+                continue
+        time.sleep(0.2)
+    raise TimeoutError(f"Could not select the list row {name!r} through AT-SPI")
+
+
+def focused_accessible_name(role: str) -> str | None:
+    for node in accessible_nodes() or ():
+        try:
+            if node.getRoleName() == role and node.getState().contains(pyatspi.STATE_FOCUSED):
+                return node.name or ""
+        except Exception:
+            continue
+    return None
+
+
+OPPOSITE_FOCUS_KEY = {"Down": "Up", "Up": "Down", "Right": "Left", "Left": "Right"}
+
+
+def focus_accessible_by_key(role: str, name: str, key: str = "Down", max_steps: int = 20) -> None:
+    """Move keyboard focus with `key` (then the opposite key) until the
+    accessible `role` named `name` has focus. GTK 4 check and radio buttons
+    expose no AT-SPI action and no screen extents, so this replaces clicking
+    a fixed coordinate."""
+    if pyatspi is None:
+        raise RuntimeError("pyatspi is required to focus a control")
+    for direction, steps in ((key, max_steps), (OPPOSITE_FOCUS_KEY.get(key, key), 2 * max_steps)):
+        for _ in range(steps + 1):
+            if focused_accessible_name(role) == name:
+                return
+            command(["xdotool", "key", direction])
+            time.sleep(0.15)
+    raise TimeoutError(f"Could not move keyboard focus to {role} {name!r}")
+
+
+def activate_by_focus(role: str, name: str, key: str = "Down", activate: str = "space") -> None:
+    """Focus the accessible `role` named `name` by keyboard, then press `activate`."""
+    focus_accessible_by_key(role, name, key)
+    command(["xdotool", "key", activate])
+
+
+def set_accessible_slider(value: float, timeout: float = 5) -> float:
+    """Set the one showing slider (the InfoBar's shared zoom slider) through
+    its AT-SPI Value interface and return the value it reports back. This
+    replaces dragging between fixed screen points."""
+    if pyatspi is None:
+        raise RuntimeError("pyatspi is required to set the zoom slider")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        sliders = []
+        for node in accessible_nodes() or ():
+            try:
+                if node.getRoleName() == "slider" and node.getState().contains(pyatspi.STATE_SHOWING):
+                    sliders.append(node)
+            except Exception:
+                continue
+        if len(sliders) == 1:
+            slider = sliders[0].queryValue()
+            slider.currentValue = value
+            return slider.currentValue
+        time.sleep(0.2)
+    raise TimeoutError("Could not find exactly one showing slider through AT-SPI")
+
+
 def accessible_exists(role: str, name: str) -> bool:
     wanted = name.casefold()
     for node in accessible_nodes() or ():
@@ -387,7 +467,11 @@ def matching_generated_tiles(path: Path) -> list[tuple[int, int, str]]:
             actual = image.getpixel((px, py))
             match = min(colors, key=lambda name: sum(abs(a - b) for a, b in zip(actual, colors[name])))
             error = sum(abs(a - b) for a, b in zip(actual, colors[match]))
-            if error < 75:
+            # A thumbnail centre is a flat fill; text or an icon from a popover
+            # over the sample point is not, even when one pixel's colour is close.
+            patch = image.crop((px - 4, py - 4, px + 5, py + 5)).getdata()
+            uniform = all(sum(abs(a - b) for a, b in zip(pixel, colors[match])) < 75 for pixel in patch)
+            if error < 75 and uniform:
                 found.append((x, y, match))
     return found
 
@@ -403,16 +487,26 @@ def generated_photo_center_color_distance(path: Path, filename: str, x: int, y: 
 
 
 def selected_badge_count(path: Path) -> int:
+    """Count selection badges in the three gallery columns. The rows are
+    scanned rather than sampled at fixed heights, because the gallery's
+    scroll position (and so each row's height on screen) varies by step."""
     image = Image.open(path).convert("RGB")
     count = 0
     for x in (657, 1011, 1385):
-        for y in (146, 360, 573, 786):
-            px, py = x + MOUSE_OFFSET_X, y + MOUSE_OFFSET_Y
+        px = x + MOUSE_OFFSET_X
+        y = 60  # Just below the header bar, where the gallery starts.
+        while y <= 880:
+            py = y + MOUSE_OFFSET_Y
             crop = image.crop((px - 8, py - 8, px + 9, py + 9))
             blue = sum(1 for red, green, blue in crop.getdata()
                        if 40 <= red <= 90 and 110 <= green <= 170 and blue >= 200)
-            if blue >= 18:
+            # A badge is a filled disc (about 165 of 289 pixels); the selected
+            # tile's blue focus border crosses the scan line with far fewer.
+            if blue >= 100:
                 count += 1
+                y += 150  # Past this badge; rows are about 213 px apart.
+            else:
+                y += 4
     return count
 
 
@@ -852,7 +946,8 @@ def smoke_test() -> None:
            f"database ratings: landscape={landscape_rating}, portrait={portrait_rating}; screenshot={rating_shot.name}")
 
     # Open the actual imported folder and filter it to the rated image.
-    click_at(118, 486)
+    # The sidebar folder row is named by the folder's path.
+    select_accessible_list_item(str(SAMPLE_DIR))
     wait_for(lambda: APP_LOG.exists() and "PIC_SCAN_UI gallery_replace filter=Folder(" in APP_LOG.read_text(errors="replace"),
              "folder gallery replacement", timeout=15)
     folder_shot = wait_for(
@@ -870,7 +965,7 @@ def smoke_test() -> None:
     wait_for(lambda: accessible_exists("radio button", "Clear"),
              "rating filter popover to open", timeout=4)
     filter_menu = screenshot("02c-rating-filter-menu.png")
-    click_at(1350, 286)
+    activate_by_focus("radio button", "★★★ 3")
     wait_for(lambda: db_setting("photo-rating-filter") == "3",
              "folder rating filter set to three stars", timeout=8)
     filtered_shot = screenshot("02d-folder-rated-filter.png")
@@ -881,7 +976,7 @@ def smoke_test() -> None:
            f"setting={db_setting('photo-rating-filter')}; visible fixture tiles={filtered_tiles}; screenshots={filter_menu.name}, {filtered_shot.name}")
     # The check button leaves its popover open, so the Clear row is directly
     # available after choosing the rating filter.
-    click_at(1350, 130)
+    activate_by_focus("radio button", "Clear", key="Up")
     wait_for(lambda: db_setting("photo-rating-filter") == "all",
              "clear folder rating filter", timeout=8)
     command(["xdotool", "key", "Escape"])
@@ -900,8 +995,9 @@ def smoke_test() -> None:
     wait_for(lambda: accessible_exists("radio button", "Clear"),
              "rating filter popover to reopen", timeout=4)
     all_stars_menu = screenshot("02-rating-all-stars-menu.png")
+    focus_accessible_by_key("radio button", "All Stars")
     all_stars_click_started = time.monotonic()
-    click_at(1350, 162)  # All Stars row in the rating-filter popover.
+    command(["xdotool", "key", "space"])  # Activate the focused All Stars row.
     db_deadline = all_stars_click_started + 8
     while db_setting("photo-rating-filter") != "stars" and time.monotonic() < db_deadline:
         time.sleep(0.01)
@@ -938,7 +1034,7 @@ def smoke_test() -> None:
            f"database state observed={db_result_ms:.1f} ms; first captured matching GUI frame={visual_result_ms:.1f} ms; "
            f"screenshots={all_stars_menu.name}, {all_stars_screenshot.name} (visual timing includes screenshot capture/polling)")
     # Restore the unfiltered folder for the remaining import/navigation tests.
-    click_at(1230, 110)
+    activate_by_focus("radio button", "Clear", key="Up")
     wait_for(lambda: db_setting("photo-rating-filter") == "all",
              "clear All Stars folder rating filter", timeout=8)
     command(["xdotool", "key", "Escape"])
@@ -949,7 +1045,8 @@ def smoke_test() -> None:
     # and a second import of the same directory. The import source is outside
     # the indexed fixture folder and remains untouched by PIC.
     def open_import_chooser(screenshot_name: str) -> Path:
-        click_at(245, 445)
+        if click_accessible("button", "Import Folder") is None:
+            raise RuntimeError("Could not press the sidebar Import Folder button through AT-SPI")
         chooser = wait_for(lambda: next((wid for wid in command(
             ["xdotool", "search", "--onlyvisible", "--name", ".*"], check=False).splitlines()
             if "Import Local Folder" in command(["xdotool", "getwindowname", wid], check=False)), None),
@@ -1086,11 +1183,9 @@ def smoke_test() -> None:
     viewer_crop = (319 + MOUSE_OFFSET_X, 52 + MOUSE_OFFSET_Y,
                    1434 + MOUSE_OFFSET_X, 836 + MOUSE_OFFSET_Y)
     fit_bounds = matching_color_bounds(next_shot, (180, 75, 95), crop=viewer_crop)
-    # Drag the actual shared zoom slider toward its high end.
-    command(["xdotool", "mousemove", "967", "866"])
-    command(["xdotool", "mousedown", "1"])
-    command(["xdotool", "mousemove", "--sync", "986", "866"])
-    command(["xdotool", "mouseup", "1"])
+    # Move the actual shared zoom slider between Fit (0) and 100% (50).
+    slider_value = set_accessible_slider(25)
+    print(f"ZOOM_SLIDER value={slider_value}", flush=True)
     wait_for(lambda: (bounds := matching_color_bounds(
         screenshot("06-lightbox-zoom-wait.png"), (180, 75, 95), crop=viewer_crop)) is not None
         and bounds[2] - bounds[0] > (fit_bounds[2] - fit_bounds[0] if fit_bounds else 0),

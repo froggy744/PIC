@@ -238,6 +238,28 @@ def find_accessible(role: str, name: str):
     return None
 
 
+def select_accessible_list_item(name: str, timeout: float = 5):
+    """Select a showing list row by its accessible name, through its list's
+    AT-SPI Selection interface. GTK 4 reports no screen extents for rows, so
+    this replaces clicking a fixed coordinate; selecting the row runs the same
+    `row-selected` path a click does."""
+    if pyatspi is None:
+        raise RuntimeError("pyatspi is required to select a list row")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for node in accessible_nodes() or ():
+            try:
+                if (node.getRoleName() != "list item" or (node.name or "") != name
+                        or not node.getState().contains(pyatspi.STATE_SHOWING)):
+                    continue
+                if node.parent.querySelection().selectChild(node.getIndexInParent()):
+                    return node
+            except Exception:
+                continue
+        time.sleep(0.2)
+    raise TimeoutError(f"Could not select the list row {name!r} through AT-SPI")
+
+
 def accessible_exists(role: str, name: str) -> bool:
     wanted = name.casefold()
     for node in accessible_nodes() or ():
@@ -852,7 +874,8 @@ def smoke_test() -> None:
            f"database ratings: landscape={landscape_rating}, portrait={portrait_rating}; screenshot={rating_shot.name}")
 
     # Open the actual imported folder and filter it to the rated image.
-    click_at(118, 486)
+    # The sidebar folder row is named by the folder's path.
+    select_accessible_list_item(str(SAMPLE_DIR))
     wait_for(lambda: APP_LOG.exists() and "PIC_SCAN_UI gallery_replace filter=Folder(" in APP_LOG.read_text(errors="replace"),
              "folder gallery replacement", timeout=15)
     folder_shot = wait_for(

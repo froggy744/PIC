@@ -157,11 +157,9 @@
             date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);
             date_browser_button.set_sensitive(true);
             restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
-            if let Err(error) = db::set_setting(
-                &connection.borrow(),
-                LAST_VIEW_SETTING_KEY,
-                &sidebar_filter_setting(new_filter),
-            ) {
+            if let Err(error) =
+                record_session(&*connection.borrow(), SessionChange::View(new_filter))
+            {
                 eprintln!("Could not save current view: {error}");
             }
             if let Some(sidebar) = sidebar_selection.borrow().as_ref() {
@@ -1148,16 +1146,10 @@
     compact_scroll.set_child(Some(&compact_sidebar));
     compact_rail_shell.set_child(Some(&compact_scroll));
     compact_sidebar_page.append(&compact_rail_shell);
-    // v2 resets the former 120px-wide default once; thereafter the chosen
-    // compact width persists independently from the normal sidebar.
-    const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width-v2";
-    const COMPACT_ICON_RAIL_WIDTH: f64 = 44.0;
-    const _: () = assert!(COMPACT_ICON_RAIL_WIDTH == COMPACT_RAIL_MIN_WIDTH);
     const COMPACT_SIDEBAR_MODE_KEY: &str = SIDEBAR_MODE_SETTING_KEY;
-    let compact_width = Rc::new(Cell::new(
-        numeric_setting::<f64>(&connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY)
-            .map(clamp_compact_rail_width).unwrap_or(COMPACT_ICON_RAIL_WIDTH),
-    ));
+    // Saved widths and fractions, with their defaults and clamps applied.
+    let session = SessionState::load(&*connection.borrow());
+    let compact_width = Rc::new(Cell::new(session.compact_width));
     for label in compact_labels.borrow().iter() { label.set_visible(compact_rail_shows_labels(compact_width.get())); }
     // Align option text with the start of the centered Favorites title.
     let option_inset: Rc<dyn Fn(f64)> = {
@@ -1229,8 +1221,8 @@
             if let Some(widgets) = widgets.borrow().clone() {
                 widgets.dispatch(SidebarEvent::CompactWidthChanged(width.get()));
             }
-            if let Err(error) = db::set_setting(
-                &connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY, &width.get().to_string(),
+            if let Err(error) = record_session(
+                &*connection.borrow(), SessionChange::CompactWidth(width.get()),
             ) { eprintln!("Could not save compact width: {error}"); }
         });
     }
@@ -1249,25 +1241,12 @@
     main_split.set_content(Some(&right_column));
     main_split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
     main_split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
-    let saved_sidebar_fraction = numeric_setting::<f64>(
-        &connection.borrow(),
-        SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
-    )
-    .unwrap_or(0.22)
-    .clamp(0.10, 0.70);
-    main_split.set_sidebar_width_fraction(saved_sidebar_fraction);
+    main_split.set_sidebar_width_fraction(session.sidebar_fraction);
     // When collapsed, libadwaita clamps the sidebar to max-sidebar-width and
     // ignores the fraction, so the compact overlay swaps in its own (narrower)
     // cap. Expanding restores the normal maximum, leaving the wide-window
     // layout untouched.
-    let collapsed_sidebar_width = Rc::new(Cell::new(
-        numeric_setting::<f64>(
-            &connection.borrow(),
-            SIDEBAR_COLLAPSED_WIDTH_SETTING_KEY,
-        )
-        .unwrap_or(SIDEBAR_COLLAPSED_DEFAULT_WIDTH)
-        .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
-    ));
+    let collapsed_sidebar_width = Rc::new(Cell::new(session.collapsed_width));
     let sidebar_expanded = Rc::new(Cell::new(!compact_enabled));
     let immersive_slide_width = Rc::new(Cell::new(0_i32));
     let immersive_normal_width = Rc::new(Cell::new(0_i32));
@@ -2042,10 +2021,9 @@
         if !expanded_for_drag_end.get() {
             widgets_for_drag_end
                 .dispatch(SidebarEvent::CompactWidthChanged(compact_width_for_drag_end.get()));
-            if let Err(error) = db::set_setting(
-                &connection_for_drag_end.borrow(),
-                COMPACT_SIDEBAR_WIDTH_KEY,
-                &compact_width_for_drag_end.get().to_string(),
+            if let Err(error) = record_session(
+                &*connection_for_drag_end.borrow(),
+                SessionChange::CompactWidth(compact_width_for_drag_end.get()),
             ) {
                 eprintln!("Could not save compact sidebar width: {error}");
             }
@@ -2055,20 +2033,18 @@
         if main_split_for_drag_end.is_collapsed() {
             let width = collapsed_sidebar_width_for_end.get();
             widgets_for_drag_end.dispatch(SidebarEvent::DrawerWidthChanged(width));
-            if let Err(error) = db::set_setting(
-                &connection_for_drag_end.borrow(),
-                SIDEBAR_COLLAPSED_WIDTH_SETTING_KEY,
-                &width.to_string(),
+            if let Err(error) = record_session(
+                &*connection_for_drag_end.borrow(),
+                SessionChange::CollapsedWidth(width),
             ) {
                 eprintln!("Could not save sidebar overlay width: {error}");
             }
         } else {
             // Normal mode has its own remembered fraction; never overwrite it
             // while resizing the compact rail.
-            if let Err(error) = db::set_setting(
-                &connection_for_drag_end.borrow(),
-                SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
-                &main_split_for_drag_end.sidebar_width_fraction().to_string(),
+            if let Err(error) = record_session(
+                &*connection_for_drag_end.borrow(),
+                SessionChange::SidebarFraction(main_split_for_drag_end.sidebar_width_fraction()),
             ) {
                 eprintln!("Could not save normal sidebar width: {error}");
             }

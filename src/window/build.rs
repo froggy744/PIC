@@ -66,19 +66,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
     window.set_title(Some("PIC"));
     let connection = Rc::new(RefCell::new(connection));
-    let saved_window_width = numeric_setting(&connection.borrow(), WINDOW_WIDTH_SETTING_KEY)
-        .unwrap_or(1440)
-        .clamp(640, 7680);
-    let saved_window_height = numeric_setting(&connection.borrow(), WINDOW_HEIGHT_SETTING_KEY)
-        .unwrap_or(900)
-        .clamp(480, 4320);
-    let saved_window_maximized = db::setting(&connection.borrow(), WINDOW_MAXIMIZED_SETTING_KEY)
-        .ok()
-        .flatten()
-        .as_deref()
-        == Some("true");
-    window.set_default_size(saved_window_width, saved_window_height);
-    if saved_window_maximized {
+    let session = SessionState::load(&*connection.borrow());
+    window.set_default_size(session.window.width, session.window.height);
+    if session.window.maximized {
         window.maximize();
     }
 
@@ -87,36 +77,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let folders = db::folders(&connection.borrow()).unwrap_or_default();
     let folder_cache = Rc::new(RefCell::new(folders.clone()));
     let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
-    let initial_filter = sidebar_filter_from_setting(
-        db::setting(&connection.borrow(), LAST_VIEW_SETTING_KEY)
-            .ok()
-            .flatten()
-            .as_deref(),
-        &folders,
-        &albums,
-    );
-    let saved_view_photo_id = numeric_setting::<i64>(
-        &connection.borrow(),
-        LAST_VIEW_PHOTO_ID_SETTING_KEY,
-    );
+    let initial_filter = session.view(SessionEntry::Startup, &folders, &albums);
+    let saved_view_photo_id = session.view_anchor;
     // "Activated" means the photo most recently opened in the viewer. Keep
     // that identity separate from ordinary selection and viewport scrolling.
-    let last_activated_photo_id = Rc::new(Cell::new(numeric_setting::<i64>(
-        &connection.borrow(),
-        LAST_ACTIVATED_PHOTO_ID_SETTING_KEY,
-    )));
-    let saved_view_scroll = numeric_setting::<f64>(
-        &connection.borrow(),
-        LAST_VIEW_SCROLL_SETTING_KEY,
-    )
-    .unwrap_or(0.0)
-    .max(0.0);
-    let saved_albums_scroll = numeric_setting::<f64>(
-        &connection.borrow(),
-        LAST_ALBUMS_SCROLL_SETTING_KEY,
-    )
-    .unwrap_or(0.0)
-    .max(0.0);
+    let last_activated_photo_id = Rc::new(Cell::new(session.activated_photo));
+    let saved_view_scroll = session.gallery_scroll;
+    let saved_albums_scroll = session.albums_scroll;
     let sidebar_counts = db::sidebar_counts(&connection.borrow()).unwrap_or_default();
     crate::startup_trace::mark("startup_catalog_metadata", Some(startup_catalog_started));
     let sort = Rc::new(Cell::new(PhotoSort {
@@ -234,10 +201,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     );
     lightbox.set_photo_changed_handler(move |photo| {
         last_activated_for_lightbox.set(Some(photo.id()));
-        if let Err(error) = db::set_setting(
-            &connection_for_lightbox.borrow(),
-            LAST_ACTIVATED_PHOTO_ID_SETTING_KEY,
-            &photo.id().to_string(),
+        if let Err(error) = record_session(
+            &*connection_for_lightbox.borrow(),
+            SessionChange::ActivatedPhoto(photo.id()),
         ) {
             eprintln!("Could not save last activated photo: {error}");
         }
@@ -3316,13 +3282,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     properties_split.set_enable_hide_gesture(false);
     properties_split.set_min_sidebar_width(280.0);
     properties_split.set_max_sidebar_width(520.0);
-    let inspector_fraction = numeric_setting::<f64>(
-        &connection.borrow(),
-        PROPERTIES_WIDTH_FRACTION_SETTING_KEY,
-    )
-    .unwrap_or(0.25)
-    .clamp(0.10, 0.55);
-    properties_split.set_sidebar_width_fraction(inspector_fraction);
+    properties_split.set_sidebar_width_fraction(session.properties_fraction);
     properties_split.set_content(Some(&page_overlay));
 
     let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -3431,10 +3391,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if !active.replace(false) {
                 return;
             }
-            if let Err(error) = db::set_setting(
-                &connection.borrow(),
-                PROPERTIES_WIDTH_FRACTION_SETTING_KEY,
-                &split.sidebar_width_fraction().to_string(),
+            if let Err(error) = record_session(
+                &*connection.borrow(),
+                SessionChange::PropertiesFraction(split.sidebar_width_fraction()),
             ) {
                 eprintln!("Could not save Properties panel width: {error}");
             }
@@ -6748,7 +6707,52 @@ fn start_photo_export_single(
         glib::ControlFlow::Continue
     });
 
+    // What the window saves when it leaves a library: on close and before a
+    // library switch (session_state::LeaveSnapshot).
+    let leave_snapshot: Rc<dyn Fn() -> LeaveSnapshot> = {
+        let connection = connection.clone();
+        let filter = filter.clone();
+        let gallery = gallery.clone();
+        let albums_home = albums_home.clone();
+        let main_split = main_split.clone();
+        let window = window.clone();
+        Rc::new(move || {
+            let view = filter.get();
+            let viewport = if view == sidebar::SidebarFilter::Albums {
+                Viewport::Albums {
+                    scroll: albums_home.vadjustment().value(),
+                }
+            } else {
+                Viewport::Gallery {
+                    scroll: gallery.scroll_position(),
+                    anchor: gallery.viewport_center_photo().map(|photo| photo.id()),
+                }
+            };
+            // A compact rail uses a different width. Leaving in compact mode
+            // must not overwrite the normal sidebar's saved fraction.
+            let mode = SidebarMode::from_setting(
+                db::setting(&connection.borrow(), SIDEBAR_MODE_SETTING_KEY)
+                    .ok()
+                    .flatten()
+                    .as_deref(),
+            );
+            LeaveSnapshot {
+                view,
+                viewport,
+                window: WindowSize {
+                    width: window.width(),
+                    height: window.height(),
+                    maximized: window.is_maximized(),
+                },
+                sidebar_fraction: mode
+                    .is_normal()
+                    .then(|| main_split.sidebar_width_fraction()),
+            }
+        })
+    };
+
     switch_library_slot.replace(Some({
+        let leave_snapshot = leave_snapshot.clone();
         let exit_date_browser = discard_date_browser.clone();
         let date_browser_button = date_browser_button.clone();
         let nav_fade_cancel = nav_fade_cancel.clone();
@@ -6794,6 +6798,13 @@ fn start_photo_export_single(
                     target.path.display()
                 ));
             }
+            // The outgoing library keeps its view and viewport, as on close.
+            if let Err(error) = record_session(
+                &*connection.borrow(),
+                SessionChange::Leave(leave_snapshot()),
+            ) {
+                eprintln!("Could not save the session before switching library: {error}");
+            }
 
             {
                 let mut job = scan_job.borrow_mut();
@@ -6824,17 +6835,8 @@ fn start_photo_export_single(
             let folders = db::folders(&new_connection).map_err(|error| error.to_string())?;
             let albums = db::browse_albums(&new_connection).map_err(|error| error.to_string())?;
             let counts = db::sidebar_counts(&new_connection).unwrap_or_default();
-            let saved_view = db::setting(&new_connection, LAST_VIEW_SETTING_KEY)
-                .ok()
-                .flatten();
-            // A new library has no browsing destination yet. Open its home
-            // page so the successful switch is immediately visible, instead
-            // of landing on an empty Recently Added photo grid.
-            let new_filter = if saved_view.is_none() {
-                sidebar::SidebarFilter::Library
-            } else {
-                sidebar_filter_from_setting(saved_view.as_deref(), &folders, &albums)
-            };
+            let new_session = SessionState::load(&new_connection);
+            let new_filter = new_session.view(SessionEntry::LibrarySwitch, &folders, &albums);
             let new_sort = PhotoSort {
                 field: SortField::from_key(
                     &db::setting(&new_connection, SORT_FIELD_SETTING_KEY)
@@ -6896,10 +6898,7 @@ fn start_photo_export_single(
             restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
             sort.set(new_sort);
             group_mode.set(new_group);
-            last_activated_photo_id.set(numeric_setting::<i64>(
-                &connection.borrow(),
-                LAST_ACTIVATED_PHOTO_ID_SETTING_KEY,
-            ));
+            last_activated_photo_id.set(new_session.activated_photo);
             search_text.replace(String::new());
             if let Some(entry) = search_entry.borrow().as_ref() {
                 entry.set_text("");
@@ -6986,75 +6985,13 @@ fn start_photo_export_single(
     install_close_confirmation(&window, {
         let connection = connection.clone();
         let scan_job = scan_job.clone();
-        let filter = filter.clone();
-        let gallery = gallery.clone();
-        let albums_home = albums_home.clone();
-        let main_split = main_split.clone();
-        let window = window.clone();
         Rc::new(move || {
             if let Some(active)=scan_job.borrow().active.as_ref() {active.interrupt();}
-            let guard = connection.borrow();
-            let current_filter = filter.get();
-            let _ = db::set_setting(
-                &guard,
-                LAST_VIEW_SETTING_KEY,
-                &sidebar_filter_setting(current_filter),
-            );
-
-            if current_filter == sidebar::SidebarFilter::Albums {
-                let _ = db::set_setting(
-                    &guard,
-                    LAST_ALBUMS_SCROLL_SETTING_KEY,
-                    &albums_home.vadjustment().value().to_string(),
-                );
-            } else {
-                let scroll_y = gallery.scroll_position();
-                let anchor_id = gallery.viewport_center_photo().map(|photo| photo.id());
-                let _ = db::set_setting(
-                    &guard,
-                    LAST_VIEW_SCROLL_SETTING_KEY,
-                    &scroll_y.to_string(),
-                );
-                if let Some(photo_id) = anchor_id {
-                    let _ = db::set_setting(
-                        &guard,
-                        LAST_VIEW_PHOTO_ID_SETTING_KEY,
-                        &photo_id.to_string(),
-                    );
-                } else {
-                    let _ = db::delete_setting(&guard, LAST_VIEW_PHOTO_ID_SETTING_KEY);
-                }
-            }
-
-            let maximized = window.is_maximized();
-            let _ = db::set_setting(
-                &guard,
-                WINDOW_MAXIMIZED_SETTING_KEY,
-                if maximized { "true" } else { "false" },
-            );
-            if !maximized {
-                let _ = db::set_setting(
-                    &guard,
-                    WINDOW_WIDTH_SETTING_KEY,
-                    &window.width().to_string(),
-                );
-                let _ = db::set_setting(
-                    &guard,
-                    WINDOW_HEIGHT_SETTING_KEY,
-                    &window.height().to_string(),
-                );
-            }
-            // A compact rail uses a different width. Closing in compact mode
-            // must not overwrite the normal sidebar's saved fraction.
-            let mode = SidebarMode::from_setting(
-                db::setting(&guard, SIDEBAR_MODE_SETTING_KEY).ok().flatten().as_deref(),
-            );
-            if mode.is_normal() {
-                let _ = db::set_setting(
-                    &guard,
-                    SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
-                    &main_split.sidebar_width_fraction().to_string(),
-                );
+            if let Err(error) = record_session(
+                &*connection.borrow(),
+                SessionChange::Leave(leave_snapshot()),
+            ) {
+                eprintln!("Could not save the session: {error}");
             }
         })
     });

@@ -20,3 +20,5 @@ Domain terms used in code, docs and reviews. Use these names exactly; code paths
 | **Hover peek** | Opening the hidden full sidebar by resting the pointer on the left-edge strip. It does not change the pin, and closes again when the pointer leaves. |
 | **Immersive overlay** | In Immersive Mode, the existing sidebar shell moved onto the gallery as a presentation-only overlay, showing the full or compact page per the sidebar mode, so the gallery never reflows. |
 | **Sidebar presentation** | Deciding how the left navigation is shown for a sidebar mode, breakpoint, pin/hover and Immersive Mode: which widgets are visible, where, and how wide. One module: `window/sidebar_presentation.rs`. |
+| **Properties inspector** | The photo details panel: the **gallery panel** docked beside the photos, or the **viewer panel** over the lightbox. Each has its own open state and scroll position. |
+| **Properties presentation** | Deciding when each Properties panel is shown: the Photos-page gate, the viewer, and Immersive Mode, which **suspends** the panels (hidden, not closed; they resume afterwards). One module: `window/properties_presentation.rs`. |

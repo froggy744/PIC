@@ -17,7 +17,7 @@ Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ..
 | 1 | Deepen gallery thumbnail presentation | Strong | merged | commits `0df3b918`..`62dff881` on `main` (no merge commit; branch `refactor/thumbnail-presentation`) | `src/grid/presentation.rs` |
 | 2 | Sidebar presentation state machine | Strong | merged | merge `03a2fcb3` (`refactor/sidebar-presentation`) | `src/window/sidebar_presentation.rs` (pure), `src/window/sidebar_widgets.rs` (GTK adapter) |
 | 3 | Properties inspector as one owner | Strong | merged | merge `2da69bae` (`refactor/properties-presentation`) | `src/window/properties_presentation.rs` (pure), `src/window/properties_widgets.rs` (GTK adapter) |
-| 4 | InfoBar decides what it shows | Strong | in progress on `refactor/infobar-presentation`: stage 1 (pure model) done | none | `src/infobar.rs`; callers in `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
+| 4 | InfoBar decides what it shows | Strong | in progress on `refactor/infobar-presentation`: stages 1-2 (pure model, InfoBar adapter) done | none | `src/infobar.rs`; callers in `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
 | 5 | One gallery scroll-motion module | Worth exploring | open | none | `src/window/navigation.rs`, `src/window/build.rs` (scrub, settle, pump), `src/smooth_scroll.rs` |
 | 6 | Zoom slider router | Worth exploring | open | none | `src/window/build.rs` (zoom slider handlers), `src/lightbox/impl.rs` |
 | 7 | Editor preview plan | Worth exploring | open | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
@@ -65,8 +65,8 @@ About 12 refresh calls of `set_photo(Some(&photo))` follow a change to the photo
 
 **Planned stages:**
 1. A pure model with no GTK and table tests.
-2. The InfoBar applies it through events (surface, selection, focus, lightbox photo); `set_selected_photos`, `show_photo_metadata` and `set_photo` become private.
-3. Move the six callers.
+2. The InfoBar applies it through events (surface, selection, focus, lightbox photo), writing only what changed. The old `set_selected_photos`, `show_photo_metadata`, `set_photo` and `set_collage_active` stay as thin wrappers over the same write helpers, so callers are unchanged.
+3. Move the six callers, the refresh calls and the InfoBar's own tests onto the events, then delete the old wrappers and the temporary `dead_code` allowances.
 4. Notify on the shown photo, and delete the refresh calls. Check first that scanner updates through `set_from_photo` emit the notifications.
 5. Docs: GLOSSARY term, an InfoBar entry in AUDIT-INDEX (it has none yet), this file, and an owner rule in `scripts/check-presentation-owners.sh`.
 

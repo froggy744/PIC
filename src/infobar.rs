@@ -10,6 +10,10 @@ use crate::photo_object::PhotoObject;
 #[path = "infobar_presentation.rs"]
 pub(crate) mod presentation;
 
+use presentation::{
+    InfoBarEvent, InfoBarMode, InfoBarPage, InfoBarPresentation, InfoBarTarget, SelectionSample,
+};
+
 pub struct InfoBar {
     pub root: gtk::Box,
     utilities: gtk::Box,
@@ -58,6 +62,22 @@ pub struct InfoBar {
     pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
     collage_active: Rc<Cell<bool>>,
+    /// Decides what the InfoBar shows; see `infobar::presentation`.
+    // Read by the adapter API, which stage 3 of candidate 4 wires up.
+    #[cfg_attr(not(test), allow(dead_code))]
+    presentation: RefCell<InfoBarPresentation>,
+    /// The target last written to the widgets (`None` before the first).
+    // Read by the adapter API, which stage 3 of candidate 4 wires up.
+    #[cfg_attr(not(test), allow(dead_code))]
+    applied: RefCell<Option<InfoBarTarget>>,
+    /// The photo whose metadata the widgets show.
+    // Read by the adapter API, which stage 3 of candidate 4 wires up.
+    #[cfg_attr(not(test), allow(dead_code))]
+    shown_photo: RefCell<Option<PhotoObject>>,
+    /// The last reported gallery selection sample, for the strip.
+    // Read by the adapter API, which stage 3 of candidate 4 wires up.
+    #[cfg_attr(not(test), allow(dead_code))]
+    selection_photos: RefCell<Vec<PhotoObject>>,
 }
 
 impl InfoBar {
@@ -946,9 +966,135 @@ impl InfoBar {
             grid_zoom_reset,
             has_photo,
             collage_active,
+            presentation: RefCell::new(InfoBarPresentation::new()),
+            applied: RefCell::new(None),
+            shown_photo: RefCell::new(None),
+            selection_photos: RefCell::new(Vec::new()),
         }
     }
+}
 
+/// The InfoBar's interface: callers report what happened and the
+/// presentation model (`infobar::presentation`) decides what is shown.
+// Stage 3 of candidate 4 moves the callers onto these methods.
+#[cfg_attr(not(test), allow(dead_code))]
+impl InfoBar {
+    /// The gallery's focused photo changed.
+    pub(crate) fn show_gallery_focus(&self, photo: Option<&PhotoObject>) {
+        self.dispatch(
+            InfoBarEvent::GalleryFocus(photo.map(PhotoObject::id)),
+            photo,
+        );
+    }
+
+    /// The gallery's selection changed: its size and a bounded sample.
+    pub(crate) fn show_gallery_selection(&self, count: usize, photos: &[PhotoObject]) {
+        let sample = self.remember_selection(count, photos);
+        self.dispatch(InfoBarEvent::GallerySelection(sample), None);
+    }
+
+    /// The date browser handed the gallery selection back.
+    pub(crate) fn show_date_browser_selection(&self, count: usize, photos: &[PhotoObject]) {
+        let sample = self.remember_selection(count, photos);
+        self.dispatch(InfoBarEvent::DateBrowserSelection(sample), None);
+    }
+
+    pub(crate) fn set_lightbox_shown(&self, shown: bool) {
+        self.dispatch(InfoBarEvent::LightboxShown(shown), None);
+    }
+
+    /// The lightbox moved to `photo`.
+    pub(crate) fn show_lightbox_photo(&self, photo: &PhotoObject) {
+        self.dispatch(InfoBarEvent::LightboxPhoto(photo.id()), Some(photo));
+    }
+
+    pub(crate) fn set_date_overview_shown(&self, shown: bool) {
+        self.dispatch(InfoBarEvent::DateOverviewShown(shown), None);
+    }
+
+    pub(crate) fn set_page(&self, page: InfoBarPage) {
+        self.dispatch(InfoBarEvent::Page(page), None);
+    }
+
+    /// `photo`'s facts changed; it becomes the shown photo and is rewritten.
+    pub(crate) fn photo_updated(&self, photo: &PhotoObject) {
+        self.dispatch(InfoBarEvent::PhotoUpdated(photo.id()), Some(photo));
+    }
+
+    /// No photo to show (library switched, photo trashed).
+    pub(crate) fn clear_photo(&self) {
+        self.dispatch(InfoBarEvent::PhotoCleared, None);
+    }
+
+    fn remember_selection(&self, count: usize, photos: &[PhotoObject]) -> SelectionSample {
+        self.selection_photos.replace(photos.to_vec());
+        SelectionSample::new(count, photos.iter().map(PhotoObject::id).collect())
+    }
+
+    fn dispatch(&self, event: InfoBarEvent, provided: Option<&PhotoObject>) {
+        let rewrite_photo = matches!(
+            event,
+            InfoBarEvent::PhotoUpdated(_) | InfoBarEvent::PhotoCleared
+        );
+        self.presentation.borrow_mut().handle(event);
+        self.apply(provided, rewrite_photo);
+    }
+
+    /// Write the presentation target, touching only what changed. A photo
+    /// is rewritten when another object is shown or its facts changed;
+    /// showing the same object again writes nothing.
+    fn apply(&self, provided: Option<&PhotoObject>, rewrite_photo: bool) {
+        let target = self.presentation.borrow().target();
+        let last = self.applied.borrow().clone();
+        if last.as_ref().map(|last| last.collage) != Some(target.collage) {
+            self.write_collage(target.collage);
+        }
+        if last.as_ref().map(|last| &last.mode) != Some(&target.mode) {
+            match &target.mode {
+                InfoBarMode::Metadata => self.write_metadata_mode(),
+                InfoBarMode::Selection(sample) => {
+                    let photos = self.selection_photos.borrow().clone();
+                    let photos = sample
+                        .ids
+                        .iter()
+                        .filter_map(|id| photos.iter().find(|photo| photo.id() == *id).cloned())
+                        .collect::<Vec<_>>();
+                    self.write_selection_strip(sample.count, &photos);
+                }
+            }
+        }
+        let photo = target.photo.and_then(|id| self.photo_object(id, provided));
+        let changed = *self.shown_photo.borrow() != photo;
+        if last.is_none() || rewrite_photo || changed {
+            self.write_photo(photo.as_ref());
+            self.shown_photo.replace(photo);
+        }
+        self.applied.replace(Some(target));
+    }
+
+    /// The object for the target's photo id: the one the event carried,
+    /// the one already shown, or one from the selection sample.
+    fn photo_object(&self, id: i64, provided: Option<&PhotoObject>) -> Option<PhotoObject> {
+        provided
+            .filter(|photo| photo.id() == id)
+            .cloned()
+            .or_else(|| {
+                self.shown_photo
+                    .borrow()
+                    .clone()
+                    .filter(|photo| photo.id() == id)
+            })
+            .or_else(|| {
+                self.selection_photos
+                    .borrow()
+                    .iter()
+                    .find(|photo| photo.id() == id)
+                    .cloned()
+            })
+    }
+}
+
+impl InfoBar {
     /// Show a bounded strip of selected photos without reserving a fixed
     /// six-thumbnail width. GtkScrolledWindow clips to the width left over
     /// after the toolbar, count and Clear button.
@@ -962,7 +1108,10 @@ impl InfoBar {
             self.show_photo_metadata();
             return;
         }
+        self.write_selection_strip(count, photos);
+    }
 
+    fn write_selection_strip(&self, count: usize, photos: &[PhotoObject]) {
         self.selection_count
             .set_text(&crate::window::format_count(count));
         if !self.selection_mode.replace(true) {
@@ -1084,6 +1233,10 @@ impl InfoBar {
     }
 
     pub fn show_photo_metadata(&self) {
+        self.write_metadata_mode();
+    }
+
+    fn write_metadata_mode(&self) {
         if self.selection_mode.replace(false) {
             self.dismiss_action_menus();
             self.selection_actions.set_visible(false);
@@ -1134,10 +1287,14 @@ impl InfoBar {
     }
 
     pub fn set_collage_active(&self, active: bool) {
-        self.collage_active.set(active);
+        self.write_collage(active);
         if active {
             self.show_photo_metadata();
         }
+    }
+
+    fn write_collage(&self, active: bool) {
+        self.collage_active.set(active);
         self.view_toggle.set_sensitive(!active);
         self.edit
             .set_sensitive(edit_button_sensitive(self.has_photo.get(), active));
@@ -1178,6 +1335,10 @@ impl InfoBar {
     }
 
     pub fn set_photo(&self, photo: Option<&PhotoObject>) {
+        self.write_photo(photo);
+    }
+
+    fn write_photo(&self, photo: Option<&PhotoObject>) {
         let Some(photo) = photo else {
             self.disconnect_preview_thumbnail_notify();
             self.preview_photo_id.set(0);
@@ -1550,6 +1711,72 @@ mod layout_tests {
         assert!(preview.x() >= 16.0, "contents must retain their inset");
         gtk::style_context_remove_provider_for_display(&display, &overlay);
         gtk::style_context_remove_provider_for_display(&display, &base);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn presentation_adapter_writes_only_what_changed() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+        let photo = |id: i64, name: &str, rating: i32| {
+            let photo: PhotoObject = glib::Object::new();
+            photo.set_id(id);
+            photo.set_filename(name);
+            photo.set_rating(rating);
+            photo
+        };
+        let (first, second) = (photo(1, "first.jpg", 3), photo(2, "second.jpg", 0));
+        let page = |info: &InfoBar| {
+            info.metadata_stack
+                .visible_child_name()
+                .unwrap()
+                .to_string()
+        };
+
+        info.show_gallery_focus(Some(&first));
+        info.show_gallery_selection(1, &[first.clone()]);
+        assert_eq!(page(&info), "photo");
+        assert_eq!(info.filename.text().as_str(), "first.jpg");
+        assert_eq!(info.rating_value.text().as_str(), "3/5");
+
+        // Showing the same object again writes nothing.
+        info.filename.set_text("sentinel");
+        info.show_gallery_focus(Some(&first));
+        assert_eq!(info.filename.text().as_str(), "sentinel");
+        // An update rewrites it, with its new facts.
+        first.set_rating(5);
+        info.photo_updated(&first);
+        assert_eq!(info.filename.text().as_str(), "first.jpg");
+        assert_eq!(info.rating_value.text().as_str(), "5/5");
+
+        info.show_gallery_selection(2, &[first.clone(), second.clone()]);
+        assert_eq!(page(&info), "selection");
+        assert_eq!(info.selection_thumbnails.observe_children().n_items(), 2);
+        assert!(
+            info.favorite.is_sensitive(),
+            "photo actions stay enabled for the shown photo"
+        );
+
+        // The lightbox shows its photo; the hidden gallery cannot replace it.
+        info.set_lightbox_shown(true);
+        info.show_lightbox_photo(&second);
+        assert_eq!(page(&info), "photo");
+        info.show_gallery_focus(Some(&first));
+        assert_eq!(info.filename.text().as_str(), "second.jpg");
+        // Closing it restores the strip.
+        info.set_lightbox_shown(false);
+        assert_eq!(page(&info), "selection");
+
+        info.set_page(InfoBarPage::Collage);
+        assert_eq!(page(&info), "photo");
+        assert!(!info.edit.is_sensitive() && !info.grid_zoom.is_sensitive());
+        info.set_page(InfoBarPage::Photos);
+        assert_eq!(page(&info), "selection");
+        assert!(info.edit.is_sensitive() && info.grid_zoom.is_sensitive());
+
+        info.show_gallery_selection(0, &[]);
+        assert_eq!(page(&info), "photo");
+        assert!(!info.filename.is_visible() && !info.favorite.is_sensitive());
     }
 
     #[test]

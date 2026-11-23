@@ -28,7 +28,7 @@ mod sidebar_presentation;
 mod sidebar_widgets;
 use sidebar_widgets::{ImmersiveHost, SidebarCells, SidebarWidgetParts, SidebarWidgets};
 use sidebar_presentation::{
-    clamp_compact_rail_width, compact_rail_shows_labels, sidebar_chrome, sidebar_target,
+    clamp_compact_rail_width, compact_rail_shows_labels,
     SidebarEvent, SidebarMode, COMPACT_RAIL_MIN_WIDTH, SIDEBAR_MODE_SETTING_KEY,
 };
 

@@ -1747,10 +1747,6 @@
     sidebar_hover_reveal.set_vexpand(true);
     sidebar_hover_reveal.set_halign(gtk::Align::Start);
     sidebar_hover_reveal.set_valign(gtk::Align::Fill);
-    sidebar_hover_reveal.set_visible(
-        sidebar_chrome(SidebarMode::from_normal(sidebar_expanded.get()), false, main_split.shows_sidebar())
-            .hover_strip,
-    );
     sidebar_hover_reveal.set_cursor_from_name(Some("default"));
     main_surface.add_overlay(&sidebar_hover_reveal);
     sidebar_widgets.set_hover_strip(sidebar_hover_reveal.clone());
@@ -2182,9 +2178,6 @@
     let compact_right_toggle = gtk::Button::from_icon_name("pan-end-symbolic");
     compact_right_toggle.add_css_class("flat");
     compact_right_toggle.set_tooltip_text(Some("Switch to normal sidebar"));
-    compact_right_toggle.set_visible(
-        sidebar_target(SidebarMode::from_normal(sidebar_expanded.get()), false).switch_to_normal_button,
-    );
     {
         let expand = set_sidebar_expanded.clone();
         compact_right_toggle.connect_clicked(move |_| expand(true));
@@ -2241,9 +2234,9 @@
         let window_controls = window_controls.clone();
         let left_header = left_header.clone();
         let right_header = right_header.clone();
-        let main_split = main_split.clone();
         let mode = window_controls_mode.clone();
-        let expanded = sidebar_expanded.clone();
+        // Weak: the adapter itself holds this closure as its controls sync.
+        let widgets = Rc::downgrade(&sidebar_widgets);
         let show_sidebar = show_sidebar.clone();
         // Which header currently hosts the lights. get_parent() of a
         // headerbar-packed child is the headerbar's internal start box, not
@@ -2253,9 +2246,9 @@
         Rc::new(move || {
             let traffic = mode.get()
                 == crate::css::theme_discovery::WindowControls::TrafficLight;
-            let chrome = sidebar_chrome(
-                SidebarMode::from_normal(expanded.get()), false, main_split.shows_sidebar(),
-            );
+            let Some(chrome) = widgets.upgrade().map(|widgets| widgets.scene().chrome) else {
+                return;
+            };
             let sidebar_visible = chrome.sidebar_hosts_title_buttons;
             show_sidebar.set_visible(chrome.show_button);
             // Native start title buttons only exist while traffic lights are

@@ -86,7 +86,7 @@ pub(super) struct SidebarTarget {
 /// The layout target for `mode`. An immersive session hides the compact dock
 /// and keeps the full sidebar's widgets ready, because the presentation
 /// overlay shows whichever page the mode selects.
-pub(super) fn sidebar_target(mode: SidebarMode, immersive: bool) -> SidebarTarget {
+fn sidebar_target(mode: SidebarMode, immersive: bool) -> SidebarTarget {
     let normal = mode.is_normal();
     if immersive {
         return SidebarTarget {
@@ -123,11 +123,7 @@ pub(super) struct SidebarChrome {
     pub(super) sidebar_hosts_title_buttons: bool,
 }
 
-pub(super) fn sidebar_chrome(
-    mode: SidebarMode,
-    immersive: bool,
-    shows_sidebar: bool,
-) -> SidebarChrome {
+fn sidebar_chrome(mode: SidebarMode, immersive: bool, shows_sidebar: bool) -> SidebarChrome {
     let normal = mode.is_normal();
     SidebarChrome {
         hover_strip: (normal || immersive) && !shows_sidebar,
@@ -599,11 +595,10 @@ impl SidebarPresentation {
         };
         SidebarScene {
             layout,
-            chrome: sidebar_chrome(
-                self.mode,
-                immersive,
-                split_shows_sidebar || self.is_revealed(),
-            ),
+            // The immersive overlay is not the split's sidebar: while it is
+            // revealed the edge strip and the show button stay, and the
+            // window's title buttons stay in the content header.
+            chrome: sidebar_chrome(self.mode, immersive, split_shows_sidebar),
             placement,
             page,
             overlay_revealed: self.is_revealed(),
@@ -1049,6 +1044,16 @@ mod tests {
         );
         sidebar.handle(DrawerDismissed);
         assert!(!sidebar.scene().split_shows_sidebar);
+    }
+
+    #[test]
+    fn revealing_the_immersive_overlay_keeps_the_windowed_chrome() {
+        let mut sidebar = normal();
+        sidebar.handle(ImmersiveEntered { pinned: true });
+        let hidden = sidebar.scene().chrome;
+        sidebar.handle(ImmersiveRevealRequested);
+        assert_eq!(sidebar.scene().chrome, hidden);
+        assert!(hidden.hover_strip && hidden.show_button && !hidden.sidebar_hosts_title_buttons);
     }
 
     #[test]

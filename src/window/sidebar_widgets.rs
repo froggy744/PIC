@@ -129,11 +129,18 @@ impl SidebarWidgets {
         self.cells.slide_width.clone()
     }
 
+    /// The scene for the current state (what the widgets show once applied).
+    pub(super) fn scene(&self) -> SidebarScene {
+        self.state.borrow().scene()
+    }
+
     pub(super) fn set_switch_to_normal_button(&self, button: gtk::Button) {
+        button.set_visible(self.scene().layout.switch_to_normal_button);
         self.switch_to_normal_button.replace(Some(button));
     }
 
     pub(super) fn set_hover_strip(&self, strip: gtk::Box) {
+        strip.set_visible(self.scene().chrome.hover_strip);
         self.hover_strip.replace(Some(strip));
     }
 
@@ -560,14 +567,7 @@ impl SidebarWidgets {
         parts.dock.set_visible(scene.layout.compact_dock);
         split.set_show_sidebar(scene.split_shows_sidebar);
         if let Some(strip) = self.hover_strip.borrow().as_ref() {
-            strip.set_visible(
-                super::sidebar_presentation::sidebar_chrome(
-                    self.mode(),
-                    false,
-                    split.shows_sidebar(),
-                )
-                .hover_strip,
-            );
+            strip.set_visible(scene.chrome.hover_strip);
         }
     }
 }

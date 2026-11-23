@@ -285,8 +285,10 @@ flowchart LR
 </section>
 
 <section class="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-900 space-y-1">
-  <div class="font-semibold">Status (2026-11-22)</div>
-  <p>Candidate 1 is done and merged into <span class="font-mono">main</span>: <span class="font-mono">grid/presentation.rs</span> (commits 0df3b918, afa6d54a, a3a71299, 62dff881). Candidates 2-8 are open; next up is 2, the sidebar presentation module.</p>
+  <div class="font-semibold">Status (2026-11-23)</div>
+  <p>Candidate 1 is done and merged into <span class="font-mono">main</span>: <span class="font-mono">grid/presentation.rs</span> (commits 0df3b918, afa6d54a, a3a71299, 62dff881).</p>
+  <p>Candidate 2 is implemented on branch <span class="font-mono">refactor/sidebar-presentation</span> (3a93d204, bd0afb5e, f5280577), not yet merged: a pure state machine <span class="font-mono">window/sidebar_presentation.rs</span> and one GTK adapter <span class="font-mono">window/sidebar_widgets.rs</span> that every sidebar writer dispatches to. Before merging, run the window-resize and divider-drag display tests on a healthy display and check hover peek, pin, narrow/wide window and divider drag by hand.</p>
+  <p>Candidates 3-8 are open.</p>
 </section>
 
 <section id="top-recommendation" class="rounded-xl deep p-8 space-y-3">

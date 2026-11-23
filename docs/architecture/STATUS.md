@@ -39,7 +39,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
-| 12 | Front surface (widens 6) | Worth exploring | open | none | `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
+| 12 | Front surface (widens 6) | Worth exploring | in progress (`refactor/front-surface`) | none | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 
 ## Outstanding work
 
@@ -227,6 +227,42 @@ Chosen over 12 because candidate 9's controls act on `selected_photo`, so a stal
 
 **First step:** trace every writer and reader of `selected_photo` (the 9 writers are listed under "5, 6, 8, 10, 11, 12" below), confirm whether it goes stale when the lightbox closes, and propose one owner with a precedence rule. 12 (front surface) is the natural follow-on.
 
+### 12 · Front surface (started 2026-11-23)
+Branch `refactor/front-surface`.
+
+#### Investigation (at `6678d9e3`, no code changed)
+"Which surface is in front" is read from four pieces of state at about 50 sites:
+- the `main_stack` page (`photos`, `library`, `albums`, `collage`, `edit`, `folders-overview`);
+- `lightbox.root.is_visible()`. The viewer only shows over `photos`/`library`: leaving those pages closes it (`build.rs:3780`), and `open_edit` closes it synchronously before switching to `edit` (`build.rs:3987`);
+- `date_browser_active` plus `browser.is_overview_visible()`, and a second copy of the overview flag, the `date_browser_overview_visible` cell (`build.rs:210`);
+- the edit page's Space slot, which can outlive the page (`build.rs:4126`), so it re-checks the page.
+
+Two kinds of site:
+- **Routing** (~35): the zoom slider value, wheel step, centre-click reset, 1:1, rotate (`build.rs:4177-4686`); digit, Ctrl+A/D and browse keys (`:5292-5389`); the Escape/Space/arrow chain (`shortcuts.rs`); collection navigation reopening the viewer ×10 (`:1279-1780`); the gallery focus guard (`:622`); the mark target (`photo_mark_commands.rs:60`); sidebar crossfade, search and the Edit/Collage buttons (`layout.rs`); the overview checks in `toolbar.rs`.
+- **Change handlers** (~17): 6 `lightbox.root.connect_visible_notify`, 7+ `main_stack.connect_visible_child_notify` (`build.rs`, `layout.rs`, `immersive.rs`), and 4 `info.set_date_overview_shown`.
+
+Disagreements:
+1. The precedence is written two ways: the zoom slider and reset check lightbox → editor → date overview → gallery; 1:1 checks editor → lightbox. This is harmless only because the viewer never shows over the editor.
+2. The zoom slider and reset trust `date_browser_active` without the page; the Escape/back handler also checks `photos`. The date browser exits on any sidebar change (`layout.rs:152`), so it stays active only under Edit or Collage, which win by page.
+3. The zoom range has 3 writers (lightbox visible-notify, `open_edit`, the `layout.rs` page notify). That is candidate 6's problem.
+4. The InfoBar (`InfoBarPresentation::covered`, `InfoBarPage`), Properties (`set_lightbox_shown`) and the metadata panel (`set_lightbox_open`) each keep their own copy, fed by change handlers.
+
+#### Decisions (2026-11-23, by the owner)
+1. **Query now, events later.** A pure `front()` with one precedence and a `FrontSurface::current()` that reads the live widgets; no cached state. The ~17 change handlers and the viewer internals (`src/lightbox/`) stay untouched. A `connect_changed` comes later, when candidate 6 needs it.
+2. **Page first.** Editor, Collage, Albums and Folders overview win by page. The viewer counts only over Photos or Library. Then the date overview, then Gallery (Photos) or Library home. `Front` values: `Lightbox`, `Editor`, `Collage`, `DateOverview`, `Gallery`, `LibraryHome`, `Albums`, `FoldersOverview`. The date browser's day view is `Gallery`, as every caller treats it today.
+3. **Overview from the widget.** `FrontSurface` reads `date_browser_active` and `browser.is_overview_visible()`; the `date_browser_overview_visible` cell and its writes are deleted.
+4. **Every routing check in `src/window`** moves onto `FrontSurface::current()`, and owner rule `front-surface` in `scripts/check-presentation-owners.sh` forbids new ones. The change handlers' own `root.is_visible()` parameter is allowed until the events stage.
+5. **No behaviour change.** Keyboard, zoom, navigation, focus and editing behave as today; the precedence differs only in states that can't occur.
+6. **Verification:** table tests for the full precedence, unreachable combinations included, written red first; `cargo check`; owner script and `--self-test`; one run each of `PIC_GUI_SUITE=viewer` and `editing` (`scripts/test-gui.sh`); then 1-2 checks by hand. Failures are reported, not worked around in unrelated code. No merge before the owner approves the results.
+
+Settled by the agent, accepted with the plan: one file `src/window/front_surface.rs` (`mod` in `window.rs` like `photo_marks`), since the adapter only reads widgets; the edit Space slot stays and its guard becomes `current() == Editor`; merged with a merge commit like 2, 3, 4, 9 and 10.
+
+**Stages:**
+1. Pure `front()` with table tests.
+2. `FrontSurface` and the `build.rs` routing sites; delete the overview cell.
+3. `shortcuts.rs`, `layout.rs`, `toolbar.rs`, `photo_mark_commands.rs`; owner rule.
+4. Docs: GLOSSARY term **Front surface**, AUDIT-INDEX rows, this file.
+
 ### 7 · Editor preview plan
 **Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.
 
@@ -239,7 +275,7 @@ Re-checked 2026-11-23 (round two): the wrong reason only mislabels the trace; it
 The planning module is still the design: renderer, base recipe, rotation and reason together, with pure recipe-table tests. CI: `editor-quality.yml`.
 
 ### 5, 6, 8, 10, 11, 12
-Not started. The problem statements are in the review reports. Re-checked 2026-11-23:
+Not started (10 has since merged, 12 has started; see their sections). The problem statements are in the review reports. Re-checked 2026-11-23:
 - 5: `smooth_scroll.rs` (274 lines) still has no callers; both `install_*_smooth_gallery_scroll` functions remain; the galleries already share `WheelGlide`. Scrub and settle are written twice inline in `build.rs` with different constants: All Photos scrubs at 1.75 pages (≥ 900 px) and settles after 90 ms; Folder scrubs at 1.60 pages and settles after 110 ms. None of it is tested.
 - 6: `window/build.rs` still has 43 `is_visible()` checks. The zoom slider has 10 writers of its value or range (2 unguarded: `build.rs:580`, `:7233`), the 0..7 range setup is copied 3 times (`build.rs:4045`, `:4667`, `layout.rs:2465`), and `lightbox_scale_from_slider` / `lightbox_slider_from_scale` are untested nested functions in `build()`. Best done after 12, as its consumer.
 - 8: still Speculative: 12 styles, about 63 style matches across `screensaver.rs` and `screensaver/gpu*.rs`.

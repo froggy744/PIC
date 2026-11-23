@@ -10,6 +10,14 @@
 //! free of GTK. [`FrontSurface`] reads the live widgets and asks [`front`];
 //! it caches nothing, so it can never disagree with the widgets.
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use gtk::prelude::*;
+use gtk4 as gtk;
+
+use crate::lightbox::Lightbox;
+
 /// The main stack page on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Page {
@@ -81,6 +89,65 @@ pub(super) fn front(page: Page, lightbox_shown: bool, date_browser: DateBrowser)
         Page::Photos if date_browser == DateBrowser::Overview => Front::DateOverview,
         Page::Photos => Front::Gallery,
         Page::Library => Front::LibraryHome,
+    }
+}
+
+/// Whether the viewer or the date overview hides the Photos gallery,
+/// whatever page is on top. Unlike [`front`], this ignores the page: the
+/// date overview stays up under Collage when Collage opens from it, and a
+/// gallery refresh there must still not replace the photo it covers.
+pub(super) fn gallery_covered(lightbox_shown: bool, date_browser: DateBrowser) -> bool {
+    lightbox_shown || date_browser == DateBrowser::Overview
+}
+
+/// Reads the live widgets and answers which surface is in front. It keeps no
+/// state of its own: every call reads the stack page, the viewer's
+/// visibility and the date browser as they are now.
+pub(super) struct FrontSurface {
+    main_stack: gtk::Stack,
+    lightbox_root: gtk::Overlay,
+    date_browser_active: Rc<Cell<bool>>,
+    date_browser: Rc<RefCell<Option<super::date_browser::DateBrowser>>>,
+}
+
+impl FrontSurface {
+    pub(super) fn new(
+        main_stack: &gtk::Stack,
+        lightbox: &Lightbox,
+        date_browser_active: Rc<Cell<bool>>,
+        date_browser: Rc<RefCell<Option<super::date_browser::DateBrowser>>>,
+    ) -> Rc<Self> {
+        Rc::new(Self {
+            main_stack: main_stack.clone(),
+            lightbox_root: lightbox.root.clone(),
+            date_browser_active,
+            date_browser,
+        })
+    }
+
+    pub(super) fn current(&self) -> Front {
+        let page = Page::from_stack_name(self.main_stack.visible_child_name().as_deref());
+        front(page, self.lightbox_root.is_visible(), self.date_browser())
+    }
+
+    /// See [`gallery_covered`].
+    pub(super) fn gallery_covered(&self) -> bool {
+        gallery_covered(self.lightbox_root.is_visible(), self.date_browser())
+    }
+
+    fn date_browser(&self) -> DateBrowser {
+        if !self.date_browser_active.get() {
+            DateBrowser::Off
+        } else if self
+            .date_browser
+            .borrow()
+            .as_ref()
+            .is_some_and(|browser| browser.is_overview_visible())
+        {
+            DateBrowser::Overview
+        } else {
+            DateBrowser::Days
+        }
     }
 }
 
@@ -170,6 +237,26 @@ mod tests {
                 front(page, shown, browser),
                 expected,
                 "page={page:?} lightbox_shown={shown} date_browser={browser:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn gallery_is_covered_by_the_viewer_or_the_date_overview() {
+        use DateBrowser::{Days, Off, Overview};
+        let rows = [
+            (false, Off, false),
+            (false, Days, false),
+            (false, Overview, true),
+            (true, Off, true),
+            (true, Days, true),
+            (true, Overview, true),
+        ];
+        for (shown, browser, covered) in rows {
+            assert_eq!(
+                gallery_covered(shown, browser),
+                covered,
+                "lightbox_shown={shown} date_browser={browser:?}",
             );
         }
     }

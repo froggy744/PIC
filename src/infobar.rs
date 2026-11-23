@@ -7,6 +7,9 @@ use gtk4 as gtk;
 
 use crate::photo_object::PhotoObject;
 
+#[path = "infobar_presentation.rs"]
+pub(crate) mod presentation;
+
 pub struct InfoBar {
     pub root: gtk::Box,
     utilities: gtk::Box,

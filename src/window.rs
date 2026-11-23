@@ -30,6 +30,7 @@ mod front_surface;
 mod front_mirrors;
 mod zoom_slider;
 mod zoom_slider_widgets;
+mod session_state;
 use zoom_slider_widgets::{ZoomSliderWidgets, ZoomSources};
 use front_surface::{DateBrowser as DateBrowserLevel, Front, FrontSurface};
 use photo_marks::{MarkChange, MarkIntent};

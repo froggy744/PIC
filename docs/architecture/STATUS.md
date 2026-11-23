@@ -33,7 +33,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 3 | Properties inspector as one owner | Strong | merged | merge `2da69bae` (`refactor/properties-presentation`) | `src/window/properties_presentation.rs` (pure), `src/window/properties_widgets.rs` (GTK adapter) |
 | 4 | InfoBar decides what it shows | Strong | merged | merge `9756c44f` (`refactor/infobar-presentation`) | `src/infobar_presentation.rs` (pure), `src/infobar.rs` (GTK adapter) |
 | 5 | One gallery scroll-motion module | Worth exploring | open | none | `src/window/navigation.rs`, `src/window/build.rs` (scrub, settle, pump), `src/smooth_scroll.rs` |
-| 6 | Zoom slider router | Worth exploring | in progress (`refactor/zoom-slider-router`) | none | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
+| 6 | Zoom slider router | Worth exploring | merged | merge `9c9c64ff` (`refactor/zoom-slider-router`) | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
@@ -288,7 +288,7 @@ Settled by the agent, accepted with the plan: one file `src/window/front_surface
 - The owner rule does not catch `matches!` over page names (see above).
 - `scripts/gui_test.py` still clicks fixed points in the `browse-navigation` suite (`click_at(118, 524)` for the folder row) and elsewhere outside the library, viewer and editing paths.
 
-### 6 · Zoom slider router (started 2026-11-23)
+### 6 · Zoom slider router (merged 2026-11-23)
 Branch `refactor/zoom-slider-router`. Started on the owner's standing instruction to continue autonomously; decisions by the agent, closest to today's behaviour.
 
 #### Investigation (at `20c05eba`, no code changed)
@@ -323,6 +323,12 @@ The conversions `lightbox_slider_from_scale` / `lightbox_scale_from_slider` are 
 - `cargo check` / `--tests`: no new warnings. Owner script and `--self-test` ok (3 new cases).
 - GUI harness: `viewer` COMPLETE 19/19 (`20261123T172013Z-410514`), `editing` COMPLETE 39/39 (`20261123T172317Z-415265`).
 - Scripted interaction checks with `cargo run` (slider range, tooltip and value per mode; viewer and editor zoom, Space, 1:1, Escape; date overview slider and sort): 16/16 on this branch and on `main`.
+
+Merged 2026-11-23 (`9c9c64ff`) on the owner's standing instruction to merge on success.
+
+**Follow-up after merge:**
+- Slider input (value changed, centre reset) still lives in `build.rs`, matching on the front; it could move into the adapter if it grows.
+- The InfoBar's construction tooltip ("…; click the middle to reset") is replaced by the mode tooltip after the first mode change, as before.
 
 ### 13 · Front-surface change event (merged 2026-11-23)
 Branch `refactor/front-surface-events`. Follow-up to 12 (its decision 1); candidate 6 (zoom slider router) is to be the event's first behaviour consumer.
@@ -374,7 +380,7 @@ Merged 2026-11-23 (`888408e0`) on the owner's standing instruction to merge on s
 
 ### Next (chosen by the owner 2026-11-23)
 1. ~~**Front-surface change event**~~: done as candidate 13.
-2. **Candidate 6 · zoom slider router**, built on that event.
+2. ~~**Candidate 6 · zoom slider router**~~: merged.
 
 ### 7 · Editor preview plan
 **Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.

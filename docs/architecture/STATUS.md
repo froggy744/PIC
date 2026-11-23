@@ -309,6 +309,21 @@ The conversions `lightbox_slider_from_scale` / `lightbox_scale_from_slider` are 
 5. **Owner rule `zoom-slider`:** range, steps, rounding, tooltip and value writes of `grid_zoom` only in the adapter; the startup default (`:585`) and the InfoBar's construction stay allowed.
 6. **Verification:** table tests written red first; a display test of the adapter with a real stack, viewer and slider; the InfoBar and display tests; GUI `viewer` and `editing`; the scripted interaction checks on this branch and on `main`. Merge and push on success.
 
+**Stages:**
+1. Pure `zoom_slider.rs` (modes, specs, wheel step, conversions moved unchanged) with worked-example table tests, written red first. Done: `2a387641`.
+2. `ZoomSliderWidgets` as a front-change listener; the 4 range writers removed; value writers routed through it; nested and `window.rs` conversions removed. Display test `the_slider_follows_the_front_and_ignores_other_surfaces_zoom` (written after the adapter, not red first). Done: `9caabee6`.
+3. Owner rule `zoom-slider`. Done: `1fe543f4`.
+4. Docs: GLOSSARY **Zoom slider**, AUDIT-INDEX rows, this file. Done: `93d63303`.
+
+**Changes a user could notice (all latent cases):** a gallery zoom that finishes after the editor opens no longer moves the editor's slider; a library switch no longer re-requests the same thumbnail size through the slider; in Collage the (disabled) slider holds the thumbnail range instead of the editor's.
+
+**Verification (2026-11-23):**
+- Unit: 68 pass (`zoom_slider` 5 table tests, `front_surface`, InfoBar, Properties, metadata panel, sidebar).
+- Display (Xvfb, one process each): the adapter test, `front_surface_reports_viewer_page_and_date_browser_changes`, the 7 `infobar::layout_tests`, 2 metadata panel tests and the 4 photo-action/marks tests: all pass. (The 2 metadata panel tests that fail on `main` too are unchanged, see 13.)
+- `cargo check` / `--tests`: no new warnings. Owner script and `--self-test` ok (3 new cases).
+- GUI harness: `viewer` COMPLETE 19/19 (`20261123T172013Z-410514`), `editing` COMPLETE 39/39 (`20261123T172317Z-415265`).
+- Scripted interaction checks with `cargo run` (slider range, tooltip and value per mode; viewer and editor zoom, Space, 1:1, Escape; date overview slider and sort): 16/16 on this branch and on `main`.
+
 ### 13 · Front-surface change event (merged 2026-11-23)
 Branch `refactor/front-surface-events`. Follow-up to 12 (its decision 1); candidate 6 (zoom slider router) is to be the event's first behaviour consumer.
 

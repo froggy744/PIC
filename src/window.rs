@@ -24,6 +24,10 @@ use layout_settle::{
     should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
 };
 
+// Stage 1 of candidate 9: only its tests call it until the adapter (stage 3)
+// moves the mark controls onto it; remove this allowance then.
+#[allow(dead_code)]
+mod photo_marks;
 mod properties_presentation;
 mod properties_widgets;
 use properties_presentation::PropertiesSurface;

@@ -36,7 +36,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 6 | Zoom slider router | Worth exploring | open | none | `src/window/build.rs` (zoom slider handlers), `src/lightbox/impl.rs` |
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
-| 9 | Photo mark commands (favourite, rating) | Strong | investigating (next; no branch yet) | none | `src/window/build.rs` (InfoBar favourite, rating buttons, digit keys), `src/window/photo_actions.rs` (context-menu favourite) |
+| 9 | Photo mark commands (favourite, rating) | Strong | in progress (branch `refactor/photo-mark-commands`) | none | `src/window/build.rs` (InfoBar favourite, rating buttons, digit keys), `src/window/photo_actions.rs` (context-menu favourite) |
 | 10 | Current photo (`selected_photo`) | Strong | open | none | `src/window/build.rs`, `src/window/photo_actions.rs`, `src/window/layout.rs` |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
 | 12 | Front surface (widens 6) | Worth exploring | open | none | `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
@@ -169,7 +169,13 @@ One GTK adapter, `PhotoMarkCommands` (window-level `Rc`, cloned into the five ha
 6. ~~Collage selection mode.~~ **Decided 2026-11-23 by the owner:** marks apply to the photos ticked for the collage; with none ticked, `plan` returns nothing and no object or InfoBar changes (fixes the UI-only change).
 7. ~~Scope.~~ **Decided 2026-11-23 by the owner:** the sidebar folder favourite stays out except for reusing the adapter's post-change refresh; undo for marks stays out.
 
-All seven decisions are settled. Next: branch `refactor/photo-mark-commands` from `main` (on the owner's word), then stage 1, the pure `plan` with table tests.
+All seven decisions are settled. Started 2026-11-23 on branch `refactor/photo-mark-commands`.
+
+**Stages:**
+1. Pure `plan` in `src/window/photo_marks.rs` with table tests (targets per front, favourite rule, star/digit rule, membership). Done, uncommitted. Membership is precise: the Online/Offline/Corrupt toolbar filters and unrelated metadata filters no longer force a rebuild (today any non-All rating filter, and any metadata filter on the heart path, does).
+2. `db::set_favorite_for_photos`: one transaction, skips trashed photos.
+3. GTK adapter `PhotoMarkCommands`; move the four photo controls onto it, the folder favourite onto its refresh; remove the `dead_code` allowance.
+4. Docs: GLOSSARY term, AUDIT-INDEX entry, this file, and an owner rule in `scripts/check-presentation-owners.sh` if the adapter becomes the only mark writer.
 
 Changes users would notice: the heart can unfavourite a selection; the lightbox photo menu changes one photo; a re-rated photo disappears under a metadata `Rating` filter; a photo menu favourite under a metadata filter rebuilds the grid; the gallery Properties panel updates; failed writes show an error and leave nothing half-written; clicking a selection's shared star rating clears it; the lightbox moves on when a rating change takes the shown photo out of a rating view; in Collage, marks follow the ticked photos.
 

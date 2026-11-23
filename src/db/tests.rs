@@ -113,6 +113,33 @@ mod tests {
     }
 
     #[test]
+    fn favourites_for_photos_skip_trashed_and_write_all_or_nothing() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute(
+            "INSERT INTO photos(id,path,trashed) VALUES (1,'/a.jpg',0),(2,'/b.jpg',1),(3,'/c.jpg',0)",
+            [],
+        )
+        .unwrap();
+        let favorite = |id| photo(&c, id).unwrap().unwrap().favorite;
+
+        set_favorite_for_photos(&c, &[1, 2, 3], true).unwrap();
+        assert!(favorite(1) && favorite(3));
+        assert!(!favorite(2), "a trashed photo is not marked");
+
+        // A failure on the last photo must leave the first one unchanged.
+        c.execute_batch(
+            "CREATE TRIGGER refuse_three BEFORE UPDATE ON photos WHEN NEW.id = 3
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+        assert!(set_favorite_for_photos(&c, &[1, 3], false).is_err());
+        assert!(favorite(1) && favorite(3));
+
+        set_favorite_for_photos(&c, &[], false).unwrap();
+    }
+
+    #[test]
     fn history_records_only_changed_commits_and_reorders_unique_items() {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(SCHEMA).unwrap();

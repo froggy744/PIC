@@ -901,6 +901,26 @@ pub fn set_rating_for_photos(connection: &Connection, ids: &[i64], rating: i32) 
     Ok(())
 }
 
+/// Mark or unmark several photos in one transaction: on error none change.
+/// Trashed photos are skipped, like `set_rating_for_photos`.
+pub fn set_favorite_for_photos(connection: &Connection, ids: &[i64], favorite: bool) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    let transaction = connection.unchecked_transaction()?;
+    {
+        let mut statement = transaction.prepare(
+            "UPDATE photos SET favorite = ?1 WHERE id = ?2 AND trashed = 0",
+        )?;
+        for id in ids {
+            statement.execute(params![favorite, id])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
 pub fn set_favorite_for_folder(
     connection: &Connection,
     folder_id: i64,

@@ -7,6 +7,9 @@
 #   - src/window/sidebar_widgets.rs    (SidebarWidgets)
 #   - src/window/properties_widgets.rs (PropertiesWidgets)
 #   - src/infobar.rs                   (InfoBar; the decision is infobar::presentation)
+# Photo mark commands (candidate 9) are likewise the only writer of photo
+# favourites and ratings:
+#   - src/window/photo_mark_commands.rs (the decision is window::photo_marks)
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -24,6 +27,7 @@ set -euo pipefail
 SIDEBAR_OWNER='src/window/sidebar_widgets.rs'
 PROPERTIES_OWNER='src/window/properties_widgets.rs'
 INFOBAR_OWNER='src/infobar.rs'
+MARKS_OWNER='src/window/photo_mark_commands.rs'
 ID='[[:alnum:]_]'
 
 # id ~ owner files (space separated) ~ extended regex ~ what it guards
@@ -35,6 +39,7 @@ RULES=(
   "sidebar-mirror~$SIDEBAR_OWNER src/sidebar.rs~(^|[^[:alnum:]_])(set_pinned|set_hover_open|clear_hover_open)\(~sidebar.rs pin and hover-peek mirror"
   "sidebar-split~$SIDEBAR_OWNER~main_split$ID*\.(set_show_sidebar|set_collapsed|set_pin_sidebar|set_enable_show_gesture|set_enable_hide_gesture|set_sidebar)\(~main split visibility, pin, gestures and sidebar child"
   "infobar-actions~$INFOBAR_OWNER~\.(favorite|rating|edit|add_to_album|rotate|export|print|more|view_toggle|grid_zoom)\.set_sensitive\(~InfoBar photo-action and gallery-control enabled state"
+  "photo-marks~$MARKS_OWNER src/library_home_tests.rs~(db::set_(favorite|favorite_for_photos|rating_for_photos)|\.update_(favorites|ratings))\(~favourite and rating writes (library and gallery objects)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -51,6 +56,10 @@ ALLOW=(
   "src/window/layout.rs|compact_dock.set_child(Some(&compact_sidebar_page));|construction: initial dock child"
   "src/window/layout.rs|compact_immersive_toggle.set_visible(false);|construction default before SidebarWidgets::new"
   "src/window/layout.rs|sidebar_shell.set_child(Some(&left_column));|construction: initial shell child"
+  "src/window/library.rs|db::set_rating_for_photos(&connection, &[1], rating).unwrap();|test fixture (rating filter refresh tests)"
+  "src/window/library.rs|db::set_rating_for_photos(&connection, &[1], 0).unwrap();|test fixture (rating filter refresh tests)"
+  "src/window/library.rs|db::set_rating_for_photos(&connection, &[2], 0).unwrap();|test fixture (rating filter refresh tests)"
+  "src/window/library.rs|db::set_rating_for_photos(&connection, &[1], 3).unwrap();|test fixture (rating filter refresh tests)"
   "src/window/layout.rs|dock.set_visible(false);|KNOWN EXCEPTION: compact_dock visible-notify immersive guard predates SidebarWidgets"
 )
 
@@ -117,7 +126,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -157,6 +166,14 @@ RS
     self.favorite.set_sensitive(actions);
     self.grid_zoom.set_sensitive(target.gallery_controls_enabled());
 RS
+  cat >"$root/$MARKS_OWNER" <<'RS'
+        MarkChange::Favorite(favorite) => db::set_favorite_for_photos(connection, &plan.ids, favorite),
+        MarkChange::Rating(rating) => db::set_rating_for_photos(connection, &plan.ids, rating),
+            MarkChange::Favorite(favorite) => gallery.update_favorites(&plan.ids, favorite),
+RS
+  cat >"$root/src/grid.rs" <<'RS'
+    pub fn update_favorites(&self, ids: &[i64], favorite: bool) {
+RS
   cat >"$root/src/window/photo_actions.rs" <<'RS'
 fn properties_placeholder(on_close: Rc<dyn Fn()>) -> gtk::Box {}
 fn properties_photo_content(
@@ -170,7 +187,8 @@ RS
   local entry apath atext
   for entry in "${ALLOW[@]}"; do
     IFS='|' read -r apath atext _ <<<"$entry"
-    [[ "$apath" == "src/window/layout.rs" ]] && printf '    %s\n' "$atext" >>"$root/src/window/layout.rs"
+    [[ "$apath" == src/window/layout.rs || "$apath" == src/window/library.rs ]] \
+      && printf '    %s\n' "$atext" >>"$root/$apath"
   done
 }
 
@@ -202,6 +220,9 @@ self_test() {
     "allowed line in another file|src/window/build.rs|main_split.set_pin_sidebar(true);|sidebar-split"
     "photo action enabled in build.rs|src/window/build.rs|info.rotate.set_sensitive(true);|infobar-actions"
     "zoom disabled in layout.rs|src/window/layout.rs|info_for_zoom.grid_zoom.set_sensitive(false);|infobar-actions"
+    "favourite written in build.rs|src/window/build.rs|db::set_favorite(&db.borrow(), id, true)|photo-marks"
+    "ratings written in photo_actions.rs|src/window/photo_actions.rs|db::set_rating_for_photos(&c, &ids, 3)|photo-marks"
+    "gallery objects marked in build.rs|src/window/build.rs|gallery_for_keys.update_ratings(&ids, rating);|photo-marks"
     "dock shown in build.rs|src/window/build.rs|compact_dock.set_visible(true);|sidebar-parts"
     "column hidden in immersive.rs|src/window/immersive.rs|left_column.set_visible(false);|sidebar-parts"
     "shell child in build.rs|src/window/build.rs|sidebar_shell.set_child(Some(&compact_sidebar_page));|sidebar-parts"

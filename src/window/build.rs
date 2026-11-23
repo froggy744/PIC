@@ -548,6 +548,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         filter: filter.clone(),
         search: search_text.clone(),
         sort: sort.clone(),
+        rating_filter: rating_filter.clone(),
         info: info.clone(),
         selected_photo: selected_photo.clone(),
         lightbox: Rc::downgrade(&lightbox),
@@ -4149,121 +4150,26 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         })));
     }
 
-    let search_for_favorite = search_text.clone();
-    let sort_for_favorite = sort.clone();
+    // Photo mark commands decide the targets, values and refreshes; the
+    // controls only report what the user asked for.
     let selected_for_favorite = selected_photo.clone();
-    let db_for_favorite = connection.clone();
-    let info_favorite = info.clone();
-    let gallery_for_favorite = gallery.clone();
-    let filter_for_favorite = filter.clone();
-    let lightbox_for_favorite = lightbox.clone();
-    let properties_for_favorite = properties.clone();
-    let sidebar_refresh_for_favorite = availability_refresh.clone();
-    let sidebar_for_favorite = sidebar_for_unavailable.clone();
-
+    let marks_for_favorite = action_context.clone();
     info.favorite.connect_clicked(move |_| {
         let Some(photo) = selected_for_favorite.borrow().clone() else {
             return;
         };
-        let ids = if lightbox_for_favorite.root.is_visible() {
-            vec![photo.id()]
-        } else {
-            gallery_for_favorite.selected_photo_ids(Some(photo.id()))
-        };
-        let favorite = ids.len() > 1 || !photo.favorite();
-
-        for id in &ids {
-            if let Err(error) = db::set_favorite(&db_for_favorite.borrow(), *id, favorite) {
-                eprintln!("Could not update favourite: {error}");
-                return;
-            }
-        }
-        photo.set_favorite(favorite);
-        properties_for_favorite.show_photo(PropertiesSurface::Lightbox, Some(&photo));
-        if filter_for_favorite.get() == sidebar::SidebarFilter::Favorites && !favorite {
-            gallery_for_favorite.remove_photos(&ids);
-            if lightbox_for_favorite.root.is_visible() {
-                lightbox_for_favorite.remove_photo(photo.id());
-            }
-        } else {
-            gallery_for_favorite.update_favorites(&ids, favorite);
-            info_favorite.photo_updated(&photo);
-        }
-        if !db::filters::Filters::load(&db_for_favorite.borrow()).is_empty() {
-            refresh_grid(&db_for_favorite,filter_for_favorite.get(),&search_for_favorite.borrow(),sort_for_favorite.get(),&gallery_for_favorite);
-        }
-        if let Some(sidebar) = sidebar_for_favorite.borrow().as_ref().cloned() {
-            if let Ok(counts) = db::sidebar_counts(&db_for_favorite.borrow()) {
-                sidebar::refresh_library_counts(
-                    &sidebar,
-                    counts,
-                    &sidebar_refresh_for_favorite,
-                );
-            }
-        }
-        
+        photo_mark_commands::run(&marks_for_favorite, MarkIntent::ToggleFavorite, &photo);
     });
 
     for (index, button) in info.rating_buttons.iter().enumerate() {
         let selected_for_rating = selected_photo.clone();
-        let db_for_rating = connection.clone();
-        let info_for_rating = info.clone();
-        let gallery_for_rating = gallery.clone();
-        let sort_for_rating = sort.clone();
-        let rating_filter_for_rating = rating_filter.clone();
-        let filter_for_rating = filter.clone();
-        let search_for_rating = search_text.clone();
-        let sidebar_for_rating = sidebar_for_unavailable.clone();
-        let lightbox_for_rating = lightbox.clone();
-        let properties_for_rating = properties.clone();
-        let rating = (index + 1) as i32;
+        let marks_for_rating = action_context.clone();
+        let stars = (index + 1) as u8;
         button.connect_clicked(move |_| {
             let Some(photo) = selected_for_rating.borrow().clone() else {
                 return;
             };
-            let ids = if lightbox_for_rating.root.is_visible() {
-                vec![photo.id()]
-            } else {
-                gallery_for_rating.selected_photo_ids(Some(photo.id()))
-            };
-            let target = if ids.len() == 1 && photo.rating() == rating { 0 } else { rating };
-            if let Err(error) =
-                db::set_rating_for_photos(&db_for_rating.borrow(), &ids, target)
-            {
-                eprintln!("Could not update rating: {error}");
-                return;
-            }
-            gallery_for_rating.update_ratings(&ids, target);
-            photo.set_rating(target);
-            info_for_rating.photo_updated(&photo);
-            properties_for_rating.show_photo(PropertiesSurface::Lightbox, Some(&photo));
-            if let (Some(sidebar), Ok(counts)) = (
-                sidebar_for_rating.borrow().as_ref(),
-                db::sidebar_counts(&db_for_rating.borrow()),
-            ) {
-                sidebar::update_library_counts(sidebar, counts);
-            }
-
-            // Rebuild only when this edit can change visible membership or
-            // ordering. Otherwise rating remains a cheap in-place badge update.
-            if rating_filter_for_rating.get() != RatingFilter::All
-                || matches!(
-                    filter_for_rating.get(),
-                    sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_)
-                )
-                || sort_for_rating.get().field == SortField::Rating
-            {
-                refresh_grid(
-                    &db_for_rating,
-                    filter_for_rating.get(),
-                    &search_for_rating.borrow(),
-                    sort_for_rating.get(),
-                    &gallery_for_rating,
-                );
-            }
-            if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!("UI TRACE photo_rating_changed id={} rating={}", photo.id(), target);
-            }
+            photo_mark_commands::run(&marks_for_rating, MarkIntent::ToggleRating(stars), &photo);
         });
     }
 
@@ -5376,14 +5282,9 @@ fn start_photo_export_single(
         let filter_for_keys = filter.clone();
         let stack_for_keys = main_stack.clone();
         let lightbox_for_keys = lightbox.clone();
-        let properties_for_keys = properties.clone();
         let selected_for_keys = selected_photo.clone();
-        let db_for_keys = connection.clone();
-        let info_for_keys = info.clone();
-        let sort_for_keys = sort.clone();
-        let rating_filter_for_keys = rating_filter.clone();
+        let marks_for_keys = action_context.clone();
         let search_for_keys = search_text.clone();
-        let sidebar_for_keys = sidebar_for_unavailable.clone();
 
         let photo_keys = gtk::EventControllerKey::new();
         photo_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -5503,54 +5404,11 @@ fn start_photo_export_single(
                 {
                     if digit <= 5 && (photos_page || lightbox_for_keys.root.is_visible()) {
                         if let Some(photo) = selected_for_keys.borrow().clone() {
-                            let rating = digit as i32;
-                            let ids = if lightbox_for_keys.root.is_visible() {
-                                vec![photo.id()]
-                            } else {
-                                gallery_for_keys.selected_photo_ids(Some(photo.id()))
-                            };
-                            if let Err(error) =
-                                db::set_rating_for_photos(&db_for_keys.borrow(), &ids, rating)
-                            {
-                                eprintln!("Could not update rating: {error}");
-                            } else {
-                                gallery_for_keys.update_ratings(&ids, rating);
-                                photo.set_rating(rating);
-                                info_for_keys.photo_updated(&photo);
-                                properties_for_keys.show_photo(
-                                    PropertiesSurface::Lightbox,
-                                    Some(&photo),
-                                );
-                                if let (Some(sidebar), Ok(counts)) = (
-                                    sidebar_for_keys.borrow().as_ref(),
-                                    db::sidebar_counts(&db_for_keys.borrow()),
-                                ) {
-                                    sidebar::update_library_counts(sidebar, counts);
-                                }
-
-                                if rating_filter_for_keys.get() != RatingFilter::All
-                                    || matches!(
-                                        filter_for_keys.get(),
-                                        sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_)
-                                    )
-                                    || sort_for_keys.get().field == SortField::Rating
-                                {
-                                    refresh_grid(
-                                        &db_for_keys,
-                                        filter_for_keys.get(),
-                                        &search_for_keys.borrow(),
-                                        sort_for_keys.get(),
-                                        &gallery_for_keys,
-                                    );
-                                }
-                                if std::env::var_os("PICASA_TRACE").is_some() {
-                                    eprintln!(
-                                        "UI TRACE photo_rating_shortcut ids={} rating={}",
-                                        ids.len(),
-                                        rating
-                                    );
-                                }
-                            }
+                            photo_mark_commands::run(
+                                &marks_for_keys,
+                                MarkIntent::SetRating(digit as u8),
+                                &photo,
+                            );
                         }
                     }
                     return glib::Propagation::Stop;

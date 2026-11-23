@@ -38,7 +38,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
-| 11 | Window session state | Worth exploring | verified, awaiting merge (`refactor/window-session-state`, pushed) | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
+| 11 | Window session state | Worth exploring | merged | merge `4f47d674` (`refactor/window-session-state`) | `src/window/session_state.rs` (pure: keys, defaults, clamps, load, record; `SessionStore` seam) |
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 
@@ -378,7 +378,7 @@ Merged 2026-11-23 (`888408e0`) on the owner's standing instruction to merge on s
 - The remaining behaviour handlers (close-return, close-on-page-change, teardown, fade cancel, Immersive, trace) still connect to GTK directly; move them only with a reason.
 - The mirrors still keep their own copies of the inputs (decision 6).
 
-### 11 · Window session state (verified, awaiting merge)
+### 11 · Window session state (merged 2026-11-23)
 Branch `refactor/window-session-state`.
 
 #### Investigation (at `0006dbb4`, no code changed)
@@ -420,12 +420,14 @@ Session keys (`src/window.rs:60-70`, plus `compact-sidebar-width-v2` local to `l
 - GUI harness: `viewer` 19/19, `editing` 39/39.
 - Scripted interaction checks: 16/16 on this branch and on `main`. They stop the app by killing it, so they never reach Exit; **nothing automated covers the close or library-switch save end to end** (the snapshot itself is table-tested).
 
-**Follow-up:**
+Merged 2026-11-23 (`4f47d674`) by the owner (the agent's merge was refused by the auto-mode permission check).
+
+**Follow-up after merge:**
 - Restore the incoming library's viewport after a switch (decision 6): wait for the stream build as `populate_startup_gallery` does, then apply the activated-photo / anchor rule.
 - A scripted check that exits through the Exit confirmation and switches library would cover the wiring.
 
-### Next (updated 2026-11-23, after 11 was verified)
-Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router); the GUI harness was fixed separately (`467b3ee1`). 11 (window session state) is verified and pushed as branch `refactor/window-session-state`, **not yet merged**: the agent's `git merge` was refused by the auto-mode permission check, so the owner merges it (`git switch main && git merge --no-ff refactor/window-session-state && git push`), then this file records the merge commit.
+### Next (updated 2026-11-23, after 11 merged)
+Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).
 
 Open candidates, in order:
 1. **5 · One gallery scroll-motion module.** Next. The owner is testing glide scrolling because "something feels off"; nothing from 12, 13, 6 or 11 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).

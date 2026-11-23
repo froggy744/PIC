@@ -1,24 +1,4 @@
 impl Gallery {
-    /// Whether a surface's tiles react to the pointer (hover styling, tooltips).
-    ///
-    /// While a gallery scrolls, the tile under a resting or moving
-    /// pointer changes many times a second. Each change restyles the hovered
-    /// tile and restarts its tooltip, and those redraws run out of step with
-    /// the display: frames arrive early, the next one a full refresh late,
-    /// and fast scrolling stutters only when a hand is on the mouse. Tiles
-    /// therefore ignore the pointer while scrolling and follow it again once
-    /// the scroll settles. Clicks still reach the scrolled window, which stops
-    /// the motion.
-    pub fn set_tiles_follow_pointer(&self, scroller: GalleryScroller, follow: bool) {
-        let root: &gtk::Widget = match scroller {
-            GalleryScroller::Photos => self.root.upcast_ref(),
-            GalleryScroller::Folder => self.folder_sectioned_root.upcast_ref(),
-        };
-        if root.can_target() != follow {
-            root.set_can_target(follow);
-        }
-    }
-
     /// Photo that must stay at the top across a reshape. While a previous
     /// reframe is still settling, keep its photo: the viewport is mid-flight
     /// and no longer describes the user's position. Otherwise capture the

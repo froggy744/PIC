@@ -17,7 +17,7 @@ Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ..
 | 1 | Deepen gallery thumbnail presentation | Strong | merged | commits `0df3b918`..`62dff881` on `main` (no merge commit; branch `refactor/thumbnail-presentation`) | `src/grid/presentation.rs` |
 | 2 | Sidebar presentation state machine | Strong | merged | merge `03a2fcb3` (`refactor/sidebar-presentation`) | `src/window/sidebar_presentation.rs` (pure), `src/window/sidebar_widgets.rs` (GTK adapter) |
 | 3 | Properties inspector as one owner | Strong | merged | merge `2da69bae` (`refactor/properties-presentation`) | `src/window/properties_presentation.rs` (pure), `src/window/properties_widgets.rs` (GTK adapter) |
-| 4 | InfoBar decides what it shows | Strong | open: decided, not started (branch `refactor/infobar-presentation`) | none | `src/infobar.rs`; callers in `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
+| 4 | InfoBar decides what it shows | Strong | implemented on `refactor/infobar-presentation` (stages 1-5); not merged, awaiting full validation | none yet | `src/infobar_presentation.rs` (pure), `src/infobar.rs` (GTK adapter) |
 | 5 | One gallery scroll-motion module | Worth exploring | open | none | `src/window/navigation.rs`, `src/window/build.rs` (scrub, settle, pump), `src/smooth_scroll.rs` |
 | 6 | Zoom slider router | Worth exploring | open | none | `src/window/build.rs` (zoom slider handlers), `src/lightbox/impl.rs` |
 | 7 | Editor preview plan | Worth exploring | open | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
@@ -38,6 +38,12 @@ None recorded. `src/window/immersive.rs` still sets the Properties split's pin a
 ### 4 · InfoBar decides what it shows
 **Decisions (2026-11-23, by the owner):**
 1. **Notify is in scope.** The InfoBar watches `notify` on the photo it shows (rating, favourite, metadata fields; it already watches `thumbnail-available`). This lets the manual refresh calls go, as a later stage after the mode choice has moved.
+   **Revised 2026-11-23 (stage 4), by the owner:** no notify handler. Checking showed it could replace only 5 of the 10 refresh calls:
+   - `PhotoObject::set_from_photo` (scanner updates) writes fields without emitting notifications.
+   - Editor save works on a new object (`PhotoObject::from_photo`).
+   - Rename and context-menu favourite change the context-menu object, which may not be the shown one.
+
+   Instead, `InfoBar::photo_updated` stays the one explicit way to report a change, and it rewrites only what changed. Don't re-propose notify without first making `set_from_photo` notify, which is a performance question on large libraries.
 2. **`selected_photo` is left alone.** The `Rc<RefCell<Option<PhotoObject>>>` in `window/build.rs`, kept in step by hand, is not changed. Record it here as follow-up work when the candidate merges.
 3. **Branch `refactor/infobar-presentation`** from `main`, merged with a merge commit like candidates 2 and 3.
 
@@ -65,10 +71,15 @@ About 12 refresh calls of `set_photo(Some(&photo))` follow a change to the photo
 
 **Planned stages:**
 1. A pure model with no GTK and table tests.
-2. The InfoBar applies it through events (surface, selection, focus, lightbox photo); `set_selected_photos`, `show_photo_metadata` and `set_photo` become private.
-3. Move the six callers.
-4. Notify on the shown photo, and delete the refresh calls. Check first that scanner updates through `set_from_photo` emit the notifications.
+2. The InfoBar applies it through events (surface, selection, focus, lightbox photo), writing only what changed. The old `set_selected_photos`, `show_photo_metadata`, `set_photo` and `set_collage_active` stay as thin wrappers over the same write helpers, so callers are unchanged.
+3. Move the six callers, the refresh calls and the InfoBar's own tests onto the events, then delete the old wrappers and the temporary `dead_code` allowances.
+4. `photo_updated` rewrites only what changed: filename, metrics, rating and favourite are compared through `PhotoSummary`, and the preview is redrawn only when its thumbnail, rotation, edit recipe or object changes (see decision 1).
 5. Docs: GLOSSARY term, an InfoBar entry in AUDIT-INDEX (it has none yet), this file, and an owner rule in `scripts/check-presentation-owners.sh`.
+
+**Follow-up after merge:**
+- `selected_photo` in `window/build.rs` is still kept in step by hand beside the InfoBar events (decision 2).
+- The gallery focus callback in `window/build.rs` keeps its own lightbox/overview guard, because it also guards the Properties panel and `selected_photo`. The InfoBar no longer needs it.
+- `infobar::responsive_tests::compact_toolbar_keeps_actions_usable_and_restores_wide_layout` fails at "Rotate should leave the action menu open" on `main` too (found 2026-11-23, before candidate 4); not investigated.
 
 **Tests to keep green** (Xvfb 1920×1080, Wayland unset):
 - `multiselection_centers_existing_actions_and_restores_toolbar`

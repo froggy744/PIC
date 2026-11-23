@@ -1730,6 +1730,16 @@ impl Gallery {
         }
     }
 
+    /// A photo's rotation changed: re-lay out the layouts that size tiles by
+    /// aspect ratio, and redraw only that photo's tiles. Refreshing every
+    /// tile would blank the whole gallery while it reloads.
+    pub fn refresh_rotated_photo(&self, path: &str) {
+        if self.layout() != PhotoLayout::Grid {
+            self.sectioned_folder.invalidate_geometry();
+        }
+        self.refresh_thumbnails_for_paths(&[std::path::PathBuf::from(path)]);
+    }
+
     pub fn refresh_thumbnails_for_paths(&self, paths: &[std::path::PathBuf]) {
         if paths.is_empty() {
             return;

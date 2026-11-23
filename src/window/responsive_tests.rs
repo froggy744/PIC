@@ -692,3 +692,127 @@ fn honeycomb_properties_preserves_visible_photo_through_repeated_toggles() {
     settle();
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn rotating_a_photo_redraws_only_its_tile() {
+    adw::init().unwrap();
+    let app = adw::Application::builder()
+        .application_id("io.pic.RotateRefreshTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let directory = std::env::temp_dir().join(format!("pic-rotate-refresh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    let connection = db::open(&directory.join("library.db")).unwrap();
+    for (key, value) in [
+        (LAST_VIEW_SETTING_KEY, "all"),
+        ("photo_layout", "grid"),
+        (GRID_THUMBNAIL_SIZE_SETTING_KEY, "180"),
+        (WINDOW_WIDTH_SETTING_KEY, "1440"),
+        (WINDOW_HEIGHT_SETTING_KEY, "900"),
+        ("onboarding-never-show", "true"),
+    ] {
+        db::set_setting(&connection, key, value).unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO folders(id,path,name) VALUES (1,?1,'Rotate test')",
+            [directory.to_str().unwrap()],
+        )
+        .unwrap();
+    for id in 1..=24i64 {
+        let path = directory.join(format!("photo-{id}.jpg"));
+        image::RgbImage::from_pixel(64, 48, image::Rgb([(id * 9) as u8, 120, 200]))
+            .save(&path)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO photos(id,path,folder_id,width,height,added_at) VALUES (?1,?2,1,64,48,?1)",
+                rusqlite::params![id, path.to_str().unwrap()],
+            )
+            .unwrap();
+    }
+    let window = build(&app, connection);
+    window.present();
+    let tiles = || {
+        descendants(window.upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<grid::SquareTile>().ok())
+            .filter(|tile| tile.is_mapped() && tile.photo().is_some())
+            .collect::<Vec<_>>()
+    };
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while (tiles().len() < 6
+        || tiles()
+            .iter()
+            .any(|tile| tile.transition_paintable().is_none()))
+        && Instant::now() < deadline
+    {
+        settle();
+    }
+    let rotate = descendants(window.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .find(|button| {
+            button
+                .tooltip_text()
+                .is_some_and(|text| text.starts_with("Rotate clockwise"))
+        })
+        .expect("InfoBar rotate button missing");
+    let selection = descendants(window.upcast_ref())
+        .into_iter()
+        .find_map(|widget| widget.downcast::<gtk::GridView>().ok())
+        .and_then(|view| view.model())
+        .expect("gallery selection missing");
+    selection.select_item(0, true);
+    settle();
+    let rotated = selection
+        .item(0)
+        .and_downcast::<crate::photo_object::PhotoObject>()
+        .unwrap()
+        .id();
+    let before = tiles()
+        .iter()
+        .map(|tile| (tile.photo().unwrap().id(), tile.transition_paintable()))
+        .collect::<Vec<_>>();
+    assert!(before.len() > 6, "too few tiles to see a flash");
+
+    rotate.emit_clicked();
+    // Sample every few milliseconds: a gallery-wide refresh blanks the
+    // other tiles only until their thumbnails reload.
+    let mut disturbed = std::collections::BTreeSet::new();
+    let context = glib::MainContext::default();
+    let until = Instant::now() + Duration::from_millis(800);
+    while Instant::now() < until {
+        for tile in tiles() {
+            let id = tile.photo().unwrap().id();
+            let shown = before.iter().find(|(photo, _)| *photo == id);
+            if id != rotated && shown.is_some_and(|(_, old)| tile.transition_paintable() != *old) {
+                disturbed.insert(id);
+            }
+        }
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    assert!(
+        disturbed.is_empty(),
+        "rotating one photo redrew {} other tiles: {disturbed:?}",
+        disturbed.len()
+    );
+    let tile = tiles()
+        .into_iter()
+        .find(|tile| tile.photo().is_some_and(|photo| photo.id() == rotated))
+        .expect("rotated tile missing");
+    assert_eq!(tile.photo().unwrap().rotation(), 90);
+    let old = before.iter().find(|(photo, _)| *photo == rotated).unwrap();
+    assert_ne!(
+        tile.transition_paintable(),
+        old.1,
+        "the rotated tile was not redrawn"
+    );
+    window.close();
+    let _ = std::fs::remove_dir_all(&directory);
+}

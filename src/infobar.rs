@@ -7,6 +7,14 @@ use gtk4 as gtk;
 
 use crate::photo_object::PhotoObject;
 
+#[path = "infobar_presentation.rs"]
+pub(crate) mod presentation;
+
+use presentation::{
+    InfoBarEvent, InfoBarMode, InfoBarPage, InfoBarPresentation, InfoBarTarget, PhotoFacts,
+    PhotoSummary, SelectionSample,
+};
+
 pub struct InfoBar {
     pub root: gtk::Box,
     utilities: gtk::Box,
@@ -54,7 +62,14 @@ pub struct InfoBar {
     pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
-    collage_active: Rc<Cell<bool>>,
+    /// Decides what the InfoBar shows; see `infobar::presentation`.
+    presentation: RefCell<InfoBarPresentation>,
+    /// The target last written to the widgets (`None` before the first).
+    applied: RefCell<Option<InfoBarTarget>>,
+    /// The photo whose metadata the widgets show, and what was written.
+    written: RefCell<Option<WrittenPhoto>>,
+    /// The last reported gallery selection sample, for the strip.
+    selection_photos: RefCell<Vec<PhotoObject>>,
 }
 
 impl InfoBar {
@@ -689,7 +704,6 @@ impl InfoBar {
         // from filename/preview presentation. This prevents the bar's natural
         // minimum width from making the application appear clipped.
         let has_photo = Rc::new(Cell::new(false));
-        let collage_active = Rc::new(Cell::new(false));
         let has_photo_for_resize = has_photo.clone();
         let details_for_resize = details.clone();
         let text_for_resize = text.clone();
@@ -942,24 +956,144 @@ impl InfoBar {
             grid_zoom,
             grid_zoom_reset,
             has_photo,
-            collage_active,
+            presentation: RefCell::new(InfoBarPresentation::new()),
+            applied: RefCell::new(None),
+            written: RefCell::new(None),
+            selection_photos: RefCell::new(Vec::new()),
         }
     }
+}
 
+/// The InfoBar's interface: callers report what happened and the
+/// presentation model (`infobar::presentation`) decides what is shown.
+impl InfoBar {
+    /// The gallery's focused photo changed.
+    pub(crate) fn show_gallery_focus(&self, photo: Option<&PhotoObject>) {
+        self.dispatch(
+            InfoBarEvent::GalleryFocus(photo.map(PhotoObject::id)),
+            photo,
+        );
+    }
+
+    /// The gallery's selection changed: its size and a bounded sample.
+    pub(crate) fn show_gallery_selection(&self, count: usize, photos: &[PhotoObject]) {
+        let sample = self.remember_selection(count, photos);
+        self.dispatch(InfoBarEvent::GallerySelection(sample), None);
+    }
+
+    /// The date browser handed the gallery selection back.
+    pub(crate) fn show_date_browser_selection(&self, count: usize, photos: &[PhotoObject]) {
+        let sample = self.remember_selection(count, photos);
+        self.dispatch(InfoBarEvent::DateBrowserSelection(sample), None);
+    }
+
+    pub(crate) fn set_lightbox_shown(&self, shown: bool) {
+        self.dispatch(InfoBarEvent::LightboxShown(shown), None);
+    }
+
+    /// The lightbox moved to `photo`.
+    pub(crate) fn show_lightbox_photo(&self, photo: &PhotoObject) {
+        self.dispatch(InfoBarEvent::LightboxPhoto(photo.id()), Some(photo));
+    }
+
+    pub(crate) fn set_date_overview_shown(&self, shown: bool) {
+        self.dispatch(InfoBarEvent::DateOverviewShown(shown), None);
+    }
+
+    pub(crate) fn set_page(&self, page: InfoBarPage) {
+        self.dispatch(InfoBarEvent::Page(page), None);
+    }
+
+    /// `photo`'s facts changed; it becomes the shown photo and is rewritten.
+    pub(crate) fn photo_updated(&self, photo: &PhotoObject) {
+        self.dispatch(InfoBarEvent::PhotoUpdated(photo.id()), Some(photo));
+    }
+
+    /// No photo to show (library switched, photo trashed).
+    pub(crate) fn clear_photo(&self) {
+        self.dispatch(InfoBarEvent::PhotoCleared, None);
+    }
+
+    fn remember_selection(&self, count: usize, photos: &[PhotoObject]) -> SelectionSample {
+        self.selection_photos.replace(photos.to_vec());
+        SelectionSample::new(count, photos.iter().map(PhotoObject::id).collect())
+    }
+
+    fn dispatch(&self, event: InfoBarEvent, provided: Option<&PhotoObject>) {
+        let rewrite_photo = matches!(
+            event,
+            InfoBarEvent::PhotoUpdated(_) | InfoBarEvent::PhotoCleared
+        );
+        self.presentation.borrow_mut().handle(event);
+        self.apply(provided, rewrite_photo);
+    }
+
+    /// Write the presentation target, touching only what changed. A photo
+    /// is rewritten when another object is shown or its facts changed;
+    /// showing the same object again writes nothing.
+    fn apply(&self, provided: Option<&PhotoObject>, rewrite_photo: bool) {
+        let target = self.presentation.borrow().target();
+        let last = self.applied.borrow().clone();
+        if last.as_ref().map(|last| last.collage) != Some(target.collage) {
+            self.write_collage(&target);
+        }
+        if last.as_ref().map(|last| &last.mode) != Some(&target.mode) {
+            match &target.mode {
+                InfoBarMode::Metadata => self.write_metadata_mode(),
+                InfoBarMode::Selection(sample) => {
+                    let photos = self.selection_photos.borrow().clone();
+                    let photos = sample
+                        .ids
+                        .iter()
+                        .filter_map(|id| photos.iter().find(|photo| photo.id() == *id).cloned())
+                        .collect::<Vec<_>>();
+                    self.write_selection_strip(sample.count, &photos);
+                }
+            }
+        }
+        let photo = target.photo.map(|id| self.photo_object(id, provided));
+        // `Some(None)`: no object is known for the id; keep what is shown.
+        if let Some(None) = photo {
+            self.applied.replace(Some(target));
+            return;
+        }
+        let photo = photo.flatten();
+        let changed =
+            self.written.borrow().as_ref().map(|written| &written.photo) != photo.as_ref();
+        if last.is_none() || rewrite_photo || changed {
+            self.write_photo(photo.as_ref(), &target, last.is_none());
+        }
+        self.applied.replace(Some(target));
+    }
+
+    /// The object for the target's photo id: the one the event carried,
+    /// the one already shown, or one from the selection sample.
+    fn photo_object(&self, id: i64, provided: Option<&PhotoObject>) -> Option<PhotoObject> {
+        provided
+            .filter(|photo| photo.id() == id)
+            .cloned()
+            .or_else(|| {
+                self.written
+                    .borrow()
+                    .as_ref()
+                    .map(|written| written.photo.clone())
+                    .filter(|photo| photo.id() == id)
+            })
+            .or_else(|| {
+                self.selection_photos
+                    .borrow()
+                    .iter()
+                    .find(|photo| photo.id() == id)
+                    .cloned()
+            })
+    }
+}
+
+impl InfoBar {
     /// Show a bounded strip of selected photos without reserving a fixed
     /// six-thumbnail width. GtkScrolledWindow clips to the width left over
     /// after the toolbar, count and Clear button.
-    pub fn set_selected_photos(&self, count: usize, photos: &[PhotoObject]) {
-        if count == 0 {
-            self.show_photo_metadata();
-            self.set_photo(None);
-            return;
-        }
-        if count == 1 || self.collage_active.get() {
-            self.show_photo_metadata();
-            return;
-        }
-
+    fn write_selection_strip(&self, count: usize, photos: &[PhotoObject]) {
         self.selection_count
             .set_text(&crate::window::format_count(count));
         if !self.selection_mode.replace(true) {
@@ -1080,7 +1214,7 @@ impl InfoBar {
         self.selection_remove.replace(Some(Rc::new(remove)));
     }
 
-    pub fn show_photo_metadata(&self) {
+    fn write_metadata_mode(&self) {
         if self.selection_mode.replace(false) {
             self.dismiss_action_menus();
             self.selection_actions.set_visible(false);
@@ -1130,17 +1264,14 @@ impl InfoBar {
         }
     }
 
-    pub fn set_collage_active(&self, active: bool) {
-        self.collage_active.set(active);
-        if active {
-            self.show_photo_metadata();
-        }
-        self.view_toggle.set_sensitive(!active);
-        self.edit
-            .set_sensitive(edit_button_sensitive(self.has_photo.get(), active));
+    fn write_collage(&self, target: &InfoBarTarget) {
+        self.view_toggle
+            .set_sensitive(target.gallery_controls_enabled());
+        self.edit.set_sensitive(target.edit_enabled());
         // Collage has no presentation zoom. Disable the shared zoom slider
         // instead of letting it fall through and resize the hidden Gallery.
-        self.grid_zoom.set_sensitive(!active);
+        self.grid_zoom
+            .set_sensitive(target.gallery_controls_enabled());
     }
 
     fn set_rating_presentation(&self, rating: i32) {
@@ -1174,8 +1305,14 @@ impl InfoBar {
         }
     }
 
-    pub fn set_photo(&self, photo: Option<&PhotoObject>) {
+    /// Write the metadata page for `photo`, touching only the parts whose
+    /// inputs changed since the last write. `first` writes everything.
+    fn write_photo(&self, photo: Option<&PhotoObject>, target: &InfoBarTarget, first: bool) {
+        let previous = self.written.borrow_mut().take();
         let Some(photo) = photo else {
+            if previous.is_none() && !first {
+                return;
+            }
             self.disconnect_preview_thumbnail_notify();
             self.preview_photo_id.set(0);
             self.has_photo.set(false);
@@ -1189,8 +1326,7 @@ impl InfoBar {
             self.favorite.set_sensitive(false);
             self.rating.set_sensitive(false);
             self.set_rating_presentation(0);
-            self.edit
-                .set_sensitive(edit_button_sensitive(false, self.collage_active.get()));
+            self.edit.set_sensitive(target.edit_enabled());
             self.add_to_album.set_sensitive(false);
             self.rotate.set_sensitive(false);
             self.export.set_sensitive(false);
@@ -1201,13 +1337,66 @@ impl InfoBar {
             return;
         };
 
+        let summary = PhotoSummary::of(&photo_facts(photo));
+        let preview = PreviewInputs::of(photo);
+        let same_photo = previous
+            .as_ref()
+            .is_some_and(|written| &written.photo == photo);
+        let previous = previous.filter(|_| !first);
+        let old = previous.as_ref();
+
+        if !same_photo || old.map(|written| &written.preview) != Some(&preview) {
+            self.write_preview(photo, &preview);
+        }
+        if old.map(|written| &written.summary.filename) != Some(&summary.filename) {
+            self.filename.set_text(&summary.filename);
+        }
+        // The camera stays a metric beside Taken; the filename subtitle slot
+        // that previously duplicated it now holds the actual file name.
+        if old.map(|written| &written.summary.metrics) != Some(&summary.metrics) {
+            set_metric_values(&self.details, summary.metrics.clone());
+        }
+        if old.map(|written| written.summary.rating) != Some(summary.rating) {
+            self.set_rating_presentation(summary.rating);
+        }
+        if old.map(|written| written.summary.favorite) != Some(summary.favorite) {
+            self.favorite.set_icon_name("emote-love-symbolic");
+            if summary.favorite {
+                self.favorite.add_css_class("active");
+                self.favorite
+                    .set_tooltip_text(Some("Remove from Favourites"));
+            } else {
+                self.favorite.remove_css_class("active");
+                self.favorite.set_tooltip_text(Some("Add to Favourites"));
+            }
+        }
+        if old.is_none() {
+            // Coming from no photo: show the name and enable the actions.
+            self.has_photo.set(true);
+            self.filename.set_visible(true);
+            let actions = target.photo_actions_enabled();
+            self.favorite.set_sensitive(actions);
+            self.rating.set_sensitive(actions);
+            self.edit.set_sensitive(target.edit_enabled());
+            self.add_to_album.set_sensitive(actions);
+            self.rotate.set_sensitive(actions);
+            self.export.set_sensitive(actions);
+            self.more.set_sensitive(true);
+            self.print.set_sensitive(actions);
+        }
+        self.written.replace(Some(WrittenPhoto {
+            photo: photo.clone(),
+            summary,
+            preview,
+        }));
+    }
+
+    /// Show the photo's cached thumbnail, or a placeholder icon until the
+    /// thumbnail becomes available.
+    fn write_preview(&self, photo: &PhotoObject, preview: &PreviewInputs) {
         self.disconnect_preview_thumbnail_notify();
         self.preview_photo_id.set(photo.id());
-        self.has_photo.set(true);
-        self.filename.set_text(&photo.filename());
-        self.filename.set_visible(true);
-
-        if let Some(thumb_path) = existing_info_thumbnail(photo) {
+        if let Some(thumb_path) = &preview.thumbnail {
             set_info_preview(&self.preview, &thumb_path.to_string_lossy(), photo);
         } else {
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
@@ -1226,63 +1415,50 @@ impl InfoBar {
             self.preview_thumbnail_notify
                 .replace(Some((photo.clone(), handler)));
         }
+    }
+}
 
-        let dimensions = if photo.width() > 0 && photo.height() > 0 {
-            format!("{} × {}", photo.width(), photo.height())
-        } else {
-            "Unknown".to_string()
-        };
-        let size = format_size(photo.size_bytes());
-        let camera = photo
-            .camera()
-            .unwrap_or_else(|| "Unknown camera".to_string());
-        let raw_date = photo
-            .taken_at()
-            .unwrap_or_else(|| "Unknown date".to_string());
-        let formatted_date = format_date(&raw_date);
-        let aperture = photo.aperture();
+/// What the metadata page last wrote, so later writes skip unchanged parts.
+struct WrittenPhoto {
+    photo: PhotoObject,
+    summary: PhotoSummary,
+    preview: PreviewInputs,
+}
 
-        // The camera stays a metric beside Taken; the filename subtitle slot
-        // that previously duplicated it now holds the actual file name.
-        set_metric_values(
-            &self.details,
-            [
-                formatted_date,
-                camera,
-                dimensions,
-                size,
-                format_aperture(aperture).unwrap_or_default(),
-                if photo.iso() > 0 {
-                    photo.iso().to_string()
-                } else {
-                    String::new()
-                },
-                crate::window::format_shutter_speed(photo.shutter_speed()).unwrap_or_default(),
-                crate::window::format_focal_length(photo.focal_length()).unwrap_or_default(),
-            ],
-        );
+/// Everything the preview image is drawn from.
+#[derive(PartialEq)]
+struct PreviewInputs {
+    /// The cached thumbnail, if it exists on disk yet.
+    thumbnail: Option<PathBuf>,
+    rotation: i32,
+    edit_recipe: String,
+}
 
-        self.favorite.set_sensitive(true);
-        self.rating.set_sensitive(true);
-        self.set_rating_presentation(photo.rating());
-        self.edit
-            .set_sensitive(edit_button_sensitive(true, self.collage_active.get()));
-        self.add_to_album.set_sensitive(true);
-        self.rotate.set_sensitive(true);
-        self.export.set_sensitive(true);
-        self.more.set_sensitive(true);
-        self.print.set_sensitive(true);
-
-        if photo.favorite() {
-            self.favorite.set_icon_name("emote-love-symbolic");
-            self.favorite.add_css_class("active");
-            self.favorite
-                .set_tooltip_text(Some("Remove from Favourites"));
-        } else {
-            self.favorite.set_icon_name("emote-love-symbolic");
-            self.favorite.remove_css_class("active");
-            self.favorite.set_tooltip_text(Some("Add to Favourites"));
+impl PreviewInputs {
+    fn of(photo: &PhotoObject) -> Self {
+        Self {
+            thumbnail: existing_info_thumbnail(photo),
+            rotation: photo.rotation(),
+            edit_recipe: photo.edit_recipe(),
         }
+    }
+}
+
+/// The facts `PhotoSummary` formats, read from the photo object.
+fn photo_facts(photo: &PhotoObject) -> PhotoFacts {
+    PhotoFacts {
+        filename: photo.filename(),
+        taken_at: photo.taken_at(),
+        camera: photo.camera(),
+        width: photo.width(),
+        height: photo.height(),
+        size_bytes: photo.size_bytes(),
+        aperture: photo.aperture(),
+        iso: photo.iso(),
+        shutter_speed: photo.shutter_speed(),
+        focal_length: photo.focal_length(),
+        rating: photo.rating(),
+        favorite: photo.favorite(),
     }
 }
 
@@ -1291,10 +1467,6 @@ fn rating_label(rating: i32) -> String {
         0 => String::new(),
         value => format!("{value}/5"),
     }
-}
-
-fn edit_button_sensitive(has_photo: bool, collage_active: bool) -> bool {
-    has_photo && !collage_active
 }
 
 fn format_aperture(value: f64) -> Option<String> {
@@ -1309,7 +1481,7 @@ fn format_aperture(value: f64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{edit_button_sensitive, format_aperture, format_date, rating_label};
+    use super::{format_aperture, format_date, rating_label};
 
     #[test]
     fn numeric_rating_label_handles_unrated_and_out_of_range_values() {
@@ -1319,14 +1491,6 @@ mod tests {
         assert_eq!(rating_label(5), "5/5");
         assert_eq!(rating_label(-1), "");
         assert_eq!(rating_label(9), "5/5");
-    }
-
-    #[test]
-    fn edit_is_disabled_while_collage_is_active() {
-        assert!(edit_button_sensitive(true, false));
-        assert!(!edit_button_sensitive(true, true));
-        assert!(!edit_button_sensitive(false, false));
-        assert!(!edit_button_sensitive(false, true));
     }
 
     #[test]
@@ -1551,30 +1715,117 @@ mod layout_tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn presentation_adapter_writes_only_what_changed() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+        let photo = |id: i64, name: &str, rating: i32| {
+            let photo: PhotoObject = glib::Object::new();
+            photo.set_id(id);
+            photo.set_filename(name);
+            photo.set_rating(rating);
+            photo
+        };
+        let (first, second) = (photo(1, "first.jpg", 3), photo(2, "second.jpg", 0));
+        let page = |info: &InfoBar| {
+            info.metadata_stack
+                .visible_child_name()
+                .unwrap()
+                .to_string()
+        };
+
+        info.show_gallery_focus(Some(&first));
+        info.show_gallery_selection(1, &[first.clone()]);
+        assert_eq!(page(&info), "photo");
+        assert_eq!(info.filename.text().as_str(), "first.jpg");
+        assert_eq!(info.rating_value.text().as_str(), "3/5");
+
+        // Showing the same object again writes nothing.
+        info.filename.set_text("sentinel");
+        info.show_gallery_focus(Some(&first));
+        assert_eq!(info.filename.text().as_str(), "sentinel");
+        // An update rewrites only what changed: here the rating, not the
+        // name or the preview.
+        info.preview.set_icon_name(Some("sentinel-symbolic"));
+        first.set_rating(5);
+        info.photo_updated(&first);
+        assert_eq!(info.rating_value.text().as_str(), "5/5");
+        assert_eq!(info.filename.text().as_str(), "sentinel");
+        assert_eq!(
+            info.preview.icon_name().as_deref(),
+            Some("sentinel-symbolic")
+        );
+        // A rename rewrites the name; a rotation redraws the preview.
+        first.set_filename("renamed.jpg");
+        info.photo_updated(&first);
+        assert_eq!(info.filename.text().as_str(), "renamed.jpg");
+        assert_eq!(
+            info.preview.icon_name().as_deref(),
+            Some("sentinel-symbolic")
+        );
+        first.set_rotation(90);
+        info.photo_updated(&first);
+        assert_eq!(
+            info.preview.icon_name().as_deref(),
+            Some("image-x-generic-symbolic")
+        );
+
+        info.show_gallery_selection(2, &[first.clone(), second.clone()]);
+        assert_eq!(page(&info), "selection");
+        assert_eq!(info.selection_thumbnails.observe_children().n_items(), 2);
+        assert!(
+            info.favorite.is_sensitive(),
+            "photo actions stay enabled for the shown photo"
+        );
+
+        // The lightbox shows its photo; the hidden gallery cannot replace it.
+        info.set_lightbox_shown(true);
+        info.show_lightbox_photo(&second);
+        assert_eq!(page(&info), "photo");
+        info.show_gallery_focus(Some(&first));
+        assert_eq!(info.filename.text().as_str(), "second.jpg");
+        // Closing it restores the strip.
+        info.set_lightbox_shown(false);
+        assert_eq!(page(&info), "selection");
+
+        info.set_page(InfoBarPage::Collage);
+        assert_eq!(page(&info), "photo");
+        assert!(!info.edit.is_sensitive() && !info.grid_zoom.is_sensitive());
+        info.set_page(InfoBarPage::Photos);
+        assert_eq!(page(&info), "selection");
+        assert!(info.edit.is_sensitive() && info.grid_zoom.is_sensitive());
+
+        info.show_gallery_selection(0, &[]);
+        assert_eq!(page(&info), "photo");
+        assert!(!info.filename.is_visible() && !info.favorite.is_sensitive());
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn rating_indicator_updates_when_lightbox_photo_changes() {
         gtk::init().unwrap();
         let info = InfoBar::new();
-        info.set_photo(None);
+        info.clear_photo();
         assert_eq!(info.rating_value.text().as_str(), "");
         assert!(!info.rating_value.is_visible());
         assert!(!info.rating.is_sensitive());
 
         let first: PhotoObject = glib::Object::new();
         first.set_rating(4);
-        info.set_photo(Some(&first));
+        info.show_gallery_focus(Some(&first));
         assert_eq!(info.rating_value.text().as_str(), "4/5");
         assert!(info.rating_value.is_visible());
         assert!(info.rating.is_sensitive());
 
-        // Keyboard shortcuts and star-picker clicks both call set_photo
-        // after saving a new rating; the number must reflect that immediately.
+        // Keyboard shortcuts and star-picker clicks both report
+        // photo_updated after saving a new rating; the number must reflect
+        // that immediately.
         first.set_rating(2);
-        info.set_photo(Some(&first));
+        info.photo_updated(&first);
         assert_eq!(info.rating_value.text().as_str(), "2/5");
 
         let second: PhotoObject = glib::Object::new();
         second.set_rating(0);
-        info.set_photo(Some(&second));
+        info.show_gallery_focus(Some(&second));
         assert_eq!(info.rating_value.text().as_str(), "");
         assert!(!info.rating_value.is_visible());
     }
@@ -1597,7 +1848,7 @@ mod layout_tests {
             )
             .build();
 
-        info.set_photo(Some(&photo));
+        info.show_gallery_focus(Some(&photo));
         assert_eq!(
             info.preview.icon_name().as_deref(),
             Some("image-x-generic-symbolic")
@@ -1625,7 +1876,7 @@ mod layout_tests {
             .build();
         window.present();
         while glib::MainContext::default().iteration(false) {}
-        info.set_selected_photos(2, &[]);
+        info.show_gallery_selection(2, &[]);
         assert!(overflow.is_visible());
         assert!(overflow.parent().unwrap().is_visible());
         let layout = info
@@ -1671,7 +1922,7 @@ mod layout_tests {
                 title
             );
         }
-        info.show_photo_metadata();
+        info.show_gallery_selection(1, &[]);
         assert!(!group.is_visible());
         assert_ne!(info.favorite.parent().as_ref(), Some(group.upcast_ref()));
         window.close();
@@ -1685,7 +1936,7 @@ mod layout_tests {
 
         // A long selection can never push these controls into the scrolling
         // viewport. They are direct, non-expanding children of the root bar.
-        info.set_selected_photos(40, &[]);
+        info.show_gallery_selection(40, &[]);
         assert_eq!(info.selection_count.text().as_str(), "40");
         assert!(info.selection_controls.is_visible());
         assert!(info.selection_clear.is_visible());
@@ -1713,12 +1964,12 @@ mod layout_tests {
         );
 
         // Viewer/single selection restores photo metadata and frees the room.
-        info.show_photo_metadata();
+        info.show_gallery_selection(1, &[]);
         assert!(!info.selection_controls.is_visible());
-        info.set_selected_photos(2, &[]);
+        info.show_gallery_selection(2, &[]);
         assert_eq!(info.selection_count.text().as_str(), "2");
         assert!(info.selection_controls.is_visible());
-        info.set_selected_photos(1, &[]);
+        info.show_gallery_selection(1, &[]);
         assert!(!info.selection_controls.is_visible());
         assert_eq!(
             info.metadata_stack.visible_child_name().as_deref(),
@@ -1728,8 +1979,8 @@ mod layout_tests {
         // Returning from the viewer with an empty gallery selection must
         // clear its prior photo metadata as well as the selection strip.
         let last_photo: PhotoObject = glib::Object::new();
-        info.set_photo(Some(&last_photo));
-        info.set_selected_photos(0, &[]);
+        info.show_gallery_focus(Some(&last_photo));
+        info.show_gallery_selection(0, &[]);
         assert!(!info.has_photo.get());
         assert!(info.filename.text().is_empty());
         assert!(!info.filename.is_visible());

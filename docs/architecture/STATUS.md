@@ -37,7 +37,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
-| 10 | Current photo (`selected_photo`) | Strong | in progress: done on branch `refactor/current-photo`, approved by the owner, not merged | none | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
+| 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
 | 12 | Front surface (widens 6) | Worth exploring | open | none | `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
 
@@ -187,7 +187,7 @@ Changes users would notice: the heart can unfavourite a selection; the lightbox 
 
 **Test strategy and scope:** table tests for `plan` (intent × single/multi × mixed values × front × each view rule, roughly 25 rows); a `db` test for `set_favorite_for_photos` (transaction, trashed skipped). Display tests (Xvfb): keep `album_cover_action_is_only_offered_inside_an_album` (it covers the menu favourite toggle) and `rating_indicator_updates_when_lightbox_photo_changes`; add one adapter test that rates and favourites a two-photo selection and checks objects, InfoBar and the Favourites removal. Scope estimate: pure module ~250 lines with tests, adapter ~200, net removal of ~180 lines from `build.rs` and ~50 from `photo_actions.rs`; 4 stages (pure plan, db batch write, adapter and move the 5 entry points, docs and owner rule). Pairs with 10 (`selected_photo`) and 12 (front surface) but does not need them: the adapter reads the front with the existing `lightbox.root.is_visible()` check in one place.
 
-### 10 · Current photo (started 2026-11-23, unattended)
+### 10 · Current photo (merged 2026-11-23)
 Done by an agent while the owner was away ("start candidate 10 and continue without my input"). The decisions below were taken by the agent, choosing the option closest to today's behaviour. **The owner accepted them on 2026-11-23** after the manual checks under Verification. Branch `refactor/current-photo`.
 
 #### Investigation (at `51923e06`)
@@ -220,7 +220,6 @@ Not written at all: closing the lightbox over an empty selection, and returning 
 - Checked by hand by the owner on 2026-11-23, all working: Space after closing the viewer over an empty selection, a date browser multi-selection favourite, photo-menu Export leaving the InfoBar's photo as the rating target, and everyday marks, rotate, edit and the Properties toggle.
 
 #### Follow-up
-- Merge `refactor/current-photo` into `main` with a merge commit, then set this row to `merged`.
 - 12 (front surface) is the natural next step; it would also remove the gallery focus callback's own lightbox/overview guard (candidate 4 follow-up).
 
 #### Original brief (chosen by the owner 2026-11-23)

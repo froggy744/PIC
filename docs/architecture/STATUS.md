@@ -37,7 +37,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
-| 10 | Current photo (`selected_photo`) | Strong | next (investigation not started) | none | `src/window/build.rs`, `src/window/photo_actions.rs`, `src/window/layout.rs` |
+| 10 | Current photo (`selected_photo`) | Strong | in progress: done on branch `refactor/current-photo`, approved by the owner, not merged | none | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
 | 12 | Front surface (widens 6) | Worth exploring | open | none | `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
 
@@ -95,7 +95,7 @@ About 12 refresh calls of `set_photo(Some(&photo))` follow a change to the photo
 5. Docs: GLOSSARY term, an InfoBar entry in AUDIT-INDEX (it has none yet), this file, and an owner rule in `scripts/check-presentation-owners.sh`.
 
 **Follow-up after merge:**
-- `selected_photo` in `window/build.rs` is still kept in step by hand beside the InfoBar events (decision 2).
+- `selected_photo` in `window/build.rs` is still kept in step by hand beside the InfoBar events (decision 2). Resolved by candidate 10: the InfoBar owns the current photo.
 - The gallery focus callback in `window/build.rs` keeps its own lightbox/overview guard, because it also guards the Properties panel and `selected_photo`. The InfoBar no longer needs it.
 - `infobar::responsive_tests::compact_toolbar_keeps_actions_usable_and_restores_wide_layout` failed at "Rotate should leave the action menu open" (found 2026-11-23, before candidate 4). Fixed 2026-11-23: Rotate never closed the menu; under Xvfb GTK's autohide closed a menu opened right after a resize, with or without the click. The test now makes sure the menu is open before checking Rotate.
 
@@ -181,13 +181,49 @@ All seven decisions are settled. Started 2026-11-23 on branch `refactor/photo-ma
 - Not covered by a test, checked by hand by the owner on 2026-11-23 and working: the lightbox moving on when a rating change takes the shown photo out of a rating or metadata view, and the gallery Properties panel refreshing.
 - A failed write while an export or scan owns the progress bar is only logged (`eprintln`), so the running job's bar is not ended.
 - Other photo-menu actions (album, remove, export) still target the gallery selection inside the lightbox; decision 3 covered marks only.
-- `selected_photo` (candidate 10) is still kept in step by hand; the adapter reads it as the shown photo.
+- `selected_photo` (candidate 10) is still kept in step by hand; the adapter reads it as the shown photo. Resolved by candidate 10: the adapter reads `InfoBar::current_photo`.
 
 Changes users would notice: the heart can unfavourite a selection; the lightbox photo menu changes one photo; a re-rated photo disappears under a metadata `Rating` filter; a photo menu favourite under a metadata filter rebuilds the grid; the gallery Properties panel updates; failed writes show an error and leave nothing half-written; clicking a selection's shared star rating clears it; the lightbox moves on when a rating change takes the shown photo out of a rating view; in Collage, marks follow the ticked photos.
 
 **Test strategy and scope:** table tests for `plan` (intent × single/multi × mixed values × front × each view rule, roughly 25 rows); a `db` test for `set_favorite_for_photos` (transaction, trashed skipped). Display tests (Xvfb): keep `album_cover_action_is_only_offered_inside_an_album` (it covers the menu favourite toggle) and `rating_indicator_updates_when_lightbox_photo_changes`; add one adapter test that rates and favourites a two-photo selection and checks objects, InfoBar and the Favourites removal. Scope estimate: pure module ~250 lines with tests, adapter ~200, net removal of ~180 lines from `build.rs` and ~50 from `photo_actions.rs`; 4 stages (pure plan, db batch write, adapter and move the 5 entry points, docs and owner rule). Pairs with 10 (`selected_photo`) and 12 (front surface) but does not need them: the adapter reads the front with the existing `lightbox.root.is_visible()` check in one place.
 
-### Next: 10 · Current photo (chosen by the owner 2026-11-23)
+### 10 · Current photo (started 2026-11-23, unattended)
+Done by an agent while the owner was away ("start candidate 10 and continue without my input"). The decisions below were taken by the agent, choosing the option closest to today's behaviour. **The owner accepted them on 2026-11-23** after the manual checks under Verification. Branch `refactor/current-photo`.
+
+#### Investigation (at `51923e06`)
+`selected_photo: Rc<RefCell<Option<PhotoObject>>>` (built in `window/build.rs`, shared through `PhotoActionContext`) had 10 writers and 14 readers. Every writer sat beside an InfoBar event that already decided the same thing in `InfoBarPresentation` (the shown photo, with a tested precedence):
+
+| Writer | Paired InfoBar event | Same result? |
+|---|---|---|
+| lightbox photo changed | `show_lightbox_photo` | yes |
+| gallery focus (guarded on lightbox/overview) | `show_gallery_focus` (same guard inside) | yes |
+| date browser hand-back: first photo of any selection | `show_date_browser_selection`: only a single photo became shown | **no** for 2+ photos |
+| date overview shown: `None` | `set_date_overview_shown(true)` | yes |
+| editor saved, rename | `photo_updated` | yes |
+| bulk recipe (same object, re-stored) | `photo_updated` at finish | yes |
+| trash, library switch: `None` | `clear_photo` | yes |
+| photo-menu Export: the right-clicked photo, **without** telling the InfoBar | none | **no**: actions then targeted a photo the InfoBar did not show |
+
+Not written at all: closing the lightbox over an empty selection, and returning to the Photos page with an empty selection. In both, the InfoBar clears its photo but `selected_photo` kept the old one, so it **went stale** (confirmed; the restore after close re-focuses the lightbox photo only when the return succeeds). Stale consequences: Space reopened a photo no longer selected; the scanner's `PhotosUpdated`/`PhotosIndexed` paths could call `photo_updated` on the stale object and put it back on the InfoBar; collection navigation picked the stale photo's folder.
+
+#### Decisions (by the agent, accepted by the owner 2026-11-23)
+1. **One owner: the InfoBar.** The current photo *is* the photo the InfoBar shows. `InfoBar::current_photo()` returns the written object whose id matches `InfoBarTarget::photo`; the `selected_photo` cell and its 10 writes are deleted. No new module: the precedence already lived, table-tested, in `InfoBarPresentation` (deletion test: the cell only duplicated it). Alternative not taken: a separate `CurrentPhoto` model fed the same events. It would be a second copy of the same precedence.
+2. **Date browser multi-selection:** its first selected photo becomes current (what the actions used before). `InfoBarEvent::DateBrowserSelection` now sets the photo for any non-empty selection, not only for one. Visible effect: the strip's actions are enabled after picking several photos in the date browser (before, they could be disabled while the actions silently anchored on the first photo).
+3. **Stale cases clear.** Closing the lightbox or returning to Photos over an empty selection leaves no current photo (InfoBar behaviour wins).
+4. **Photo-menu and Scrapbook-inspector Export** pass their photo explicitly (`PhotoActionContext::export` is now `Fn(&PhotoObject)`), so they no longer change the current photo.
+5. **Owner rule** `current-photo` in `scripts/check-presentation-owners.sh`: no `selected_photo*`/`selected_for*` cell, `.replace(` or `.borrow_mut(` outside `src/infobar.rs`.
+
+#### Verification
+- Pure: `infobar::presentation` table tests, two new rows in `selection_changes` (written red first).
+- Display (Xvfb 1920×1080, each test in its own process since every test calls `gtk::init`): new `infobar::layout_tests::current_photo_follows_the_shown_photo`; still green: all 7 `infobar::layout_tests` (including the 4 candidate 4 keeps), `photo_mark_commands::tests::marks_change_a_whole_selection_or_nothing`, `photo_actions_tests::{copy_and_paste_edits_menu_persists_the_recipe_for_export, add_to_album_popover_scrolls_when_the_album_list_is_long, album_cover_action_is_only_offered_inside_an_album}`.
+- `cargo check`, `cargo check --tests`, owner script and `--self-test` ok. `cargo fmt --check` adds no new diffs (the tree already has 214).
+- Checked by hand by the owner on 2026-11-23, all working: Space after closing the viewer over an empty selection, a date browser multi-selection favourite, photo-menu Export leaving the InfoBar's photo as the rating target, and everyday marks, rotate, edit and the Properties toggle.
+
+#### Follow-up
+- Merge `refactor/current-photo` into `main` with a merge commit, then set this row to `merged`.
+- 12 (front surface) is the natural next step; it would also remove the gallery focus callback's own lightbox/overview guard (candidate 4 follow-up).
+
+#### Original brief (chosen by the owner 2026-11-23)
 Chosen over 12 because candidate 9's controls act on `selected_photo`, so a stale value changes the wrong photo; it is also candidate 4's open follow-up (decision 2). Start the same way as 9: investigation and design only, then the owner's decisions one at a time, then a branch.
 
 **First step:** trace every writer and reader of `selected_photo` (the 9 writers are listed under "5, 6, 8, 10, 11, 12" below), confirm whether it goes stale when the lightbox closes, and propose one owner with a precedence rule. 12 (front surface) is the natural follow-on.

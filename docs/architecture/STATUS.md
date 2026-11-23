@@ -38,7 +38,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
-| 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
+| 11 | Window session state | Worth exploring | verified, awaiting merge (`refactor/window-session-state`, pushed) | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 
@@ -378,18 +378,64 @@ Merged 2026-11-23 (`888408e0`) on the owner's standing instruction to merge on s
 - The remaining behaviour handlers (close-return, close-on-page-change, teardown, fade cancel, Immersive, trace) still connect to GTK directly; move them only with a reason.
 - The mirrors still keep their own copies of the inputs (decision 6).
 
-### Next (updated 2026-11-23, after 6 and 13 merged)
-Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router); the GUI harness was fixed separately (`467b3ee1`).
+### 11 · Window session state (verified, awaiting merge)
+Branch `refactor/window-session-state`.
+
+#### Investigation (at `0006dbb4`, no code changed)
+Session keys (`src/window.rs:60-70`, plus `compact-sidebar-width-v2` local to `layout.rs:1153`) and where they are read and written:
+- **Startup load** (`build.rs:69-120`): window size (default 1440×900, clamped 640..7680 × 480..4320), maximized, last view, view anchor photo, activated photo, gallery scroll and albums scroll (default 0, floored at 0).
+- **Last view:** written on every destination change (`layout.rs:162`) and on close (`build.rs:6998`). Decoded by `sidebar_filter_from_setting` (`window.rs:333`): with no saved view or an invalid one, it falls back to Recently Added. The library switch (`build.rs:6827`) instead lands on Library when nothing is saved; its comment says this is deliberate ("A new library has no browsing destination yet").
+- **Activated photo:** written by the viewer's photo-changed handler (`build.rs:236`), reloaded on switch (`:6899`).
+- **Viewport** (scroll, anchor photo, albums scroll): written only on close (`build.rs:7003-7027`), read only at startup (`:5384-5398`). **The library switch neither saves the outgoing library's viewport nor restores the incoming one's;** after switching away and back, the next startup restores the scroll from the last close of that library.
+- **Window size and maximized:** written on close only (`:7029-7046`).
+- **Sidebar fraction:** default `0.22`, clamped `0.10..0.70`, read in two places with the same default and clamp (`layout.rs:1252`, `sidebar_widgets.rs:396`; the review's "only `layout.rs` clamps" is out of date); written on drag end (`layout.rs:2068`) and on close when the mode is normal (`build.rs:7048-7058`).
+- **Collapsed (drawer) width** (`layout.rs:1263`, written `:2058`), **compact rail width** (`layout.rs:1157`, written `:1232`, `:2045`) and **Properties fraction** (`build.rs:3319`, default 0.25 clamped 0.10..0.55; written `:3434`) follow the same read-clamp / write-on-drag-end pattern.
+- Each site formats and parses its own value; write errors are printed at the drag-end sites and ignored on close. None of the defaults or clamps is tested; only the view encoding is (`window.rs:373`).
+
+#### Decisions (2026-11-23, by the agent on the owner's standing instruction; closest to today's behaviour)
+1. **Scope:** the 11 keys above. Sort, grouping, rating filter, thumbnail size and sidebar mode are preferences with owners of their own and stay out.
+2. **Module:** `src/window/session_state.rs`, pure. It owns the keys, the defaults and clamps, the view encoding (`sidebar_filter_setting` / `sidebar_filter_from_setting` move in with their tests), `SessionState::load`, and the writes. Callers pass plain values; no GTK in the module.
+3. **Seam:** a `SessionStore` trait (get / set / delete). Two adapters: `rusqlite::Connection` (the app) and an in-memory map (the table tests). The app keeps its one connection; the module never opens one.
+4. **Default view stays different per entry**, deliberately: `Entry::Startup` falls back to Recently Added, `Entry::LibrarySwitch` lands on Library when nothing is saved (an invalid saved value still falls back to Recently Added in both, as today). The rule is now one tested function instead of two call sites.
+5. **Leaving a library saves the same snapshot as closing:** view, viewport (scroll and anchor, or albums scroll), window size/maximized, and the sidebar fraction when the mode is normal. The switch saves it to the outgoing connection before opening the new one. This is the one behaviour change.
+6. **Restoring the incoming library's viewport after a switch is not in scope.** Today the switched-to gallery starts at the top; restoring needs to wait for the stream build as startup does. Recorded as follow-up.
+7. **Clamps stay where they are applied today:** on load, not on save.
+8. **Owner rule `session-state`:** the session keys may be named only in `session_state.rs` and the window test fixtures that seed a library.
+
+**Stages:**
+1. `session_state.rs` with 14 table tests, written red first. Done: `c6644b04`.
+2. Startup, library switch, close, sidebar/drawer/compact widths and the Properties fraction routed through it; one `leave_snapshot` closure in `build.rs` serves close and switch. Done: `629c34c5`.
+3. Owner rule `session-state` (its self-test proves a key read, a key literal and a re-declared key outside the module are caught). Done: `9289e1de`.
+4. Docs: GLOSSARY **Window session**, AUDIT-INDEX rows, this file. Done: `703322bd`.
+
+**Found while implementing:**
+- A non-finite stored length or fraction ("NaN", "inf") now counts as not saved instead of reaching GTK; before, `clamp` passed NaN through.
+- Close now prints a write failure (it used to ignore it), like the drag-end sites.
+- `numeric_setting` and the view-encoding functions in `window.rs` had no other callers and went with the move.
+
+**Verification (2026-11-23):**
+- Unit: `window::session_state` 14 pass; all `window::` unit tests 148 pass.
+- Display (Xvfb 1920×1080, one process each): the 30 window tests that build a window from a seeded session (`responsive_window_tests`, `immersive_window_tests`, `photo_action_tests`, `startup_gallery_tests`, `photo_layout`, onboarding reopen): all pass.
+- `cargo check` / `--tests`: no new warnings (only the 3 known dead-code ones). Owner script and `--self-test` ok.
+- GUI harness: `viewer` 19/19, `editing` 39/39.
+- Scripted interaction checks: 16/16 on this branch and on `main`. They stop the app by killing it, so they never reach Exit; **nothing automated covers the close or library-switch save end to end** (the snapshot itself is table-tested).
+
+**Follow-up:**
+- Restore the incoming library's viewport after a switch (decision 6): wait for the stream build as `populate_startup_gallery` does, then apply the activated-photo / anchor rule.
+- A scripted check that exits through the Exit confirmation and switches library would cover the wiring.
+
+### Next (updated 2026-11-23, after 11 was verified)
+Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router); the GUI harness was fixed separately (`467b3ee1`). 11 (window session state) is verified and pushed as branch `refactor/window-session-state`, **not yet merged**: the agent's `git merge` was refused by the auto-mode permission check, so the owner merges it (`git switch main && git merge --no-ff refactor/window-session-state && git push`), then this file records the merge commit.
 
 Open candidates, in order:
-1. **5 · One gallery scroll-motion module.** Next. The owner is testing glide scrolling because "something feels off"; nothing from 12, 13 or 6 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
-2. **11 · Window session state.** After 5. Facts in the same section below.
+1. **5 · One gallery scroll-motion module.** Next. The owner is testing glide scrolling because "something feels off"; nothing from 12, 13, 6 or 11 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
+2. 11's follow-up (restore the incoming library's viewport after a switch; a scripted Exit / library-switch check), when the owner wants it.
 3. 7 (diagnostic only) and 8 (speculative) can wait, or be closed with a note.
 
 How the owner works with these (from this session):
 - Each candidate: investigation, then decisions recorded here, then a branch, staged commits (pure module test-first, GTK adapter, owner rule, docs), then verification, merge with a merge commit, push.
 - Verification each time: unit and display tests (Xvfb, one process each), `cargo check`, owner script and `--self-test`, GUI harness `viewer` and `editing` (`scripts/test-gui.sh`), and the scripted interaction checks `scripts/front-surface-checks/run.sh` (`cargo run`, private display, copy of a harness library) on the branch and on `main` (`PIC_CHECK_REPO=<main worktree>`).
-- The owner has allowed deciding open questions autonomously and merging and pushing on success; say what was decided and why.
+- The owner has allowed deciding open questions autonomously and merging and pushing on success; say what was decided and why. Since 2026-11-23 the agent's `git merge` into `main` is refused by the auto-mode permission check: push the branch and hand the merge to the owner.
 - Pre-existing, not caused by today's work: two metadata panel display tests fail on `main` too (see 13); 3 dead-code warnings in `db/photos.rs` and `grid/honeycomb_raster.rs`.
 
 ### 7 · Editor preview plan

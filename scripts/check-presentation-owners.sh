@@ -27,6 +27,10 @@
 # The page change handlers keep reading their own `stack` / `root` argument
 # until the events stage; `matches!` over page names is not matched (the
 # ALLOW table cannot hold a "|"), so review those by hand.
+# The window session (candidate 11: last view, viewport, window size, split
+# widths) is loaded and saved in one place; no other file names its keys:
+#   - src/window/session_state.rs (SessionState::load, record). Window test
+#     fixtures may seed a library with them.
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -48,6 +52,8 @@ MARKS_OWNER='src/window/photo_mark_commands.rs'
 FRONT_OWNER='src/window/front_surface.rs'
 MIRRORS_OWNER='src/window/front_mirrors.rs'
 ZOOM_OWNER='src/window/zoom_slider_widgets.rs'
+SESSION_OWNER='src/window/session_state.rs'
+SESSION_FIXTURES='src/window/immersive_tests.rs src/window/responsive_tests.rs'
 ID='[[:alnum:]_]'
 
 # id ~ owner files (space separated) ~ extended regex ~ what it guards
@@ -64,6 +70,7 @@ RULES=(
   "front-surface~$FRONT_OWNER src/lightbox/tests.rs~((lightbox$ID*|viewer)\.root\.is_visible\(\)|visible_child_name\(\)\.as_deref\(\)[[:space:]]*[!=]=[[:space:]]*Some\(\"(edit|photos|collage)\"\)|\.is_overview_visible\(\)|date_browser_overview)~which surface is in front (ask FrontSurface)"
   "front-mirrors~$MIRRORS_OWNER $INFOBAR_OWNER src/window/metadata_panel.rs~(\.(set_lightbox_shown|set_date_overview_shown|set_page_allowed|set_lightbox_open|set_navigation_view)\(|(^|[^[:alnum:]_])info$ID*\.set_page\()~front inputs of the InfoBar, Properties and metadata panel (FrontMirrors)"
   "zoom-slider~$ZOOM_OWNER $INFOBAR_OWNER~grid_zoom$ID*\.(set_range|set_value|set_increments|set_round_digits|clear_marks|set_tooltip_text)\(~zoom slider range, steps, tooltip and shown value (ZoomSliderWidgets)"
+  "session-state~$SESSION_OWNER $SESSION_FIXTURES~(LAST_(VIEW|VIEW_PHOTO_ID|ACTIVATED_PHOTO_ID|VIEW_SCROLL|ALBUMS_SCROLL)|WINDOW_(WIDTH|HEIGHT|MAXIMIZED)|SIDEBAR_WIDTH_FRACTION|SIDEBAR_COLLAPSED_WIDTH|PROPERTIES_WIDTH_FRACTION|COMPACT_SIDEBAR_WIDTH)_SETTING_KEY|\"(last-view|last-view-photo-id|last-activated-photo-id|last-view-scroll|last-albums-scroll|window-width|window-height|window-maximized|sidebar-width-fraction|properties-width-fraction|sidebar-collapsed-width|compact-sidebar-width-v2)\"~window session keys (load and save through window::session_state)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -87,6 +94,10 @@ ALLOW=(
   "src/window/build.rs|&& stack.visible_child_name().as_deref() == Some(\"photos\")|page change handler (candidate 12 decision 1: until the events stage)"
   "src/window/build.rs|panel_for_close.set_lightbox_open(false);|viewer close_started: the fade begins before the front changes (candidate 13 decision 7)"
   "src/window/build.rs|panel.set_navigation_view(page.as_deref().unwrap_or(\"\"), filter_for_navigation.get());|metadata panel tick: follows filter changes within one page (candidate 13 decision 1)"
+  "src/window.rs|LAST_VIEW_SETTING_KEY, SIDEBAR_WIDTH_FRACTION_SETTING_KEY, WINDOW_HEIGHT_SETTING_KEY,|test-only re-export for the window test fixtures"
+  "src/window.rs|WINDOW_WIDTH_SETTING_KEY,|test-only re-export for the window test fixtures"
+  "src/window/metadata_panel.rs|(LAST_VIEW_SETTING_KEY, format!(\"folder:{folder}\")),|test fixture (metadata panel window test)"
+  "src/albums_view.rs|db::set_setting(&connection.borrow(), \"last-view\", \"albums\").unwrap();|test fixture (cover flow full-app validation)"
   "src/window/layout.rs|dock.set_visible(false);|KNOWN EXCEPTION: compact_dock visible-notify immersive guard predates SidebarWidgets"
 )
 
@@ -153,7 +164,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -223,10 +234,19 @@ RS
             panel_for_close.set_lightbox_open(false);
             panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
 RS
+  cat >"$root/$SESSION_OWNER" <<'RS'
+pub(super) const LAST_VIEW_SETTING_KEY: &str = "last-view";
+        SessionChange::CompactWidth(width) => store.set(COMPACT_SIDEBAR_WIDTH_SETTING_KEY, &width),
+RS
+  cat >"$root/src/window/responsive_tests.rs" <<'RS'
+        (WINDOW_WIDTH_SETTING_KEY, "1440"),
+RS
   local entry apath atext
   for entry in "${ALLOW[@]}"; do
     IFS='|' read -r apath atext _ <<<"$entry"
-    [[ "$apath" == src/window/layout.rs || "$apath" == src/window/library.rs ]] \
+    [[ "$apath" == src/window/layout.rs || "$apath" == src/window/library.rs \
+      || "$apath" == src/window.rs || "$apath" == src/window/metadata_panel.rs \
+      || "$apath" == src/albums_view.rs ]] \
       && printf '    %s\n' "$atext" >>"$root/$apath"
   done
 }
@@ -280,6 +300,9 @@ self_test() {
     "InfoBar page fed in layout.rs|src/window/layout.rs|info.set_page(page);|front-mirrors"
     "overview fed in build.rs|src/window/build.rs|info.set_date_overview_shown(true);|front-mirrors"
     "Properties page fed in build.rs|src/window/build.rs|properties_for_page.set_page_allowed(allowed);|front-mirrors"
+    "session key read in build.rs|src/window/build.rs|let width = numeric_setting(&c, WINDOW_WIDTH_SETTING_KEY);|session-state"
+    "session key literal in layout.rs|src/window/layout.rs|db::set_setting(&c, \"sidebar-width-fraction\", &f)|session-state"
+    "compact width key back in layout.rs|src/window/layout.rs|const COMPACT_SIDEBAR_WIDTH_SETTING_KEY: &str = \"x\";|session-state"
     "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"
   )
   local entry name file line rule

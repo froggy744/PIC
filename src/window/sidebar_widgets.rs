@@ -20,7 +20,8 @@ use super::sidebar_presentation::{
     SidebarEvent, SidebarMode, SidebarPage, SidebarPlacement, SidebarPresentation, SidebarScene,
     SidebarTimer, SIDEBAR_MODE_SETTING_KEY,
 };
-use super::{numeric_setting, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH_FRACTION_SETTING_KEY};
+use super::session_state::SessionState;
+use super::SIDEBAR_MIN_WIDTH;
 use crate::db;
 
 /// Hooks the immersive overlay installs once its slide animation exists.
@@ -393,12 +394,7 @@ impl SidebarWidgets {
             self.cells.collapsed_width.get(),
             split.width(),
         ));
-        let fraction = numeric_setting::<f64>(
-            &self.connection.borrow(),
-            SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
-        )
-        .unwrap_or(0.22)
-        .clamp(0.10, 0.70);
+        let fraction = SessionState::load(&*self.connection.borrow()).sidebar_fraction;
         split.set_sidebar_width_fraction(fraction);
     }
 

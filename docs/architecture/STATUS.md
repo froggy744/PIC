@@ -258,10 +258,26 @@ Disagreements:
 Settled by the agent, accepted with the plan: one file `src/window/front_surface.rs` (`mod` in `window.rs` like `photo_marks`), since the adapter only reads widgets; the edit Space slot stays and its guard becomes `current() == Editor`; merged with a merge commit like 2, 3, 4, 9 and 10.
 
 **Stages:**
-1. Pure `front()` with table tests.
-2. `FrontSurface` and the `build.rs` routing sites; delete the overview cell.
-3. `shortcuts.rs`, `layout.rs`, `toolbar.rs`, `photo_mark_commands.rs`; owner rule.
+1. Pure `front()` with table tests. Done: `0154ada9`.
+2. `FrontSurface` and the `build.rs` routing sites; delete the overview cell. Done: `f07b0b74`.
+3. `shortcuts.rs`, `layout.rs`, `toolbar.rs`, `photo_mark_commands.rs`; owner rule. Done: `c983d95d`.
 4. Docs: GLOSSARY term **Front surface**, AUDIT-INDEX rows, this file.
+
+**Found while implementing (for the owner to accept):**
+- Two sites ask a different question than `current()`, answered by the same reader (no cached state, pure part table-tested):
+  - `gallery_covered()`: the gallery focus guard. Collage can open over the date overview (the InfoBar Collage button doesn't check the date browser), and the guard must keep blocking gallery focus there; `current()` would say `Collage` and let it through.
+  - `date_browser()`: the sort controls in `toolbar.rs` follow the date browser's level even while the viewer covers its overview; `current()` would say `Lightbox`.
+- Left as they were: the page change handlers and viewer visible-notify handlers (decision 1); `opened_from_library` in `open_edit` (page identity: it must say Library even with the viewer open over it); the page name passed to `set_page_allowed`, `set_navigation_view` and the page-switch trace; the viewer's own `root.is_visible()` before `grab_focus`; `toolbar.rs`'s `is_photo_view` check.
+- The owner rule does not match `matches!` over page names (the `ALLOW` table separates fields with `|`).
+- `PhotoActionContext` gained `front: Weak<FrontSurface>`, like its `lightbox`.
+- A transient difference that no routing site reaches: during a page change's notify dispatch the viewer can still be visible for a moment on a page other than Photos/Library (the handler that closes it is one of several); `current()` already reports the new page. No routing check runs inside those handlers.
+
+**Verification (2026-11-23):**
+- Pure: `front_surface::tests` (3 tests: every page × viewer × date browser, unreachable combinations included; `gallery_covered`; stack names), each written red first.
+- `cargo check`, `cargo check --tests`: no new warnings (`db::set_favorite` unused predates this branch).
+- `scripts/check-presentation-owners.sh` and `--self-test` ok, with 7 new `front-surface` cases.
+- Display (Xvfb 1920×1080, one process each): `marks_change_a_whole_selection_or_nothing`, `copy_and_paste_edits_menu_persists_the_recipe_for_export`, `add_to_album_popover_scrolls_when_the_album_list_is_long`, `album_cover_action_is_only_offered_inside_an_album`, `photo_context_menu_uses_visible_lightbox_overlay_not_covered_gallery`: all pass.
+- GUI harness `viewer` and `editing` (`scripts/test-gui.sh`, runs `20261123T154312Z-294975` and `20261123T154651Z-296879`): **both FAIL before reaching their own checks**, at the shared prerequisite "Timed out waiting for folder gallery replacement" (3 PASS before it: startup, sample gallery, digit-key ratings). Pre-existing: the `library` suite failed at the same step on `main` at `7f5a72ec` (run `20261108T120948Z-576761`). `gui_test.py` clicks the screen point (118, 486), which in the current sidebar falls in the gap above the Folders header; the folder row is at about y=566. Not fixed here (outside scope); the viewer and editing paths therefore have no harness coverage for this change.
 
 ### 7 · Editor preview plan
 **Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.

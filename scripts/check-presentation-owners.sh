@@ -20,6 +20,10 @@
 # The InfoBar, Properties and the metadata panel follow the front through
 # one listener (candidate 13):
 #   - src/window/front_mirrors.rs (FrontMirrors)
+# The shared zoom slider has one writer of what it shows (candidate 6):
+#   - src/window/zoom_slider_widgets.rs (ZoomSliderWidgets; the decision is
+#     window::zoom_slider). The InfoBar builds the slider. The user's own
+#     input (dragging, the wheel over the slider) is not presentation.
 # The page change handlers keep reading their own `stack` / `root` argument
 # until the events stage; `matches!` over page names is not matched (the
 # ALLOW table cannot hold a "|"), so review those by hand.
@@ -43,6 +47,7 @@ INFOBAR_OWNER='src/infobar.rs'
 MARKS_OWNER='src/window/photo_mark_commands.rs'
 FRONT_OWNER='src/window/front_surface.rs'
 MIRRORS_OWNER='src/window/front_mirrors.rs'
+ZOOM_OWNER='src/window/zoom_slider_widgets.rs'
 ID='[[:alnum:]_]'
 
 # id ~ owner files (space separated) ~ extended regex ~ what it guards
@@ -58,6 +63,7 @@ RULES=(
   "current-photo~$INFOBAR_OWNER~(^|[^[:alnum:]_])selected_(photo|for)$ID*(\.replace\(|\.borrow_mut\(|:[[:space:]]*Rc<)~a hand-kept copy of the current photo (read InfoBar::current_photo)"
   "front-surface~$FRONT_OWNER src/lightbox/tests.rs~((lightbox$ID*|viewer)\.root\.is_visible\(\)|visible_child_name\(\)\.as_deref\(\)[[:space:]]*[!=]=[[:space:]]*Some\(\"(edit|photos|collage)\"\)|\.is_overview_visible\(\)|date_browser_overview)~which surface is in front (ask FrontSurface)"
   "front-mirrors~$MIRRORS_OWNER $INFOBAR_OWNER src/window/metadata_panel.rs~(\.(set_lightbox_shown|set_date_overview_shown|set_page_allowed|set_lightbox_open|set_navigation_view)\(|(^|[^[:alnum:]_])info$ID*\.set_page\()~front inputs of the InfoBar, Properties and metadata panel (FrontMirrors)"
+  "zoom-slider~$ZOOM_OWNER $INFOBAR_OWNER~grid_zoom$ID*\.(set_range|set_value|set_increments|set_round_digits|clear_marks|set_tooltip_text)\(~zoom slider range, steps, tooltip and shown value (ZoomSliderWidgets)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -147,7 +153,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -267,6 +273,9 @@ self_test() {
     "photos page check in build.rs|src/window/build.rs|let photos_page = stack.visible_child_name().as_deref() != Some(\"photos\");|front-surface"
     "overview read in toolbar.rs|src/window/toolbar.rs|if browser.is_overview_visible() {|front-surface"
     "overview cell back in build.rs|src/window/build.rs|let date_browser_overview_visible = Rc::new(Cell::new(false));|front-surface"
+    "slider range set in build.rs|src/window/build.rs|info.grid_zoom.set_range(0.0, 100.0);|zoom-slider"
+    "slider value set in layout.rs|src/window/layout.rs|info.grid_zoom.set_value(value);|zoom-slider"
+    "slider tooltip set by an alias|src/window/build.rs|grid_zoom_for_visibility.set_tooltip_text(Some(tip));|zoom-slider"
     "InfoBar viewer fed in build.rs|src/window/build.rs|info.set_lightbox_shown(root.is_visible());|front-mirrors"
     "InfoBar page fed in layout.rs|src/window/layout.rs|info.set_page(page);|front-mirrors"
     "overview fed in build.rs|src/window/build.rs|info.set_date_overview_shown(true);|front-mirrors"

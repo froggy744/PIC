@@ -59,6 +59,12 @@ pub struct InfoBar {
     menu_only_option: gtk::CheckButton,
     visibility_connection: Option<Rc<RefCell<rusqlite::Connection>>>,
     properties_button: gtk::Button,
+    /// Bar controls moved into the drawer because the bar reached its
+    /// minimum width, rightmost first. See the resize tick in `new`.
+    squeezed_actions: Rc<RefCell<Vec<gtk::Widget>>>,
+    /// Bar controls that are not photo-action entries, with their drawer
+    /// row and whether they belong in the bar when there is room.
+    squeeze_homes: SqueezeHomes,
     pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
@@ -141,7 +147,15 @@ impl InfoBar {
         let action = button.clone();
         let action_row = row.clone();
         let connection = self.visibility_connection.clone();
+        let wants_bar = Rc::new(Cell::new(false));
+        self.squeeze_homes
+            .borrow_mut()
+            .push((button.clone().upcast(), row.clone(), wants_bar.clone()));
+        let squeezed = self.squeezed_actions.clone();
         let apply: Rc<dyn Fn(bool)> = Rc::new(move |show: bool| {
+            wants_bar.set(show);
+            // A narrow bar keeps a chosen action in the drawer until it fits.
+            let show = show && !squeezed.borrow().iter().any(|widget| widget == action.upcast_ref::<gtk::Widget>());
             if show && action.parent().as_ref() == Some(action_row.upcast_ref()) {
                 action_row.remove(&action);
                 actions.insert_child_after(&action, overflow.prev_sibling().as_ref());
@@ -713,6 +727,33 @@ impl InfoBar {
         // window only slightly narrower than that threshold, even when the
         // wide middle of the bar was visibly empty.
         let visible_action_count = Cell::new((usize::MAX, false));
+        // When the bar reaches its minimum width, its rightmost control moves
+        // into the drawer, one at a time; they come back in reverse order.
+        // This applies to every control in the bar (automatic layout, the
+        // user's "Show in InfoBar" choice, Properties, utilities and menu
+        // actions), so no choice of buttons can stop the window shrinking.
+        // The drawer button itself always stays.
+        let squeezed_actions: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+        let squeeze_homes: SqueezeHomes = Rc::new(RefCell::new(Vec::new()));
+        let properties_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        properties_row.set_height_request(34);
+        properties_row.add_css_class("photo-actions-menu-row");
+        properties_row.set_visible(false);
+        {
+            let label = gtk::Label::new(Some("Properties"));
+            label.set_xalign(0.0);
+            properties_row.append(&label);
+        }
+        make_photo_action_row_clickable(&properties_row, properties_button.upcast_ref());
+        overflow_box.append(&properties_row);
+        squeeze_homes.borrow_mut().push((
+            properties_button.clone().upcast(),
+            properties_row,
+            Rc::new(Cell::new(true)),
+        ));
+        let squeezed_for_resize = squeezed_actions.clone();
+        let homes_for_resize = squeeze_homes.clone();
+        let squeeze_generation = Cell::new(0usize);
         let show_only_menu_for_resize = show_only_menu.clone();
         let hide_buttons_option_for_resize = hide_buttons_option.clone();
         let grid_zoom_for_resize = grid_zoom.clone();
@@ -753,7 +794,10 @@ impl InfoBar {
                 .first_child()
                 .is_some_and(|button| button.get_visible());
             utilities_for_resize.set_visible(screensaver_visible);
-            utility_row.set_visible(hide_all && screensaver_visible);
+            utility_row.set_visible(
+                screensaver_visible
+                    && utilities_for_resize.parent().as_ref() == Some(utility_row.upcast_ref()),
+            );
             let keep_menu_stable = overflow.is_active() && !mode_changed;
             let width = bar.width();
             if width > 0 {
@@ -769,10 +813,69 @@ impl InfoBar {
                 };
                 let manual = preferences.borrow().clone();
                 let mask = manual.as_ref().map(|values| values.iter().enumerate().fold(0usize, |mask, (i, &visible)| mask | ((visible as usize) << i))).unwrap_or(usize::MAX);
-                let state = (visible_count ^ mask ^ if width >= 2560 { 1 << 16 } else { 0 }, hide_all);
+                let wanted = |index: usize| {
+                    !hide_all
+                        && manual.as_ref().map_or_else(
+                            || (index != 9 || width >= 2560) && index < 4 + visible_count,
+                            |values| values[index],
+                        )
+                };
+                if !keep_menu_stable {
+                    // The bar's minimum is the window's floor. When it is
+                    // reached, move the rightmost control into the drawer;
+                    // give one back only once it fits with room to spare,
+                    // so the toolbar never flips between two layouts.
+                    const SPARE: i32 = 24;
+                    const SPACING: i32 = 6;
+                    let movable = |widget: &gtk::Widget| {
+                        overflow_entries.iter().any(|(control, _)| control == widget)
+                            || widget == utilities_for_resize.upcast_ref::<gtk::Widget>()
+                            || homes_for_resize.borrow().iter().any(|(home, _, _)| home == widget)
+                    };
+                    let width_of = |widget: &gtk::Widget| {
+                        widget.measure(gtk::Orientation::Horizontal, -1).0 + SPACING
+                    };
+                    let mut stack = squeezed_for_resize.borrow().clone();
+                    let mut changed = false;
+                    let mut spare = width - bar.measure(gtk::Orientation::Horizontal, -1).0;
+                    let mut candidate = overflow.prev_sibling();
+                    while spare < SPARE {
+                        let mut found = None;
+                        while let Some(widget) = candidate {
+                            candidate = widget.prev_sibling();
+                            if widget.get_visible() && !stack.contains(&widget) && movable(&widget) {
+                                found = Some(widget);
+                                break;
+                            }
+                        }
+                        let Some(widget) = found else { break };
+                        spare += width_of(&widget);
+                        stack.push(widget);
+                        changed = true;
+                    }
+                    // One per frame, so each returns to its own place.
+                    if !changed {
+                        if let Some(last) = stack.last() {
+                            if spare >= width_of(last) + 2 * SPARE {
+                                stack.pop();
+                                changed = true;
+                            }
+                        }
+                    }
+                    if changed {
+                        squeezed_for_resize.replace(stack);
+                        squeeze_generation.set(squeeze_generation.get().wrapping_add(1));
+                    }
+                }
+                let squeezed_out = squeezed_for_resize.borrow().clone();
+                let state = (
+                    (visible_count ^ mask ^ if width >= 2560 { 1 << 16 } else { 0 })
+                        ^ (squeeze_generation.get() << 20),
+                    hide_all,
+                );
                 let preference_changed = preferences_changed.replace(false);
                 if (!keep_menu_stable || preference_changed) && visible_action_count.replace(state) != state {
-                    if hide_all {
+                    if hide_all || squeezed_out.contains(utilities_for_resize.upcast_ref()) {
                         if utilities_for_resize.parent().as_ref()
                             == Some(actions_for_resize.upcast_ref())
                         {
@@ -788,8 +891,10 @@ impl InfoBar {
                             overflow.prev_sibling().as_ref(),
                         );
                     }
-                    utility_row
-                        .set_visible(hide_all && utilities_for_resize.first_child().is_some());
+                    utility_row.set_visible(
+                        utilities_for_resize.parent().as_ref() == Some(utility_row.upcast_ref())
+                            && utilities_for_resize.first_child().is_some(),
+                    );
                     let mut previous: Option<gtk::Widget> = None;
                     for (index, (control, row)) in overflow_entries.iter().enumerate() {
                         if let Some(menu) = control.downcast_ref::<gtk::MenuButton>() {
@@ -798,7 +903,7 @@ impl InfoBar {
                             }
                         }
                         // Import stays in the menu even when all photo controls fit.
-                        let in_toolbar = !hide_all && manual.as_ref().map_or_else(|| (index != 9 || width >= 2560) && index < 4 + visible_count, |values| values[index]);
+                        let in_toolbar = wanted(index) && !squeezed_out.contains(control);
                         row.set_visible(!in_toolbar && control.get_visible());
                         let parent = control.parent();
                         if in_toolbar {
@@ -860,6 +965,27 @@ impl InfoBar {
                     }
                     overflow.set_visible(true);
                     hide_buttons_option_for_resize.set_active(hide_all);
+                }
+                if !keep_menu_stable {
+                    // Properties and menu actions follow the same squeeze.
+                    for (widget, row, wants_bar) in homes_for_resize.borrow().iter() {
+                        let in_bar =
+                            widget.parent().as_ref() == Some(actions_for_resize.upcast_ref());
+                        let in_row = widget.parent().as_ref() == Some(row.upcast_ref());
+                        let squeezed = squeezed_out.contains(widget);
+                        if in_bar && squeezed {
+                            actions_for_resize.remove(widget);
+                            row.prepend(widget);
+                        } else if in_row && !squeezed && wants_bar.get() {
+                            row.remove(widget);
+                            actions_for_resize
+                                .insert_child_after(widget, overflow.prev_sibling().as_ref());
+                        }
+                        row.set_visible(
+                            widget.get_visible()
+                                && widget.parent().as_ref() == Some(row.upcast_ref()),
+                        );
+                    }
                 }
                 // GTK caches label measurements. Only eight small metrics are
                 // considered; no photo I/O or catalog queries run during resize.
@@ -953,6 +1079,8 @@ impl InfoBar {
             menu_only_option: hide_buttons_option,
             visibility_connection: connection,
             properties_button,
+            squeezed_actions,
+            squeeze_homes,
             grid_zoom,
             grid_zoom_reset,
             has_photo,
@@ -1419,6 +1547,10 @@ impl InfoBar {
 }
 
 /// What the metadata page last wrote, so later writes skip unchanged parts.
+/// A bar control, its drawer row, and whether it belongs in the bar when
+/// there is room.
+type SqueezeHomes = Rc<RefCell<Vec<(gtk::Widget, gtk::Box, Rc<Cell<bool>>)>>>;
+
 struct WrittenPhoto {
     photo: PhotoObject,
     summary: PhotoSummary,

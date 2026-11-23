@@ -504,3 +504,95 @@ fn adaptive_metadata_fills_space_without_constraining_resize() {
     window.close();
     gtk::style_context_remove_provider_for_display(&display, &theme);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run individually"]
+fn chosen_buttons_move_into_the_menu_from_the_right() {
+    libadwaita::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let path = std::env::temp_dir().join(format!("pic-infobar-squeeze-{}.db", std::process::id()));
+    let connection = crate::db::open(&path).unwrap();
+    // The user pinned every button except Import through "Show in InfoBar".
+    crate::db::set_setting(
+        &connection,
+        "infobar_visible_actions",
+        "[true,true,true,true,true,true,true,true,true,false,true,true]",
+    )
+    .unwrap();
+    let bar = InfoBar::new_with_settings(Some(Rc::new(RefCell::new(connection))));
+    let photo: PhotoObject = glib::Object::new();
+    photo.set_id(1);
+    photo.set_filename("photo.jpg");
+    bar.show_gallery_focus(Some(&photo));
+    let window = gtk::Window::builder()
+        .default_width(1600)
+        .default_height(100)
+        .child(&bar.root)
+        .build();
+    window.present();
+    settle();
+    let actions: gtk::Widget = bar.actions.clone().upcast();
+    let in_toolbar = |control: &gtk::Widget| control.parent().as_ref() == Some(&actions);
+    let print: gtk::Widget = bar.print.clone().upcast();
+    let favorite: gtk::Widget = bar.favorite.clone().upcast();
+    let zoom: gtk::Widget = bar.grid_zoom.clone().upcast();
+    let properties: gtk::Widget = bar.properties_button.clone().upcast();
+    // The pinned photo buttons, left to right (Import is not pinned).
+    let pinned: Vec<gtk::Widget> = vec![
+        bar.grid_zoom.clone().upcast(),
+        bar.favorite.clone().upcast(),
+        bar.rating.clone().upcast(),
+        bar.edit.clone().upcast(),
+        bar.collage.clone().upcast(),
+        bar.add_to_album.clone().upcast(),
+        bar.rotate.clone().upcast(),
+        bar.export.clone().upcast(),
+        bar.more.clone().upcast(),
+        bar.print.clone().upcast(),
+    ];
+    assert!(in_toolbar(&print) && in_toolbar(&favorite), "chosen buttons start in the toolbar");
+
+    for width in [1200, 900, 700, 520, 420] {
+        for attempt in 0..12 {
+            window.set_default_size(width - attempt % 2, 100);
+            settle();
+            if window.width() <= width + 2 {
+                break;
+            }
+        }
+        eprintln!(
+            "squeeze requested={width} actual={} print={} favourite={} size={}",
+            window.width(),
+            in_toolbar(&print),
+            in_toolbar(&favorite),
+            in_toolbar(&zoom)
+        );
+        assert!(
+            window.width() <= width + 2,
+            "chosen buttons trapped the window at {} for {width}",
+            window.width()
+        );
+        // Buttons leave from the right: what stays is a run from the left.
+        let kept = pinned.iter().take_while(|control| in_toolbar(control)).count();
+        assert!(
+            pinned[kept..].iter().all(|control| !in_toolbar(control)),
+            "a button left the bar before one to its right at {width}"
+        );
+        // Properties sits right of the photo buttons, so it goes first.
+        assert!(in_toolbar(&properties) || !in_toolbar(&print));
+        assert!(bar.overflow.is_mapped(), "the menu button stays at {width}");
+    }
+    assert!(!in_toolbar(&print), "Print goes into the menu on a narrow window");
+    assert!(bar.overflow.is_mapped(), "the menu button stays reachable");
+
+    for attempt in 0..12 {
+        window.set_default_size(1600 - attempt % 2, 100);
+        settle();
+        if in_toolbar(&print) {
+            break;
+        }
+    }
+    assert!(in_toolbar(&print) && in_toolbar(&favorite), "buttons return when there is room");
+    window.close();
+    let _ = std::fs::remove_file(path);
+}

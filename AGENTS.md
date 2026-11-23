@@ -22,10 +22,11 @@ All facts below were verified from `Cargo.toml`, `build.rs`, `.cargo/config.toml
 - Single test: `cargo test --locked -- --test-threads=1 <exact_test_name>`.
 - Format check: `cargo fmt --all -- --check`.
 - Manual GUI run: `cargo run` from the repo root.
+- Presentation-owner guard: `scripts/check-presentation-owners.sh` (no build needed; `--self-test` proves its rules). Run it after changing sidebar or Properties wiring.
 
 ## Testing quirks
 
-- All tests are inline `#[cfg(test)]` modules in `src/`; there is no `tests/` directory.
+- All Rust tests are inline `#[cfg(test)]` modules in `src/`. `tests/` holds only `compact_sidebar_x11_drag.py`, a standalone Python X11 drag repro (run it under Xvfb only).
 - Tests needing a display, OpenGL, real photos, or hardware are `#[ignore]`d with a reason string. Run explicitly:
   - `xvfb-run -a -s "-screen 0 1920x1080x24" env -u WAYLAND_DISPLAY GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --locked <name> -- --ignored --test-threads=1`
   - Keep the screen size: Xvfb defaults to 640×480, below the 1050 px sidebar breakpoint, so window tests start with a collapsed sidebar and fail misleadingly. Keep `-u WAYLAND_DISPLAY GDK_BACKEND=x11`: on a Wayland session GTK otherwise ignores Xvfb and opens the test windows on the user's real desktop.
@@ -33,18 +34,13 @@ All facts below were verified from `Cargo.toml`, `build.rs`, `.cargo/config.toml
 - Full GUI regression harness: `scripts/test-gui.sh` (see `scripts/README-gui-tests.md`). Private Xvfb display, private D-Bus, temporary `HOME`/`XDG_*` — it never touches your real library. Select a suite via `PIC_GUI_SUITE=all|startup|library|import|viewer|editing|screensaver|native|wayland`. Artifacts land in `reports/gui-tests/` (gitignored). Full-screen coverage needs an EWMH window manager (openbox), otherwise the run reports BLOCKED.
 - Known non-issues, do not chase: transient `canvas=0x0` during collage init; obsolete lightbox decodes cancelled during fast scroll; RADV "not conformant" Vulkan warning on Fedora/AMD; pre-existing build warnings from deprecated GTK APIs.
 
-## CI (path-scoped; each runs `cargo check --locked` plus targeted tests)
+## CI
 
-- `src/edit/**` → `editor-quality.yml`: `edit::` tests (`render`, `model`, `filters`, `export_batch`, `export_metadata`), `native_preview_geometry_tests`, plus several ignored tests under xvfb.
-- `src/collage/editor.rs` → `collage-sidebar-check.yml`: `collage::` plus an ignored resize test under xvfb.
-- `src/screensaver*`, `src/main.rs`, `src/window/toolbar.rs` → `screensaver-check.yml`: `screensaver::`.
-- `src/infobar.rs`, `src/grid/selection.rs`, `src/window/build.rs`, `src/css/base.css` → `selection-infobar-check.yml`: full suite plus an ignored InfoBar test under xvfb.
-- `gpu-packaging-validation.yml` is `workflow_dispatch` only (expensive AppImage GPU validation).
+Workflows in `.github/workflows/` are path-scoped: each runs `cargo check --locked` plus targeted tests when its `paths:` filter matches. Read those filters to see what a change triggers. Inspect a workflow's inline scripts before running any of them locally; some build real GTK windows.
 
-## Tracing & diagnostics (opt-in, read at runtime — do not remove)
+## Tracing & diagnostics
 
-- `PICASA_TRACE` is the master switch for stage timing (~188 references: export stages, editor effects, thumbnails, lightbox). Set it to diagnose slowness.
-- Others: `PIC_INSPECTOR_TRACE`, `PIC_STARTUP_TRACE`, `PIC_SCREENSAVER_TRACE`, `PIC_LIGHTBOX_OPEN_TRACE`, `PIC_COLLAGE_TRACE`, `PIC_LIBRARY_MAINTENANCE_TRACE`, `PIC_GALLERY_RESTORE_TRACE`, `PIC_METADATA_TRACE`, `PIC_EXPORT_BENCH_ALBUM` (debug builds only).
+Opt-in environment variables read at runtime. Never remove them. `PICASA_TRACE` is the master switch for diagnosing slowness; the full list is in `docs/development/TRACING.md`.
 
 ## Architecture
 
@@ -73,6 +69,8 @@ dependencies and relevant tests.
 
 Treat the index as a navigation guide, not as the
 source of truth. Verify against current source code.
+
+Architecture refactors (deepening candidates): `docs/architecture/STATUS.md` is the status tracker. Read it before proposing or continuing one, and update it when a candidate starts or merges.
 
 Do not modify unrelated code or settings.
 

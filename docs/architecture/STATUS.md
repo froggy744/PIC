@@ -89,5 +89,14 @@ About 12 refresh calls of `set_photo(Some(&photo))` follow a change to the photo
 
 Add one display test that rates a photo with no explicit refresh.
 
-### 5-8
+### Next: 7 · Editor preview plan (recommended 2026-11-23)
+Re-checked at `2745dbd6`; 5-8 still match the code. 7 goes first because CPU/GPU parity is an engineering priority and it has a verified disagreement:
+- `cpu_fallback_reason` (`src/edit/editor.rs`) names clarity, grain, filter and B&W/sepia as CPU-fallback reasons.
+- The real rule, `gpu_tone_supported` (`src/edit/live_gpu.rs`), allows all four on the GPU. It only forces CPU for auto brightness or enhance, partial or filtered or cropped auto colour/contrast, smooth and vignette.
+
+**First step:** find every caller of `cpu_fallback_reason`, `gpu_tone_supported`, `gpu_tone_supported_for_view` and `gpu_base_recipe`. Work out whether the wrong reason only mislabels traces, or also changes which renderer the preview uses. Then design the one planning module: the renderer choice, base recipe, rotation and reason together, with pure recipe-table tests. CI: `editor-quality.yml`.
+
+### 5, 6, 8
 Not started. The problem statements are in the review report.
+- 5: `smooth_scroll.rs` still has no callers, and both `install_*_smooth_gallery_scroll` functions remain; the galleries already share `WheelGlide`.
+- 6: `window/build.rs` still has 43 `is_visible()` checks.

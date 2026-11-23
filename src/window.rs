@@ -24,6 +24,7 @@ use layout_settle::{
     should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
 };
 
+mod properties_presentation;
 mod sidebar_presentation;
 mod sidebar_widgets;
 use sidebar_widgets::{ImmersiveHost, SidebarCells, SidebarWidgetParts, SidebarWidgets};

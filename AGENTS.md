@@ -22,7 +22,7 @@ All facts below were verified from `Cargo.toml`, `build.rs`, `.cargo/config.toml
 - Single test: `cargo test --locked -- --test-threads=1 <exact_test_name>`.
 - Format check: `cargo fmt --all -- --check`.
 - Manual GUI run: `cargo run` from the repo root.
-- Presentation-owner guard: `scripts/check-presentation-owners.sh` (no build needed; `--self-test` proves its rules). Run it after changing sidebar, Properties or InfoBar wiring.
+- Presentation-owner guard: `scripts/check-presentation-owners.sh` (no build needed; `--self-test` proves its rules). Run it after changing sidebar, Properties, InfoBar, front-surface, zoom slider or window session (`src/window/session_state.rs`) wiring.
 
 ## Testing quirks
 

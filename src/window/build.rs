@@ -5395,15 +5395,9 @@ fn start_photo_export_single(
         right_column,
         right_header,
         _search,
-        compact_dock,
         left_column,
-        sidebar_expanded,
-        sidebar_hover_reveal,
         sidebar_shell,
-        immersive_slide_width,
-        immersive_normal_width,
-        immersive_sidebar_page,
-        compact_immersive_toggle,
+        sidebar_widgets,
     ) = include!("layout.rs");
     crate::startup_trace::mark("layout_widgets_done", Some(layout_started));
 
@@ -5745,84 +5739,17 @@ fn start_photo_export_single(
     //   wide:   expand while hidden -> then slide sidebar in
     //
     // Small hysteresis avoids chattering when the user drags around 1050 px.
-    const SIDEBAR_COMPACT_ENTER_WIDTH: i32 = 1050;
-    const SIDEBAR_COMPACT_EXIT_WIDTH: i32 = 1080;
+    // The widths and hysteresis live in `sidebar_presentation::breakpoint_step`.
 
-    let sidebar_breakpoint_transition = Rc::new(Cell::new(false));
-    let sidebar_breakpoint_generation = Rc::new(Cell::new(0u64));
     {
-        let main_split_for_breakpoint = main_split.clone();
-        let sidebar_for_breakpoint = sidebar.clone();
-        let transition = sidebar_breakpoint_transition.clone();
-        let generation = sidebar_breakpoint_generation.clone();
-        let immersive_for_breakpoint = immersive_active.clone();
-
+        // The sidebar presentation module decides each step (and ignores the
+        // breakpoint while immersive, where the sidebar must stay a
+        // collapsed overlay); its adapter times the two-phase transitions.
+        let widgets = sidebar_widgets.clone();
         window.add_tick_callback(move |window, _| {
-            // An immersive session owns the split's presentation state. The
-            // sidebar must stay a collapsed overlay that the left-edge
-            // reveal can show over the photos. Expanding it here would
-            // re-allocate the gallery and re-show a pinned sidebar that the
-            // immersive session deliberately hides.
-            if immersive_for_breakpoint.get() {
-                return glib::ControlFlow::Continue;
-            }
-            let width = window.width();
-
-            if !main_split_for_breakpoint.is_collapsed()
-                && width <= SIDEBAR_COMPACT_ENTER_WIDTH
-                && !transition.get()
-            {
-                generation.set(generation.get().wrapping_add(1));
-                transition.set(true);
-
-                if main_split_for_breakpoint.shows_sidebar() {
-                    // Free the gallery width first, but keep the sidebar visible.
-                    // In collapsed mode the sidebar becomes an overlay, so the
-                    // shrinking window no longer squeezes the side-by-side panes
-                    // into invalid/negative allocations while the drawer moves.
-                    main_split_for_breakpoint.set_collapsed(true);
-
-                    let split = main_split_for_breakpoint.clone();
-                    let transition = transition.clone();
-                    // Wait for one real frame with the sidebar visible in
-                    // overlay mode before starting the hide. The pin button and
-                    // hover auto-hide both use set_show_sidebar() directly;
-                    // starting on the following frame gives this responsive
-                    // transition the same libadwaita drawer animation instead
-                    // of visually merging collapse + hide into one fast cut.
-                    split.add_tick_callback(move |split, _| {
-                        split.set_show_sidebar(false);
-                        transition.set(false);
-                        glib::ControlFlow::Break
-                    });
-                } else {
-                    main_split_for_breakpoint.set_collapsed(true);
-                    transition.set(false);
-                }
-            } else if main_split_for_breakpoint.is_collapsed()
-                && width >= SIDEBAR_COMPACT_EXIT_WIDTH
-                && !transition.get()
-            {
-                generation.set(generation.get().wrapping_add(1));
-                transition.set(true);
-
-                // Expand while the sidebar is still hidden so the structural
-                // layout switch is not visible, then reveal through the normal
-                // drawer animation on the next main-loop turn.
-                main_split_for_breakpoint.set_show_sidebar(false);
-                main_split_for_breakpoint.set_collapsed(false);
-
-                let split = main_split_for_breakpoint.clone();
-                let sidebar = sidebar_for_breakpoint.clone();
-                let transition = transition.clone();
-                glib::idle_add_local_once(move || {
-                    if sidebar.is_visible() && sidebar::is_pinned(&sidebar) {
-                        split.set_show_sidebar(true);
-                    }
-                    transition.set(false);
-                });
-            }
-
+            widgets.dispatch(SidebarEvent::BreakpointCrossed {
+                window_width: window.width(),
+            });
             glib::ControlFlow::Continue
         });
     }
@@ -7447,9 +7374,10 @@ fn start_photo_export_single(
             }
             // A compact rail uses a different width. Closing in compact mode
             // must not overwrite the normal sidebar's saved fraction.
-            let compact = db::setting(&guard, "compact-sidebar-enabled")
-                .ok().flatten().is_some_and(|value| value == "true");
-            if !compact {
+            let mode = SidebarMode::from_setting(
+                db::setting(&guard, SIDEBAR_MODE_SETTING_KEY).ok().flatten().as_deref(),
+            );
+            if mode.is_normal() {
                 let _ = db::set_setting(
                     &guard,
                     SIDEBAR_WIDTH_FRACTION_SETTING_KEY,

@@ -83,9 +83,17 @@ fn check_live_sidebar_drag(layout: &str, destination: &str, compact: bool) {
     settle();
     let split = split(window.upcast_ref()).unwrap();
     if compact {
-        window.set_default_size(900, 900);
-        settle();
-        assert!(split.is_collapsed());
+        // Like full_window_can_resize_narrow_and_restore_sidebar: keep
+        // requesting the narrow size while responsive header fields release
+        // their previous minimum.
+        for attempt in 0..6 {
+            window.set_default_size(900 - (attempt % 2), 900);
+            settle();
+            if split.is_collapsed() {
+                break;
+            }
+        }
+        assert!(split.is_collapsed(), "window={} never crossed the breakpoint", window.width());
         split.set_show_sidebar(true);
         settle();
     }

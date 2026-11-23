@@ -2126,16 +2126,6 @@ pub fn set_hover_open(scrolled: &gtk::ScrolledWindow, hover_open: bool) {
     state.hover_open.set(hover_open);
 }
 
-/// Returns true only when the sidebar is currently open because of hover.
-///
-/// True even for a pinned sidebar that was only peeked open by the edge
-/// hover while the split view is collapsed (the breakpoint hides it anyway).
-pub fn is_hover_open(scrolled: &gtk::ScrolledWindow) -> bool {
-    sidebar_state(scrolled)
-        .map(|state| state.borrow().hover_open.get())
-        .unwrap_or(false)
-}
-
 /// Clear temporary hover-open state after the sidebar auto-hides.
 pub fn clear_hover_open(scrolled: &gtk::ScrolledWindow) {
     let Some(state) = sidebar_state(scrolled) else {

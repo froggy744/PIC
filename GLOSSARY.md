@@ -14,3 +14,9 @@ Domain terms used in code, docs and reviews. Use these names exactly; code paths
 | **Scrub** | A direct scrollbar drag that moves more than about a page per event; it switches the pumps to model-derived targets. |
 | **Settle** | The moment scrolling stops (about 90-110 ms of quiet), when visible tiles are refreshed and prefetch runs within the RAM cache budget. |
 | **Recipe** | `EditRecipe`: the non-destructive edit description applied at display and export time. Originals are never modified. |
+| **Sidebar mode** | Which left navigation the user chose: the **full sidebar** inside the split view, or the **compact rail**. Persisted as `compact-sidebar-enabled`. Code: `SidebarMode`. |
+| **Compact rail** | The narrow icon navigation (44-300 px) beside the split view, in its own dock. Labels appear from 90 px. |
+| **Drawer** | The full sidebar while the split is collapsed by the responsive breakpoint (window ≤ 1050 px, back at ≥ 1080 px): it slides over the photos instead of sitting beside them. |
+| **Hover peek** | Opening the hidden full sidebar by resting the pointer on the left-edge strip. It does not change the pin, and closes again when the pointer leaves. |
+| **Immersive overlay** | In Immersive Mode, the existing sidebar shell moved onto the gallery as a presentation-only overlay, showing the full or compact page per the sidebar mode, so the gallery never reflows. |
+| **Sidebar presentation** | Deciding how the left navigation is shown for a sidebar mode, breakpoint, pin/hover and Immersive Mode: which widgets are visible, where, and how wide. One module: `window/sidebar_presentation.rs`. |

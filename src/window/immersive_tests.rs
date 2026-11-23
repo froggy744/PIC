@@ -123,7 +123,9 @@ fn immersive_mode_hides_the_compact_rail_and_restores_it() {
     let handle = descendants(root).into_iter()
         .find(|widget| widget.has_css_class("sidebar-resize-handle"))
         .expect("shared resize handle");
-    assert!(handle.is_visible(), "compact immersive sidebar needs its divider");
+    // `is_visible()` also checks the parents, and the shell stays hidden
+    // until the overlay is revealed. The divider's own flag is what matters.
+    assert!(handle.get_visible(), "compact immersive sidebar needs its divider");
 
     // Immersive Mode hides every piece of left navigation.
     assert!(!dock.is_visible(), "the compact rail must be hidden");
@@ -143,7 +145,7 @@ fn immersive_mode_hides_the_compact_rail_and_restores_it() {
     // Leaving the session restores the exact previous configuration.
     enter_immersive(&window);
     assert!(dock.is_visible(), "the compact rail must come back");
-    assert!(!handle.is_visible(), "windowed compact rail hides the divider");
+    assert!(!handle.get_visible(), "windowed compact rail hides the divider");
     assert!(!split.shows_sidebar());
     assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
 
@@ -168,13 +170,13 @@ fn immersive_compact_switch_reuses_overlay_and_restores_compact_page() {
     enter_immersive(&window);
     let gallery_width = split.content().unwrap().width();
     gio::prelude::ActionGroupExt::activate_action(&window, "immersive-show-sidebar", None);
-    settle();
+    settle_over_sidebar(&window);
     let full_toggle = descendants(&root).into_iter()
         .filter_map(|w| w.downcast::<gtk::Button>().ok())
         .find(|b| b.tooltip_text().as_deref() == Some("Toggle compact sidebar"))
         .expect("normal sidebar compact button");
     full_toggle.emit_clicked();
-    settle();
+    settle_over_sidebar(&window);
 
     assert!(!dock.is_visible(), "the separate windowed compact dock stays hidden");
     assert!(shell.is_visible(), "the immersive sidebar remains open");
@@ -183,13 +185,32 @@ fn immersive_compact_switch_reuses_overlay_and_restores_compact_page() {
         "the original compact page must be inside the immersive overlay");
     assert_eq!(split.content().unwrap().width(), gallery_width);
     assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
+    // The compact header holds the arrow and the title; both stay inside
+    // the overlay instead of painting past its right edge.
+    let shell_widget = shell.clone().upcast::<gtk::Widget>();
+    for widget in descendants(&shell_widget).into_iter().filter(|widget| {
+        widget.is_mapped()
+            && (widget.downcast_ref::<gtk::Label>().is_some_and(|label| label.text() == "PIC")
+                || widget.downcast_ref::<gtk::Button>().is_some_and(|button| {
+                    button.tooltip_text().as_deref() == Some("Switch to normal sidebar")
+                }))
+    }) {
+        let bounds = widget.compute_bounds(&shell_widget).expect("header bounds");
+        assert!(
+            bounds.x() >= -0.5 && bounds.x() + bounds.width() <= shell.width() as f32 + 0.5,
+            "compact header item outside the overlay: x={} w={} shell={}",
+            bounds.x(),
+            bounds.width(),
+            shell.width()
+        );
+    }
 
     let expand = descendants(&shell.clone().upcast::<gtk::Widget>())
         .into_iter().filter_map(|w| w.downcast::<gtk::Button>().ok())
         .find(|b| b.tooltip_text().as_deref() == Some("Switch to normal sidebar"))
         .expect("immersive compact expand button");
     expand.emit_clicked();
-    settle();
+    settle_over_sidebar(&window);
     assert!(descendants(&shell.clone().upcast::<gtk::Widget>())
         .iter().any(|w| w.has_css_class("layout-left-column")));
     assert!(!dock.is_visible());
@@ -297,6 +318,31 @@ fn viewport_sample(content: &gtk::Widget, scroll: &gtk::ScrolledWindow) -> Viewp
     }
 }
 
+/// Tell the immersive edge controller the pointer rests over the revealed
+/// sidebar. Under Xvfb the real pointer sits still somewhere over the gallery
+/// and GTK keeps reporting it there, so the (correct) auto-hide would close
+/// the overlay 400 ms after every reveal.
+fn hold_pointer_over_sidebar(window: &adw::ApplicationWindow) {
+    let controllers = window.observe_controllers();
+    for index in 0..controllers.n_items() {
+        if let Some(motion) = controllers
+            .item(index)
+            .and_downcast::<gtk::EventControllerMotion>()
+        {
+            motion.emit_by_name::<()>("motion", &[&5.0_f64, &200.0_f64]);
+        }
+    }
+}
+
+/// [`settle`], with the pointer held over the revealed immersive sidebar.
+fn settle_over_sidebar(window: &adw::ApplicationWindow) {
+    let until = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < until {
+        hold_pointer_over_sidebar(window);
+        pump_for(Duration::from_millis(10));
+    }
+}
+
 fn reveal_sidebar(window: &adw::ApplicationWindow) {
     gio::prelude::ActionGroupExt::activate_action(window, "immersive-show-sidebar", None);
 }
@@ -320,10 +366,14 @@ fn pin_button_exits_immersive_and_restores_the_saved_pin_state() {
     assert!(!split.shows_sidebar(), "immersive hides the split sidebar");
     assert!(split.is_collapsed());
 
+    // Immersive auto-hides the sidebar; the pin is reachable once the
+    // overlay is revealed.
+    reveal_sidebar(&window);
+    settle_over_sidebar(&window);
     let pin = pin_button(&root).expect("the sidebar pin button");
     assert!(
         pin.is_visible(),
-        "the pin button must be reachable in immersive"
+        "the pin button must be reachable in the revealed immersive sidebar"
     );
     pin.emit_clicked();
     settle();
@@ -347,33 +397,6 @@ fn pin_button_exits_immersive_and_restores_the_saved_pin_state() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn pin_button_exits_immersive_from_the_compact_layout() {
-    let (window, database) = immersive_window(true, "grid");
-    let root = window.clone().upcast::<gtk::Widget>();
-    let split = main_split(&root).unwrap();
-    let dock = compact_dock(&root).unwrap();
-
-    assert!(dock.is_visible(), "the compact rail starts visible");
-    enter_immersive(&window);
-    assert!(!dock.is_visible(), "immersive hides the compact rail");
-
-    pin_button(&root)
-        .expect("the sidebar pin button")
-        .emit_clicked();
-    settle();
-
-    assert!(
-        dock.is_visible(),
-        "the compact rail must return after the pin exits immersive"
-    );
-    assert!(!split.is_collapsed());
-    assert!(!split.shows_sidebar());
-    assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
-    window.close();
-}
-
-#[test]
-#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn immersive_sidebar_slides_without_moving_the_gallery() {
     for layout in ["grid", "photo_wall", "masonry", "honeycomb"] {
         let (window, _database) = immersive_window(false, layout);
@@ -388,9 +411,9 @@ fn immersive_sidebar_slides_without_moving_the_gallery() {
         let shell = column.parent().expect("the sidebar presentation shell");
         let content = split.content().unwrap();
         let scroll = grid_scroll(&content).expect("the gallery scroll");
-        let frame = shell.parent().expect("the gallery overlay");
-
         enter_immersive(&window);
+        // Entry moves the shell from the split onto the gallery overlay.
+        let frame = shell.parent().expect("the gallery overlay");
         assert!(
             !split.shows_sidebar(),
             "{layout}: the sidebar must start hidden"
@@ -398,13 +421,17 @@ fn immersive_sidebar_slides_without_moving_the_gallery() {
         let baseline = viewport_sample(&content, &scroll);
 
         let mut slides = Vec::new();
-        for cycle in 0..2 {
+        // Honeycomb once drifted a little further on every cycle; run it
+        // long enough to show progressive drift.
+        let cycles = if layout == "honeycomb" { 20 } else { 2 };
+        for cycle in 0..cycles {
             reveal_sidebar(&window);
             let started = Instant::now();
             let mut min_x = f64::MAX;
             let mut positions = std::collections::BTreeSet::new();
             let mut drifted = Vec::new();
             while started.elapsed() < Duration::from_millis(750) {
+                hold_pointer_over_sidebar(&window);
                 pump_for(Duration::from_millis(10));
                 if let Some(bounds) = shell.compute_bounds(&frame) {
                     let x = f64::from(bounds.x());
@@ -553,5 +580,162 @@ fn immersive_search_centers_selected_folder() {
     expand.emit_clicked();
     settle();
     assert_eq!(scroll.vadjustment().value(), baseline, "expanding moved the gallery");
+    window.close();
+}
+
+/// One frame-by-frame sample of the windowed sidebar: its x inside the split
+/// (while it is mapped) and the gallery's width.
+#[derive(Debug, Clone, Copy)]
+struct SlideSample {
+    sidebar_x: Option<i32>,
+    content_width: i32,
+}
+
+/// Pump frames for `duration`, sampling after every main-loop turn.
+fn sample_slide(split: &adw::OverlaySplitView, duration: Duration) -> Vec<SlideSample> {
+    let context = glib::MainContext::default();
+    let until = Instant::now() + duration;
+    let mut samples = Vec::new();
+    while Instant::now() < until {
+        while context.pending() {
+            context.iteration(false);
+        }
+        let sidebar = split.sidebar().unwrap();
+        samples.push(SlideSample {
+            sidebar_x: sidebar
+                .is_mapped()
+                .then(|| sidebar.compute_bounds(split))
+                .flatten()
+                .map(|bounds| bounds.x().round() as i32),
+            content_width: split.content().unwrap().width(),
+        });
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    samples
+}
+
+/// True when some sample sits strictly between the first and last state:
+/// the sidebar moved through an intermediate position instead of cutting.
+fn slid(samples: &[SlideSample], width: i32) -> bool {
+    let partial_x = samples
+        .iter()
+        .filter_map(|sample| sample.sidebar_x)
+        .any(|x| x < -2 && x > -(width - 2));
+    let first = samples.first().map_or(0, |sample| sample.content_width);
+    let last = samples.last().map_or(0, |sample| sample.content_width);
+    let (low, high) = (first.min(last), first.max(last));
+    let partial_content = high - low > 4
+        && samples
+            .iter()
+            .any(|sample| sample.content_width > low + 2 && sample.content_width < high - 2);
+    partial_x || partial_content
+}
+
+fn hover_strip(root: &gtk::Widget) -> gtk::Widget {
+    descendants(root)
+        .into_iter()
+        .find(|widget| {
+            widget.width_request() == 12
+                && widget.parent().is_some_and(|parent| parent.is::<gtk::Overlay>())
+                && motion_controller(widget).is_some()
+        })
+        .expect("the left-edge hover strip")
+}
+
+fn motion_controller(widget: &gtk::Widget) -> Option<gtk::EventControllerMotion> {
+    let controllers = widget.observe_controllers();
+    (0..controllers.n_items())
+        .find_map(|index| controllers.item(index).and_downcast::<gtk::EventControllerMotion>())
+}
+
+fn button_with_tooltip(root: &gtk::Widget, tooltip: &str) -> gtk::Button {
+    descendants(root)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .find(|button| button.is_visible() && button.tooltip_text().as_deref() == Some(tooltip))
+        .unwrap_or_else(|| panic!("visible button {tooltip:?}"))
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn windowed_sidebar_slides_for_pin_hover_peek_and_breakpoint() {
+    let (window, _database) = immersive_window(false, "grid");
+    // A disabled animation setting makes libadwaita jump to the end.
+    gtk::Settings::default()
+        .expect("a display is required")
+        .set_gtk_enable_animations(true);
+    let root = window.clone().upcast::<gtk::Widget>();
+    let split = main_split(&root).unwrap();
+    assert!(split.shows_sidebar() && !split.is_collapsed());
+    let width = split.sidebar().unwrap().width();
+    assert!(width > 100, "sidebar width {width}");
+
+    // Unpin: a real slide-out.
+    pin_button(&root).unwrap().emit_clicked();
+    let samples = sample_slide(&split, Duration::from_millis(700));
+    assert!(!split.shows_sidebar(), "unpin hides the sidebar");
+    assert!(slid(&samples, width), "unpin must slide out: {samples:?}");
+
+    // Hover peek opens with a slide and closes with one after leaving.
+    let strip = hover_strip(&root);
+    motion_controller(&strip)
+        .unwrap()
+        .emit_by_name::<()>("enter", &[&4.0_f64, &300.0_f64]);
+    let samples = sample_slide(&split, Duration::from_millis(700));
+    assert!(split.shows_sidebar(), "hover peeks the unpinned sidebar");
+    assert!(slid(&samples, width), "hover peek must slide in: {samples:?}");
+    let shell = split.sidebar().unwrap();
+    motion_controller(&shell)
+        .expect("the sidebar's leave controller")
+        .emit_by_name::<()>("leave", &[]);
+    let samples = sample_slide(&split, Duration::from_millis(900));
+    assert!(!split.shows_sidebar(), "leaving hides the peek");
+    assert!(slid(&samples, width), "the peek must slide out: {samples:?}");
+
+    // The header arrow pins it open again with a slide.
+    button_with_tooltip(&root, "Show sidebar").emit_clicked();
+    let samples = sample_slide(&split, Duration::from_millis(700));
+    assert!(split.shows_sidebar(), "show pins the sidebar open");
+    assert!(slid(&samples, width), "show must slide in: {samples:?}");
+
+    // Narrowing past the breakpoint turns it into a drawer that slides out.
+    window.set_default_size(960, 800);
+    let samples = sample_slide(&split, Duration::from_millis(900));
+    assert!(split.is_collapsed() && !split.shows_sidebar(), "narrow hides the drawer");
+    assert!(
+        samples.iter().filter_map(|s| s.sidebar_x).any(|x| x < -2 && x > -(split.sidebar().unwrap().width() - 2)),
+        "the drawer must slide out: {samples:?}"
+    );
+    // Widening expands while hidden, then slides the pinned sidebar back in.
+    window.set_default_size(1600, 900);
+    let samples = sample_slide(&split, Duration::from_millis(900));
+    assert!(!split.is_collapsed() && split.shows_sidebar(), "wide restores the pinned sidebar");
+    assert!(slid(&samples, width), "widening must slide in: {samples:?}");
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn compact_start_keeps_the_pin_when_switching_to_normal() {
+    let (window, _database) = immersive_window(true, "grid");
+    let root = window.clone().upcast::<gtk::Widget>();
+    let split = main_split(&root).unwrap();
+    assert!(!split.shows_sidebar(), "the compact rail starts in place");
+    button_with_tooltip(&root, "Switch to normal sidebar").emit_clicked();
+    settle();
+    assert!(split.shows_sidebar(), "normal mode opens the sidebar");
+    assert!(
+        crate::sidebar::is_pinned(&left_column(&root)
+            .and_then(|column| descendants(&column).into_iter()
+                .find_map(|widget| widget.downcast::<gtk::ScrolledWindow>().ok()))
+            .expect("the sidebar scroller")),
+        "the sidebar must open pinned, not as a hover peek"
+    );
+    // Leaving the sidebar must not auto-hide a pinned sidebar.
+    motion_controller(&split.sidebar().unwrap())
+        .unwrap()
+        .emit_by_name::<()>("leave", &[]);
+    settle();
+    assert!(split.shows_sidebar(), "a pinned sidebar never auto-hides");
     window.close();
 }

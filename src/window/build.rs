@@ -218,12 +218,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         date_browser_active.clone(),
         date_browser_slot.clone(),
     );
-    {
-        let properties = properties.clone();
-        lightbox.root.connect_visible_notify(move |root| {
-            properties.set_lightbox_shown(root.is_visible());
-        });
-    }
     let properties_for_lightbox = properties.clone();
     let info_for_lightbox = info.clone();
     let last_activated_for_lightbox = last_activated_photo_id.clone();
@@ -738,21 +732,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if let Some(gallery) = gallery.upgrade() {
                 gallery.clear_keyboard_selection();
             }
-        });
-    }
-    {
-        let gallery = Rc::downgrade(&gallery);
-        let info = Rc::downgrade(&info);
-        lightbox.root.connect_visible_notify(move |root| {
-            let (Some(gallery), Some(info)) = (gallery.upgrade(), info.upgrade()) else {
-                return;
-            };
-            if !root.is_visible() {
-                // The selection may have changed while the lightbox was open.
-                let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
-                info.show_gallery_selection(count, &photos);
-            }
-            info.set_lightbox_shown(root.is_visible());
         });
     }
     // No stored size (or only the untouched legacy default): adopt the
@@ -2672,6 +2651,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         })
     };
     let exit_date_browser: Rc<dyn Fn()> = {
+        let front = front.clone();
         let snapshot = date_browser_snapshot.clone();
         let gallery = gallery.clone();
         let browser_slot = Rc::downgrade(&date_browser_slot);
@@ -2682,11 +2662,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let sort = sort.clone();
         let group_mode = group_mode.clone();
         let search = search_text.clone();
-        let info = info.clone();
         let sync_info = sync_date_browser_photo_info.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
-            info.set_date_overview_shown(false);
+            front.date_browser_changed();
             let active_photo_id = gallery.selected_photo_ids(None).first().copied();
             if let Some(snapshot) = snapshot.borrow_mut().take() {
                 if gallery.restore_date_browser_snapshot(snapshot) {
@@ -2711,15 +2690,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     };
     date_browser_exit_slot.replace(Some(exit_date_browser.clone()));
     let discard_date_browser: Rc<dyn Fn()> = {
+        let front = front.clone();
         let snapshot = date_browser_snapshot.clone();
         let browser_slot = Rc::downgrade(&date_browser_slot);
         let active = date_browser_active.clone();
-        let info = info.clone();
         let button = date_browser_button.downgrade();
         let scroll = gallery_scroll_stack.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
-            info.set_date_overview_shown(false);
+            front.date_browser_changed();
             snapshot.borrow_mut().take();
             if let Some(slot) = browser_slot.upgrade() {
                 if let Some(browser) = slot.borrow().as_ref() { browser.root().set_visible(false); }
@@ -2741,11 +2720,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let snapshot = date_browser_snapshot.clone();
             let gallery = gallery.clone();
             let scroll = gallery_scroll_stack.clone();
-            let info = info.clone();
             let sync_info = sync_date_browser_photo_info.clone();
             let exit = exit_date_browser.clone();
             Rc::new(move |month| {
-                info.set_date_overview_shown(false);
                 let indices = slot.upgrade().and_then(|slot| slot.borrow().as_ref().map(|browser| browser.indices(month)));
                 let mut snapshot = snapshot.borrow_mut();
                 if let (Some(indices), Some(snapshot)) = (indices, snapshot.as_mut()) {
@@ -2762,9 +2739,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         {
             let scroll = gallery_scroll_stack.clone();
             let heading = gallery.group_header.clone();
-            let info = info.clone();
             Rc::new(move || {
-                info.set_date_overview_shown(true);
                 scroll.set_visible(false);
                 heading.set_visible(false);
             })
@@ -2775,11 +2750,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     grid_surface.prepend(browser.root());
     date_browser_slot.replace(Some(browser.clone()));
     {
+        let front = Rc::downgrade(&front);
+        browser.connect_overview_visible(move || {
+            if let Some(front) = front.upgrade() {
+                front.date_browser_changed();
+            }
+        });
+    }
+    {
         let browser = browser.clone();
         let snapshot = date_browser_snapshot.clone();
         let active = date_browser_active.clone();
         let gallery_for_resume = gallery.clone();
         let button = date_browser_button.downgrade();
+        let front = front.clone();
         date_browser_resume_slot.replace(Some(Rc::new(move |bucket, photo_id| {
             let photos = gallery_for_resume.photo_objects();
             browser.set_photos(&photos);
@@ -2787,6 +2771,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             browser.set_tile_width(gallery_for_resume.current_zoom_width());
             snapshot.replace(Some(saved));
             active.set(true);
+            front.date_browser_changed();
             if let Some(button) = button.upgrade() { button.set_active(true); }
             browser.root().set_visible(true);
             browser.resume_month(bucket);
@@ -2801,6 +2786,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let filter = filter.clone();
         let search = search_text.clone();
         let exit = exit_date_browser.clone();
+        let front = front.clone();
         date_browser_button.connect_clicked(move |button| {
             if active.get() { exit(); return; }
             if filter.get() != sidebar::SidebarFilter::All || !search.borrow().is_empty() {
@@ -2817,6 +2803,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             browser.set_tile_width(gallery.current_zoom_width());
             snapshot.replace(Some(saved));
             active.set(true);
+            front.date_browser_changed();
             browser.root().set_visible(true);
             browser.show_years();
         });
@@ -3692,17 +3679,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Folder-to-folder navigation intentionally keeps it open.
     // Only photo-gallery pages can own a Properties pane. Library/Albums
     // index, Edit and Collage cannot reopen it through stale InfoBar selection.
-    properties.set_page_allowed(page_allows_gallery_properties(
-        main_stack.visible_child_name().as_deref(),
-    ));
-    let properties_for_page = properties.clone();
-    main_stack.connect_visible_child_notify(move |stack| {
-        let page = stack.visible_child_name();
-        properties_for_page.set_page_allowed(page_allows_gallery_properties(page.as_deref()));
-        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-            eprintln!("PIC_INSPECTOR_TRACE stage=page_switch page={:?}", page.as_deref());
-        }
-    });
+    // (Kept in step by FrontMirrors; see front_mirrors.rs.)
 
     content.append(&gallery_overlay);
 
@@ -5424,13 +5401,17 @@ fn start_photo_export_single(
     metadata_panel.set_operation_progress(operation_progress.clone());
     // Suppress the metadata bar while viewing a photo and restore its prior
     // mode (individual filters or ALL columns) when returning to the grid.
-    {
-        let panel_for_lightbox = metadata_panel.clone();
-        lightbox.root.connect_visible_notify(move |root| {
-            panel_for_lightbox.set_lightbox_open(root.is_visible());
-        });
-        metadata_panel.set_lightbox_open(lightbox.root.is_visible());
+    // The InfoBar, Properties and the metadata panel follow the front
+    // surface through one listener.
+    front_mirrors::FrontMirrors {
+        info: info.clone(),
+        properties: properties.clone(),
+        metadata_panel: metadata_panel.clone(),
+        gallery: Rc::downgrade(&gallery),
+        filter: filter.clone(),
+        selection_preview_limit: SELECTION_INFOBAR_PREVIEW_LIMIT,
     }
+    .connect(&front);
     // Restore the panel before preparing the destination grid. The lightbox
     // still covers the combined surface, so GTK can finish the gallery's
     // shorter allocation before the close fade reveals it.
@@ -5441,15 +5422,6 @@ fn start_photo_export_single(
         });
     }
     {
-        let page = main_stack.visible_child_name();
-        metadata_panel.set_navigation_view(page.as_deref().unwrap_or(""), filter.get());
-        let panel_for_workspace = metadata_panel.clone();
-        let filter_for_workspace = filter.clone();
-        main_stack.connect_visible_child_notify(move |stack| {
-            let page = stack.visible_child_name();
-            panel_for_workspace
-                .set_navigation_view(page.as_deref().unwrap_or(""), filter_for_workspace.get());
-        });
         let panel_for_navigation = Rc::downgrade(&metadata_panel);
         let filter_for_navigation = filter.clone();
         // Several sidebar destinations share the photos stack page. Observe

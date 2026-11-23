@@ -2445,18 +2445,8 @@
         let gallery = gallery.clone();
         let grid_zoom_syncing = grid_zoom_syncing.clone();
         main_stack.connect_visible_child_notify(move |stack| {
-            use crate::infobar::presentation::InfoBarPage;
+            // The InfoBar follows the page through FrontMirrors.
             let visible = stack.visible_child_name();
-            let page = match visible.as_deref() {
-                Some("photos") => InfoBarPage::Photos,
-                Some("collage") => InfoBarPage::Collage,
-                _ => InfoBarPage::Other,
-            };
-            if page == InfoBarPage::Photos {
-                let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
-                info.show_gallery_selection(count, &photos);
-            }
-            info.set_page(page);
 
             // A collage -> photos transition may follow an Edit detour, where
             // the shared slider was in the 0..100 photo-zoom range. Restore

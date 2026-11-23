@@ -17,6 +17,9 @@
 # surface is in front (viewer, editor, collage, date overview, gallery):
 #   - src/window/front_surface.rs (FrontSurface::current, gallery_covered,
 #     date_browser). The viewer's own tests are viewer internals.
+# The InfoBar, Properties and the metadata panel follow the front through
+# one listener (candidate 13):
+#   - src/window/front_mirrors.rs (FrontMirrors)
 # The page change handlers keep reading their own `stack` / `root` argument
 # until the events stage; `matches!` over page names is not matched (the
 # ALLOW table cannot hold a "|"), so review those by hand.
@@ -39,6 +42,7 @@ PROPERTIES_OWNER='src/window/properties_widgets.rs'
 INFOBAR_OWNER='src/infobar.rs'
 MARKS_OWNER='src/window/photo_mark_commands.rs'
 FRONT_OWNER='src/window/front_surface.rs'
+MIRRORS_OWNER='src/window/front_mirrors.rs'
 ID='[[:alnum:]_]'
 
 # id ~ owner files (space separated) ~ extended regex ~ what it guards
@@ -53,6 +57,7 @@ RULES=(
   "photo-marks~$MARKS_OWNER src/library_home_tests.rs~(db::set_(favorite|favorite_for_photos|rating_for_photos)|\.update_(favorites|ratings))\(~favourite and rating writes (library and gallery objects)"
   "current-photo~$INFOBAR_OWNER~(^|[^[:alnum:]_])selected_(photo|for)$ID*(\.replace\(|\.borrow_mut\(|:[[:space:]]*Rc<)~a hand-kept copy of the current photo (read InfoBar::current_photo)"
   "front-surface~$FRONT_OWNER src/lightbox/tests.rs~((lightbox$ID*|viewer)\.root\.is_visible\(\)|visible_child_name\(\)\.as_deref\(\)[[:space:]]*[!=]=[[:space:]]*Some\(\"(edit|photos|collage)\"\)|\.is_overview_visible\(\)|date_browser_overview)~which surface is in front (ask FrontSurface)"
+  "front-mirrors~$MIRRORS_OWNER $INFOBAR_OWNER src/window/metadata_panel.rs~(\.(set_lightbox_shown|set_date_overview_shown|set_page_allowed|set_lightbox_open|set_navigation_view)\(|(^|[^[:alnum:]_])info$ID*\.set_page\()~front inputs of the InfoBar, Properties and metadata panel (FrontMirrors)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -74,7 +79,8 @@ ALLOW=(
   "src/window/library.rs|db::set_rating_for_photos(&connection, &[2], 0).unwrap();|test fixture (rating filter refresh tests)"
   "src/window/library.rs|db::set_rating_for_photos(&connection, &[1], 3).unwrap();|test fixture (rating filter refresh tests)"
   "src/window/build.rs|&& stack.visible_child_name().as_deref() == Some(\"photos\")|page change handler (candidate 12 decision 1: until the events stage)"
-  "src/window/build.rs|metadata_panel.set_lightbox_open(lightbox.root.is_visible());|initial state of the viewer change handler (candidate 12 decision 1)"
+  "src/window/build.rs|panel_for_close.set_lightbox_open(false);|viewer close_started: the fade begins before the front changes (candidate 13 decision 7)"
+  "src/window/build.rs|panel.set_navigation_view(page.as_deref().unwrap_or(\"\"), filter_for_navigation.get());|metadata panel tick: follows filter changes within one page (candidate 13 decision 1)"
   "src/window/layout.rs|dock.set_visible(false);|KNOWN EXCEPTION: compact_dock visible-notify immersive guard predates SidebarWidgets"
 )
 
@@ -141,7 +147,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -208,7 +214,8 @@ RS
     main_split_for_drag_update.set_max_sidebar_width(width);
     if front.current() == Front::Lightbox {
                 && stack.visible_child_name().as_deref() == Some("photos")
-        metadata_panel.set_lightbox_open(lightbox.root.is_visible());
+            panel_for_close.set_lightbox_open(false);
+            panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
 RS
   local entry apath atext
   for entry in "${ALLOW[@]}"; do
@@ -260,7 +267,11 @@ self_test() {
     "photos page check in build.rs|src/window/build.rs|let photos_page = stack.visible_child_name().as_deref() != Some(\"photos\");|front-surface"
     "overview read in toolbar.rs|src/window/toolbar.rs|if browser.is_overview_visible() {|front-surface"
     "overview cell back in build.rs|src/window/build.rs|let date_browser_overview_visible = Rc::new(Cell::new(false));|front-surface"
-    "second allowed handler line|src/window/build.rs|metadata_panel.set_lightbox_open(lightbox.root.is_visible());|front-surface"
+    "InfoBar viewer fed in build.rs|src/window/build.rs|info.set_lightbox_shown(root.is_visible());|front-mirrors"
+    "InfoBar page fed in layout.rs|src/window/layout.rs|info.set_page(page);|front-mirrors"
+    "overview fed in build.rs|src/window/build.rs|info.set_date_overview_shown(true);|front-mirrors"
+    "Properties page fed in build.rs|src/window/build.rs|properties_for_page.set_page_allowed(allowed);|front-mirrors"
+    "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"
   )
   local entry name file line rule
   for entry in "${cases[@]}"; do

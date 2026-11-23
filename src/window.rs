@@ -24,10 +24,9 @@ use layout_settle::{
     should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
 };
 
-// Stage 1 of candidate 9: only its tests call it until the adapter (stage 3)
-// moves the mark controls onto it; remove this allowance then.
-#[allow(dead_code)]
+mod photo_mark_commands;
 mod photo_marks;
+use photo_marks::{MarkChange, MarkIntent};
 mod properties_presentation;
 mod properties_widgets;
 use properties_presentation::PropertiesSurface;
@@ -661,6 +660,8 @@ struct PhotoActionContext {
     filter: Rc<Cell<sidebar::SidebarFilter>>,
     search: Rc<RefCell<String>>,
     sort: Rc<Cell<PhotoSort>>,
+    /// The toolbar rating filter, for photo mark commands.
+    rating_filter: Rc<Cell<RatingFilter>>,
     info: Rc<InfoBar>,
     selected_photo: Rc<RefCell<Option<crate::photo_object::PhotoObject>>>,
     lightbox: Weak<Lightbox>,

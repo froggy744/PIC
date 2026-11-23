@@ -1262,6 +1262,27 @@ impl Gallery {
         }
     }
 
+    /// The selected photos' objects in selection order (in Collage mode,
+    /// the ticked photos). Photo mark commands read marks from these.
+    pub fn selected_photos(&self) -> Vec<PhotoObject> {
+        let ids = self.selected_photo_ids(None);
+        let photos = self.current_photos.borrow();
+        let by_id = photos
+            .iter()
+            .map(|photo| (photo.id(), photo))
+            .collect::<std::collections::HashMap<_, _>>();
+        ids.iter().filter_map(|id| by_id.get(id).map(|photo| (*photo).clone())).collect()
+    }
+
+    pub fn collage_selection_mode(&self) -> bool {
+        self.collage_selection_mode.get()
+    }
+
+    /// Whether the current view still holds the photo, e.g. after a rebuild.
+    pub fn contains_photo(&self, id: i64) -> bool {
+        self.current_photos.borrow().iter().any(|photo| photo.id() == id)
+    }
+
     /// Lightweight sample for the selection strip; never decode thousands of photos.
     pub fn selected_photo_preview(&self, limit: usize) -> (usize, Vec<PhotoObject>) {
         let selection = self.selection.selection();

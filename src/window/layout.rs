@@ -573,8 +573,8 @@
                     favorite,
                 ) {
                     Ok(_) => {
-                        
                         refresh_photo_actions_grid(&context);
+                        photo_mark_commands::reload_shown_photo(&context);
                         (context.on_unavailable)();
                     }
                     Err(error) => {

@@ -564,59 +564,23 @@ fn show_photo_context_menu(
         });
     }
 
-    let favorite_label = if photo.favorite() {
-        "Remove from Favourites"
-    } else {
-        "Add to Favourites"
+    // Name what the click does: a selection is unfavourited only when every
+    // photo in it already is a favourite.
+    let favorite_label = match photo_mark_commands::preview(
+        &context,
+        MarkIntent::ToggleFavorite,
+        &photo,
+    ) {
+        Some(MarkChange::Favorite(false)) => "Remove from Favourites",
+        _ => "Add to Favourites",
     };
     let favorite = add_action(favorite_label);
     let favorite_context = context.clone();
-    let favorite_selection = selection_provider.clone();
     let favorite_photo = photo.clone();
     let dismiss_for_favorite = dismiss_menu.clone();
-    favorite.connect_clicked(move |button| {
-        let target = !favorite_photo.favorite();
-        let ids = favorite_selection();
-        for id in &ids {
-            if let Err(error) = db::set_favorite(&favorite_context.connection.borrow(), *id, target)
-            {
-                show_error(
-                    button.upcast_ref(),
-                    "Could not update favourite",
-                    &error.to_string(),
-                );
-                return;
-            }
-        }
-
+    favorite.connect_clicked(move |_| {
         dismiss_for_favorite();
-        favorite_photo.set_favorite(target);
-        let selected_id = favorite_context
-            .selected_photo
-            .borrow()
-            .as_ref()
-            .map(|selected| selected.id());
-        if selected_id == Some(favorite_photo.id()) {
-            favorite_context
-                .selected_photo
-                .replace(Some(favorite_photo.clone()));
-            favorite_context.info.photo_updated(&favorite_photo);
-        }
-        if let Some(gallery) = favorite_context.gallery.borrow().upgrade() {
-            if favorite_context.filter.get() == sidebar::SidebarFilter::Favorites && !target {
-                gallery.remove_photos(&ids);
-                if let Some(lightbox) = favorite_context.lightbox.upgrade() {
-                    if lightbox.root.is_visible() {
-                        for id in &ids {
-                            lightbox.remove_photo(*id);
-                        }
-                    }
-                }
-            } else {
-                gallery.update_favorites(&ids, target);
-            }
-        }
-        refresh_favorite_sidebar(&favorite_context);
+        photo_mark_commands::run(&favorite_context, MarkIntent::ToggleFavorite, &favorite_photo);
     });
 
     if let sidebar::SidebarFilter::Album(album_id) = context.filter.get() {
@@ -1470,16 +1434,6 @@ fn refresh_photo_actions_grid(context: &PhotoActionContext) {
         context.sort.get(),
         &gallery,
     );
-}
-
-fn refresh_favorite_sidebar(context: &PhotoActionContext) {
-    let Some(sidebar) = context.sidebar.borrow().as_ref().cloned() else {
-        return;
-    };
-    let Ok(counts) = db::sidebar_counts(&context.connection.borrow()) else {
-        return;
-    };
-    sidebar::refresh_library_counts(&sidebar, counts, &context.on_unavailable);
 }
 
 fn properties_panel_scroll_y(panel: &gtk::Box) -> Option<f64> {
@@ -2386,6 +2340,7 @@ mod photo_actions_tests {
                 field: SortField::DateTaken,
                 direction: SortDirection::Descending,
             })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: Rc::new(InfoBar::new()),
             selected_photo: Rc::new(RefCell::new(Some(destination.clone()))),
             lightbox: std::rc::Weak::new(),
@@ -2482,6 +2437,7 @@ mod photo_actions_tests {
                 field: SortField::DateTaken,
                 direction: SortDirection::Descending,
             })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: Rc::new(InfoBar::new()),
             selected_photo: Rc::new(RefCell::new(None)),
             lightbox: std::rc::Weak::new(),
@@ -2564,6 +2520,7 @@ mod photo_actions_tests {
                 field: SortField::DateTaken,
                 direction: SortDirection::Descending,
             })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: Rc::new(InfoBar::new()),
             selected_photo: Rc::new(RefCell::new(None)),
             lightbox: std::rc::Weak::new(),

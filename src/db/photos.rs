@@ -903,8 +903,6 @@ pub fn set_rating_for_photos(connection: &Connection, ids: &[i64], rating: i32) 
 
 /// Mark or unmark several photos in one transaction: on error none change.
 /// Trashed photos are skipped, like `set_rating_for_photos`.
-// Candidate 9: the photo mark adapter (stage 3) is the caller; remove then.
-#[allow(dead_code)]
 pub fn set_favorite_for_photos(connection: &Connection, ids: &[i64], favorite: bool) -> Result<()> {
     if ids.is_empty() {
         return Ok(());

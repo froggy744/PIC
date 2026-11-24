@@ -1,5 +1,5 @@
 //! Files handed to PIC by the desktop ("Open With PIC" in the file manager,
-//! or `pic-rs photo.jpg`) open in the viewer.
+//! `pic-rs photo.jpg`, or dragged onto the window) open in the viewer.
 //!
 //! A single file opens among the other photos of its folder, so the arrow
 //! keys browse the folder as they do in an image viewer. Several files open
@@ -20,6 +20,8 @@ use rusqlite::Connection;
 use crate::db;
 use crate::lightbox::Lightbox;
 use crate::photo_object::PhotoObject;
+
+use super::front_surface::{Front, FrontSurface};
 
 /// Window action that opens its `as` (array of paths) parameter in the viewer.
 pub(crate) const ACTION: &str = "open-paths";
@@ -139,12 +141,21 @@ pub(crate) fn viewer_after_edit(
     }
 }
 
-/// Install the window's `open-paths` action. Paths that arrive before the
-/// window is mapped (a cold start from the file manager) open once it is.
-pub(crate) fn install(
+/// Whether files dropped on the window open while `front` is in front.
+/// The editor and the collage keep their work: a drop there would cover
+/// (and, for an outside photo, silently end) the session in progress.
+pub(super) fn accepts_drop(front: Front) -> bool {
+    !matches!(front, Front::Editor | Front::Collage)
+}
+
+/// Install the window's `open-paths` action and its file drop target.
+/// Paths that arrive before the window is mapped (a cold start from the
+/// file manager) open once it is.
+pub(super) fn install(
     window: &adw::ApplicationWindow,
     lightbox: &Rc<Lightbox>,
     connection: &Rc<RefCell<Connection>>,
+    front: &Rc<FrontSurface>,
 ) {
     let pending: Rc<RefCell<Option<Vec<PathBuf>>>> = Rc::new(RefCell::new(None));
     let open: Rc<dyn Fn(Vec<PathBuf>)> = {
@@ -176,6 +187,7 @@ pub(crate) fn install(
     }
     let action = gio::SimpleAction::new(ACTION, Some(glib::VariantTy::STRING_ARRAY));
     let window_for_action = window.downgrade();
+    let open_for_action = open.clone();
     action.connect_activate(move |_, parameter| {
         let Some(paths) = parameter.and_then(|parameter| parameter.get::<Vec<String>>()) else {
             return;
@@ -185,12 +197,42 @@ pub(crate) fn install(
             .upgrade()
             .is_some_and(|window| window.is_mapped());
         if mapped {
-            open(paths);
+            open_for_action(paths);
         } else {
             pending.replace(Some(paths));
         }
     });
     window.add_action(&action);
+
+    // Photos dragged from the file manager (or any app offering files).
+    // Drops without a local path, such as a web image, are refused.
+    let drop = gtk::DropTarget::new(
+        gtk::gdk::FileList::static_type(),
+        gtk::gdk::DragAction::COPY,
+    );
+    {
+        let front = Rc::downgrade(front);
+        drop.connect_accept(move |_, _| {
+            front
+                .upgrade()
+                .is_some_and(|front| accepts_drop(front.current()))
+        });
+    }
+    drop.connect_drop(move |_, value, _, _| {
+        let Ok(files) = value.get::<gtk::gdk::FileList>() else {
+            return false;
+        };
+        let paths = local_paths(&files.files())
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        if viewer_paths(&paths).0.is_empty() {
+            return false;
+        }
+        open(paths);
+        true
+    });
+    window.add_controller(drop);
 }
 
 /// The local paths of files handed to the application; files without a
@@ -302,6 +344,23 @@ mod tests {
         let (photos, index) = viewer_after_edit(viewer, edited, None);
         assert_eq!(photos.len(), 3);
         assert_eq!(index, 1);
+    }
+
+    #[test]
+    fn drops_open_the_viewer_except_over_the_editor_and_the_collage() {
+        for front in [
+            Front::Gallery,
+            Front::Lightbox,
+            Front::DateOverview,
+            Front::LibraryHome,
+            Front::Albums,
+            Front::FoldersOverview,
+            Front::None,
+        ] {
+            assert!(accepts_drop(front), "{front:?}");
+        }
+        assert!(!accepts_drop(Front::Editor));
+        assert!(!accepts_drop(Front::Collage));
     }
 
     #[test]

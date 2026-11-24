@@ -5834,7 +5834,7 @@ fn start_photo_export_single(
         });
     }
     window.add_action(&getting_started);
-    open_files::install(&window, &lightbox, &connection);
+    open_files::install(&window, &lightbox, &connection, &front);
     {
         let owner = Rc::downgrade(&onboarding);
         let presented = Rc::new(Cell::new(false));

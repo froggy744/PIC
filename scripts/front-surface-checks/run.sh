@@ -21,7 +21,10 @@
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-out="$repo/reports/front-surface-checks/$(date -u +%Y%m%dT%H%M%SZ)"
+# Other check sets reuse this setup: PIC_CHECKS names their checks.py and
+# PIC_CHECK_REPORTS their reports folder (scripts/library-switch-checks).
+checks="${PIC_CHECKS:-$here/checks.py}"
+out="$repo/reports/${PIC_CHECK_REPORTS:-front-surface-checks}/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$out"
 export PIC_CHECK_OUT="$out"
 
@@ -53,7 +56,7 @@ HOME="$out/portal" XDG_CONFIG_HOME="$out/portal/config" XDG_DATA_HOME="$out/port
         python3 "$1"; status=$?
         kill "$registry" "$launcher" 2>/dev/null
         exit "$status"
-    ' _ "$here/checks.py" 2>&1 | tee "$out/checks.log" | grep -E '^(PASS|FAIL|SUMMARY)|Error'
+    ' _ "$checks" 2>&1 | tee "$out/checks.log" | grep -E '^(PASS|FAIL|SUMMARY)|Error'
 status=${PIPESTATUS[0]}
 kill "$wm" "$xvfb" 2>/dev/null
 echo "Output: $out"

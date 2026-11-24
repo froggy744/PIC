@@ -123,10 +123,17 @@ def log_lines(since=0, needle=""):
 def log_len():
     return len(LOG.read_text(errors="replace").splitlines()) if LOG.exists() else 0
 
-def start():
-    if XDG.exists():
-        shutil.rmtree(XDG)
-    shutil.copytree(RUN / "xdg", XDG)
+def start(prepare=None, fresh=True, size=("1600", "1000")):
+    """Copy the harness library, let `prepare(XDG)` adjust the copy (e.g.
+    register a second library), then launch PIC and size its window. With
+    `fresh=False` PIC restarts on the library a previous start left; `size`
+    is the window size it is given."""
+    if fresh:
+        if XDG.exists():
+            shutil.rmtree(XDG)
+        shutil.copytree(RUN / "xdg", XDG)
+        if prepare is not None:
+            prepare(XDG)
     env = os.environ.copy()
     env.update({"HOME": str(XDG / "home"), "XDG_CONFIG_HOME": str(XDG / "config"),
                 "XDG_DATA_HOME": str(XDG / "data"), "XDG_CACHE_HOME": str(XDG / "cache"),
@@ -149,7 +156,7 @@ def start():
             time.sleep(0.5)
     if win is None:
         raise TimeoutError("PIC window")
-    x("windowsize", "--sync", win, "1600", "1000")
+    x("windowsize", "--sync", win, *size)
     x("windowmove", "--sync", win, "0", "0")
     x("windowfocus", "--sync", win)
     time.sleep(3)

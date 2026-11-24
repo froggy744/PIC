@@ -525,16 +525,13 @@ impl Stage {
         // Clip nested images/rotated prints to this monitor's window bounds.
         root.set_overflow(gtk::Overflow::Hidden);
         root.add_css_class("screensaver-stage");
-        let cinema = if style.single_photo() && style != Style::CoverFlow {
-            Some(Cinema::new(&root))
-        } else {
-            None
-        };
-        let coverflow = (style == Style::CoverFlow).then(|| CoverFlow::new(&root));
+        let stage = style.spec().stage;
+        let cinema = (stage == super::Stage::Cinema).then(|| Cinema::new(&root));
+        let coverflow = (stage == super::Stage::CoverFlow).then(|| CoverFlow::new(&root));
         // Flying Photos is one custom widget that paints every print in a
         // single GSK snapshot (see flying.rs); the Player's slots are the
         // photographs that are in the air.
-        let flying = (style == Style::Flying).then(|| {
+        let flying = (stage == super::Stage::Flying).then(|| {
             let flying = Flying::new();
             root.put(&flying.canvas, 0.0, 0.0);
             flying
@@ -544,11 +541,7 @@ impl Stage {
         // materialised in small frame-clock batches.
         // Picture Pile and Floating Prints paint themselves in one custom
         // widget (see pile.rs).
-        let pile = matches!(
-            style,
-            Style::PicturePile | Style::Floating | Style::PhotoDrift
-        )
-        .then(|| {
+        let pile = (stage == super::Stage::Prints).then(|| {
             let pile = Pile::new(count, transition, style);
             root.put(&pile.canvas, 0.0, 0.0);
             pile

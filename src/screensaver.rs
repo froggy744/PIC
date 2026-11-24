@@ -18,6 +18,7 @@ use crate::{db, edit, thumbnail};
 mod gpu;
 mod matrix;
 mod style;
+use style::{Background, Stage, Style};
 
 const STYLE_KEY: &str = "screensaver-style";
 const TERMINAL_STYLE_KEY: &str = "screensaver-terminal-style";
@@ -53,145 +54,6 @@ const HQ_PATIENCE: Duration = Duration::from_secs(3);
 
 fn tile_count_setting_key(style: Style) -> String {
     format!("{MOSAIC_TILES_KEY}-{}", style.key())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Style {
-    Mosaic,
-    Grid,
-    PicturePile,
-    Floating,
-    IPhoto,
-    Fade,
-    CoverFlow,
-    Flying,
-    PhotoDrift,
-    Surprise,
-    MatrixRain,
-    MatrixKenBurns,
-}
-impl Style {
-    fn default_tiles(self) -> usize {
-        match self {
-            Self::Flying | Self::PhotoDrift => 30,
-            Self::Floating => 12,
-            _ => DEFAULT_MOSAIC_TILES,
-        }
-    }
-    const CHOICES: [Self; 12] = [
-        Self::Mosaic,
-        Self::Grid,
-        Self::PicturePile,
-        Self::Floating,
-        Self::IPhoto,
-        Self::Fade,
-        Self::CoverFlow,
-        Self::Flying,
-        Self::PhotoDrift,
-        Self::Surprise,
-        Self::MatrixRain,
-        Self::MatrixKenBurns,
-    ];
-    fn from_saved(v: &str) -> Self {
-        match v {
-            "grid" => Self::Grid,
-            "pile" => Self::PicturePile,
-            "floating" => Self::Floating,
-            "iphoto" => Self::IPhoto,
-            "fade" => Self::Fade,
-            "coverflow" => Self::CoverFlow,
-            "flying" => Self::Flying,
-            "photo-drift" => Self::PhotoDrift,
-            "surprise" => Self::Surprise,
-            "matrix-rain" => Self::MatrixRain,
-            "matrix-ken-burns" => Self::MatrixKenBurns,
-            _ => Self::Mosaic,
-        }
-    }
-    fn key(self) -> &'static str {
-        match self {
-            Self::Mosaic => "mosaic",
-            Self::Grid => "grid",
-            Self::PicturePile => "pile",
-            Self::Floating => "floating",
-            Self::IPhoto => "iphoto",
-            Self::Fade => "fade",
-            Self::CoverFlow => "coverflow",
-            Self::Flying => "flying",
-            Self::PhotoDrift => "photo-drift",
-            Self::Surprise => "surprise",
-            Self::MatrixRain => "matrix-rain",
-            Self::MatrixKenBurns => "matrix-ken-burns",
-        }
-    }
-    fn surprise_choices(terminal: bool) -> Vec<Self> {
-        Self::CHOICES
-            .into_iter()
-            .filter(|style| *style != Self::Surprise && style.available(terminal))
-            .collect()
-    }
-    fn resolved(self, terminal: bool) -> Self {
-        if self != Self::Surprise {
-            return self;
-        }
-        let choices = Self::surprise_choices(terminal);
-        choices[random_seed() as usize % choices.len()]
-    }
-    fn single_photo(self) -> bool {
-        matches!(
-            self,
-            Self::IPhoto | Self::Fade | Self::CoverFlow | Self::MatrixRain | Self::MatrixKenBurns
-        )
-    }
-    fn matrix(self) -> bool {
-        matches!(self, Self::MatrixRain | Self::MatrixKenBurns)
-    }
-    fn uses_photos(self) -> bool {
-        self != Self::MatrixRain
-    }
-    // Easter egg: follow the white rabbit; Matrix modes only appear in Terminal.
-    fn available(self, terminal: bool) -> bool {
-        terminal || !self.matrix()
-    }
-    fn for_theme(self, terminal: bool) -> Self {
-        if self.available(terminal) {
-            self
-        } else {
-            Self::Mosaic
-        }
-    }
-    fn label(self) -> &'static str {
-        match self {
-            Self::Mosaic => "Mosaic",
-            Self::Grid => "Changing Grid",
-            Self::PicturePile => "Picture Pile",
-            Self::Floating => "Floating Prints",
-            Self::IPhoto => "Ken Burns",
-            Self::Fade => "Fullscreen Fade",
-            Self::CoverFlow => "Cover Flow",
-            Self::Flying => "Flying Photos",
-            Self::PhotoDrift => "Photo Drift",
-            Self::Surprise => "Surprise Me",
-            Self::MatrixRain => "Matrix Rain",
-            Self::MatrixKenBurns => "Matrix Ken Burns",
-        }
-    }
-    fn subtitle(self) -> &'static str {
-        match self {
-            Self::Mosaic => "Square Picasa photo wall",
-            Self::Grid => "Full-screen tiled gallery",
-            Self::PicturePile => "Layered scrapbook photographs",
-            Self::Floating => "Scattered framed pictures",
-            Self::IPhoto => "Cinematic pan and zoom",
-            Self::Fade => "Gentle full-screen slideshow",
-            Self::CoverFlow => "Browse photos as a reflective Cover Flow",
-            Self::Flying => "Photographs fly in from the distance and past you",
-            Self::PhotoDrift => "Photos gently drift across a scattered, layered field",
-            Self::Surprise => "Random style on launch",
-            Self::MatrixRain => "Animated Katakana rain on black, no photos",
-            Self::MatrixKenBurns => "Green photo with fixed Katakana streams and slow pan and zoom",
-        }
-    }
 }
 
 /// Picasa-specific tile transitions; iPhoto always uses its cinematic fade.
@@ -396,11 +258,9 @@ fn parse_background_colour(value: &str) -> Option<[u8; 3]> {
 }
 
 fn default_background_colour(style: Style, widget: &gtk::Widget) -> [u8; 3] {
-    match style {
-        Style::Flying => [230, 230, 224],
-        Style::PhotoDrift => [235, 232, 224],
-        Style::MatrixRain | Style::MatrixKenBurns => [0, 4, 1],
-        Style::CoverFlow => crate::coverflow::lookup_theme_color(widget, "theme_bg_color")
+    match style.spec().background {
+        Background::Colour(colour) => colour,
+        Background::Theme => crate::coverflow::lookup_theme_color(widget, "theme_bg_color")
             .or_else(|| crate::coverflow::lookup_theme_color(widget, "window_bg_color"))
             .map(|colour| {
                 [
@@ -414,7 +274,6 @@ fn default_background_colour(style: Style, widget: &gtk::Widget) -> [u8; 3] {
             } else {
                 [247, 247, 247]
             }),
-        _ => [9, 11, 16],
     }
 }
 
@@ -1196,11 +1055,7 @@ pub fn open(
                 tiles_for_style.value().round().max(1.0) as usize,
             );
         }
-        let limit = match style {
-            Style::PicturePile | Style::Floating | Style::PhotoDrift => PRINT_MAX_SLOTS,
-            Style::Flying => FLY_MAX_SLOTS,
-            _ => MAX_WALL_TILES,
-        };
+        let limit = style.spec().stage.tile_limit();
         tiles_for_style.set_range(1.0, limit as f64);
         tiles_for_style.clear_marks();
         tiles_for_style.add_mark(
@@ -1508,55 +1363,7 @@ fn start_decode_worker(
                 let Some(photo) = slides.get(index) else {
                     continue;
                 };
-                let dimensions = match style {
-                    Style::Mosaic | Style::Grid => {
-                        let edge = if mosaic_tiles <= 6 {
-                            1536
-                        } else if mosaic_tiles <= 12 {
-                            1152
-                        } else if mosaic_tiles <= 30 {
-                            896
-                        } else if mosaic_tiles <= 100 {
-                            640
-                        } else if mosaic_tiles <= 400 {
-                            384
-                        } else if mosaic_tiles <= 1600 {
-                            192
-                        } else if mosaic_tiles <= 6400 {
-                            96
-                        } else {
-                            48
-                        };
-                        (edge, edge)
-                    }
-                    Style::PicturePile | Style::Floating | Style::PhotoDrift => {
-                        // Prints are small when there are many of them.
-                        if mosaic_tiles <= 6 {
-                            (1920, 1280)
-                        } else if mosaic_tiles <= 16 {
-                            (1280, 860)
-                        } else if mosaic_tiles <= 36 {
-                            (960, 640)
-                        } else {
-                            (640, 430)
-                        }
-                    }
-                    // Cover Flow shows a few large cards on screen, so decode
-                    // source photos at display resolution instead of using
-                    // the low-resolution preview path.
-                    Style::CoverFlow => (2560, 1600),
-                    // Flying prints grow until they pass the lens, so they are
-                    // decoded close to display size. The flight field is capped,
-                    // which keeps the number of live textures bounded.
-                    Style::Flying => {
-                        if mosaic_tiles <= 6 {
-                            (1920, 1280)
-                        } else {
-                            (1440, 960)
-                        }
-                    }
-                    _ => (2560, 1600),
-                };
+                let dimensions = style.spec().stage.decode_size(mosaic_tiles);
                 let started = Instant::now();
                 // Only the original worker may probe a source. In particular,
                 // a local-looking path can itself be a stalled NFS mount.
@@ -1685,14 +1492,7 @@ impl Player {
         shuffle_tiles: bool,
         mosaic_tiles: usize,
     ) -> Self {
-        let desired_slots = match style {
-            Style::Mosaic | Style::Grid => mosaic_tiles.clamp(1, MAX_WALL_TILES),
-            Style::PicturePile | Style::Floating | Style::PhotoDrift => {
-                mosaic_tiles.clamp(1, PRINT_MAX_SLOTS)
-            }
-            Style::Flying => mosaic_tiles.clamp(1, FLY_MAX_SLOTS),
-            _ => 0,
-        };
+        let desired_slots = style.spec().stage.slots(mosaic_tiles);
         let slots = if count == 0 {
             Vec::new()
         } else {

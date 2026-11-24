@@ -8,7 +8,7 @@
 //! and the size originals are decoded at. How each style *draws* lives with
 //! its renderer (`gpu/pile.rs`, `gpu/cinema.rs`, the Settings preview).
 
-use super::{Style, DEFAULT_MOSAIC_TILES, FLY_MAX_SLOTS, MAX_WALL_TILES, PRINT_MAX_SLOTS};
+use super::{DEFAULT_MOSAIC_TILES, FLY_MAX_SLOTS, MAX_WALL_TILES, PRINT_MAX_SLOTS};
 
 /// The family of renderer a style plays on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +49,104 @@ pub(super) struct StyleSpec {
     pub terminal_only: bool,
 }
 
+/// A screensaver style, as offered in Settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Style {
+    Mosaic,
+    Grid,
+    PicturePile,
+    Floating,
+    IPhoto,
+    Fade,
+    CoverFlow,
+    Flying,
+    PhotoDrift,
+    Surprise,
+    MatrixRain,
+    MatrixKenBurns,
+}
+
 impl Style {
+    pub(super) const CHOICES: [Self; 12] = [
+        Self::Mosaic,
+        Self::Grid,
+        Self::PicturePile,
+        Self::Floating,
+        Self::IPhoto,
+        Self::Fade,
+        Self::CoverFlow,
+        Self::Flying,
+        Self::PhotoDrift,
+        Self::Surprise,
+        Self::MatrixRain,
+        Self::MatrixKenBurns,
+    ];
+
+    pub(super) fn default_tiles(self) -> usize {
+        self.spec().default_tiles
+    }
+
+    /// The style saved under `key`; an unknown key is Mosaic.
+    pub(super) fn from_saved(key: &str) -> Self {
+        Self::CHOICES
+            .into_iter()
+            .find(|style| style.spec().key == key)
+            .unwrap_or(Self::Mosaic)
+    }
+
+    pub(super) fn key(self) -> &'static str {
+        self.spec().key
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        self.spec().label
+    }
+
+    pub(super) fn subtitle(self) -> &'static str {
+        self.spec().subtitle
+    }
+
+    pub(super) fn surprise_choices(terminal: bool) -> Vec<Self> {
+        Self::CHOICES
+            .into_iter()
+            .filter(|style| *style != Self::Surprise && style.available(terminal))
+            .collect()
+    }
+
+    pub(super) fn resolved(self, terminal: bool) -> Self {
+        if self != Self::Surprise {
+            return self;
+        }
+        let choices = Self::surprise_choices(terminal);
+        choices[super::random_seed() as usize % choices.len()]
+    }
+
+    /// One photo at a time (Cover Flow and the cinema styles).
+    pub(super) fn single_photo(self) -> bool {
+        matches!(self.spec().stage, Stage::Cinema | Stage::CoverFlow)
+    }
+
+    pub(super) fn matrix(self) -> bool {
+        self.spec().terminal_only
+    }
+
+    pub(super) fn uses_photos(self) -> bool {
+        self.spec().uses_photos
+    }
+
+    // Easter egg: follow the white rabbit; Matrix modes only appear in Terminal.
+    pub(super) fn available(self, terminal: bool) -> bool {
+        terminal || !self.spec().terminal_only
+    }
+
+    pub(super) fn for_theme(self, terminal: bool) -> Self {
+        if self.available(terminal) {
+            self
+        } else {
+            Self::Mosaic
+        }
+    }
+
     /// One row per style, so a new style is one line here.
     #[rustfmt::skip]
     pub(super) fn spec(self) -> StyleSpec {

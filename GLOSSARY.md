@@ -11,8 +11,9 @@ Domain terms used in code, docs and reviews. Use these names exactly; code paths
 | **Presentation target** | The short-edge size, in device pixels, a gallery thumbnail is decoded at for the current zoom (128/192/256/384 px buckets, or full size). Cached thumbnails remember the target they were decoded for. |
 | **Stand-in** | A cached thumbnail decoded for a smaller zoom, shown while the sharper one loads, so a zoom-in never blanks a tile. |
 | **Settled tile** | A tile showing its thumbnail at a size good enough for the current presentation target. Pumps skip settled tiles. |
-| **Scrub** | A direct scrollbar drag that moves more than about a page per event; it switches the pumps to model-derived targets. |
-| **Settle** | The moment scrolling stops (about 90-110 ms of quiet), when visible tiles are refreshed and prefetch runs within the RAM cache budget. |
+| **Scrub** | A direct scrollbar drag that moves more than about a page per event; it switches the pumps to model-derived targets. Decided by `ScrollMotion::moved` (`window/scroll_motion.rs`). |
+| **Settle** | The moment scrolling stops (90 ms of quiet after a scrub in All Photos, 110 ms after any move in Folders), when visible tiles are refreshed and prefetch runs within the RAM cache budget. Only the newest `SettleTicket` settles. |
+| **Gallery scroll motion** | What a gallery does while its scroller moves: scrub, target sampling, settle and the per-frame thumbnail pump. One module, `window/scroll_motion.rs`, with one `ScrollMotionSpec` per gallery (`ALL_PHOTOS`, `FOLDERS`). The wheel glide (`WheelGlide`) is separate. |
 | **Recipe** | `EditRecipe`: the non-destructive edit description applied at display and export time. Originals are never modified. |
 | **Sidebar mode** | Which left navigation the user chose: the **full sidebar** inside the split view, or the **compact rail**. Persisted as `compact-sidebar-enabled`. Code: `SidebarMode`. |
 | **Compact rail** | The narrow icon navigation (44-300 px) beside the split view, in its own dock. Labels appear from 90 px. |

@@ -475,7 +475,7 @@ The owner felt the wheel glide had changed since it went in (`88eb5d38`). It has
 - Owner script ok, `--self-test` ok.
 - GUI harness `viewer` (debug binary via `PIC_GUI_APP`): 19 PASS, 0 FAIL.
 - Real app, `main` (`a4ccba2e`) against the branch, Xvfb, a copy of the FB-All library (9,283 photos), Folders and All Photos: 6 wheel clicks, a 12-click burst, then a scrollbar drag down and back. The same glide (durations, 960/1920 px), the same scrub (13 or 22-23 multi-page jumps, the same final position), frame pacing within noise, and every thumbnail loaded after the settle in both builds.
-- `scripts/front-surface-checks/run.sh`: BLOCKED, not run to completion. The check script's own AT-SPI client aborted ("Couldn't connect to accessibility bus": D-Bus activation of `org.a11y.Bus` was denied in this environment) before any check ran; PIC itself started normally. This candidate does not touch the front surface or the zoom slider it checks.
+- `scripts/front-surface-checks/run.sh`: 16/16 passed. The first runs aborted before any check: its AT-SPI bus launcher did not bring the bus up, and the clients' D-Bus activation fallback was denied. Fixed by starting the launcher with `ATSPI_DBUS_IMPLEMENTATION=dbus-daemon`, as `scripts/test-gui.sh` does.
 
 **For the owner:** drag the scrollbar in Folders and in All Photos. If one feels better, matching the other is a change to `ALL_PHOTOS` or `FOLDERS` in `src/window/scroll_motion.rs`.
 

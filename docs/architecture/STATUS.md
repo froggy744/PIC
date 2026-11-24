@@ -32,7 +32,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 2 | Sidebar presentation state machine | Strong | merged | merge `03a2fcb3` (`refactor/sidebar-presentation`) | `src/window/sidebar_presentation.rs` (pure), `src/window/sidebar_widgets.rs` (GTK adapter) |
 | 3 | Properties inspector as one owner | Strong | merged | merge `2da69bae` (`refactor/properties-presentation`) | `src/window/properties_presentation.rs` (pure), `src/window/properties_widgets.rs` (GTK adapter) |
 | 4 | InfoBar decides what it shows | Strong | merged | merge `9756c44f` (`refactor/infobar-presentation`) | `src/infobar_presentation.rs` (pure), `src/infobar.rs` (GTK adapter) |
-| 5 | One gallery scroll-motion module | Worth exploring | awaiting merge (`refactor/gallery-scroll-motion`) | none yet | `src/window/scroll_motion.rs` (pure), `src/window/build.rs` (GTK adapter); wheel glide stays in `src/window/navigation.rs` |
+| 5 | One gallery scroll-motion module | Worth exploring | merged | merge `c169225e` (`refactor/gallery-scroll-motion`) | `src/window/scroll_motion.rs` (pure), `src/window/build.rs` (GTK adapter); wheel glide stays in `src/window/navigation.rs` |
 | 6 | Zoom slider router | Worth exploring | merged | merge `9c9c64ff` (`refactor/zoom-slider-router`) | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
@@ -426,7 +426,7 @@ Merged 2026-11-23 (`4f47d674`) by the owner (the agent's merge was refused by th
 - Restore the incoming library's viewport after a switch (decision 6): wait for the stream build as `populate_startup_gallery` does, then apply the activated-photo / anchor rule.
 - A scripted check that exits through the Exit confirmation and switches library would cover the wiring.
 
-### 5 · Gallery scroll motion (started 2026-11-24)
+### 5 · Gallery scroll motion (merged 2026-11-24)
 Branch `refactor/gallery-scroll-motion`.
 
 #### What "feels off" turned out to be (2026-11-24, no code changed)
@@ -483,7 +483,7 @@ The owner felt the wheel glide had changed since it went in (`88eb5d38`). It has
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).
 
 Open candidates, in order:
-1. **5 · One gallery scroll-motion module.** Awaiting merge (2026-11-24, see its section). The owner is testing glide scrolling because "something feels off"; nothing from 12, 13, 6 or 11 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
+1. ~~5 · One gallery scroll-motion module.~~ Merged 2026-11-24 (`c169225e`). The owner dragged both scrollbars and is happy with them; the gallery scrollbar also got a browser-style handle (`feat/gallery-scrollbar-look`, merge `92693c80`). The owner is testing glide scrolling because "something feels off"; nothing from 12, 13, 6 or 11 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
 2. 11's follow-up (restore the incoming library's viewport after a switch; a scripted Exit / library-switch check), when the owner wants it.
 3. 7 (diagnostic only) and 8 (speculative) can wait, or be closed with a note.
 

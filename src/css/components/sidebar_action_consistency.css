@@ -45,6 +45,25 @@
     box-shadow: none;
 }
 
+/* GTK and theme padding must not move the common leading edge. Leave
+ * the vertical spacing and the opposite edge under theme control. */
+.navigation-sidebar .sidebar-section-list:dir(ltr),
+.navigation-sidebar row.sidebar-navigation-row:dir(ltr),
+.navigation-sidebar .sidebar-primary-section-heading:dir(ltr),
+.navigation-sidebar .sidebar-section-heading-title:dir(ltr) {
+    margin-left: 0;
+    padding-left: 0;
+    border-left-width: 0;
+}
+.navigation-sidebar .sidebar-section-list:dir(rtl),
+.navigation-sidebar row.sidebar-navigation-row:dir(rtl),
+.navigation-sidebar .sidebar-primary-section-heading:dir(rtl),
+.navigation-sidebar .sidebar-section-heading-title:dir(rtl) {
+    margin-right: 0;
+    padding-right: 0;
+    border-right-width: 0;
+}
+
 /* Navigation rows form one list; only the selected row receives a fill. */
 .navigation-sidebar row.sidebar-navigation-row:not(:selected) {
     background: transparent;
@@ -61,6 +80,7 @@
 }
 .navigation-sidebar row.sidebar-navigation-row .sidebar-count,
 .navigation-sidebar row.sidebar-navigation-row .folder-count {
+    min-width: 0;
     opacity: 0.85;
     font-variant-numeric: tabular-nums;
 }

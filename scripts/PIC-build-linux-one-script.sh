@@ -325,6 +325,17 @@ find_gdk_pixbuf_svg_loader() {
         -print -quit 2>/dev/null || true
 }
 
+# GLib's dconf GSettings backend is a GIO plugin, not a link dependency. The
+# AppImage's bundled GLib cannot load the host's copy (it is built for the
+# host's GLib), and without one GSettings falls back to an empty keyfile:
+# GTK then never sees the desktop's settings, e.g. GNOME's button layout, and
+# the title bar loses its minimize/maximize buttons (v1.0.3).
+find_dconf_gio_module() {
+    find /usr/lib /usr/lib64 /lib /lib64 -type f \
+        -path '*/gio/modules/libdconfsettings.so' \
+        -print -quit 2>/dev/null || true
+}
+
 find_gdk_pixbuf_query_loaders() {
     local candidate
     for candidate in gdk-pixbuf-query-loaders gdk-pixbuf-query-loaders-64; do
@@ -406,6 +417,10 @@ collect_host_dependencies() {
         fi
         # SVG icon decoding differs by distro generation. Ubuntu 24.04 uses
         # the classic GdkPixbuf librsvg plugin; current Fedora uses glycin-svg.
+        if [[ "$BUILD_TARGET" != flatpak && -z "$(find_dconf_gio_module)" ]]; then
+            add_host_dependency "GSettings dconf backend (desktop settings in the AppImage)" \
+                dconf dconf-gsettings-backend
+        fi
         if [[ -z "$(find_gdk_pixbuf_svg_loader)" && -z "$(find_glycin_svg_loader)" ]]; then
             add_host_dependency "SVG image loader" glycin-loaders librsvg2-common
         fi
@@ -931,6 +946,10 @@ if [ -n "\${APPDIR:-}" ] && [ -d "\$APPDIR/usr/share/$BIN_NAME" ]; then
     # on hosts whose installed icon theme differs from the build environment.
     export XDG_DATA_DIRS="\$PREFIX/share:\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
+    # The bundled GLib reads the desktop's settings (GNOME's title-bar button
+    # layout among them) through the dconf backend shipped beside it.
+    export GIO_EXTRA_MODULES="\$PREFIX/lib/gio/modules\${GIO_EXTRA_MODULES:+:\$GIO_EXTRA_MODULES}"
+
     # SVG support is a dynamically loaded GdkPixbuf plugin. Generate its cache
     # at launch time so the module path contains the real AppImage mount point.
     PIXBUF_QUERY="\$PREFIX/libexec/pic-gdk-pixbuf-query-loaders"
@@ -1207,6 +1226,19 @@ build_appimage() {
         find "$appdir" -type f -name 'libsmbclient.so*' -print -quit | grep -q . || \
             die "AppImage is missing the libsmbclient runtime required by direct PIC SMB"
     fi
+
+    # Desktop settings (button layout, fonts, colour scheme, ...) reach the
+    # bundled GLib through its own dconf GSettings backend; see
+    # find_dconf_gio_module. The launcher adds this folder to GIO_EXTRA_MODULES.
+    dconf_module="$(find_dconf_gio_module)"
+    [[ -n "$dconf_module" && -s "$dconf_module" ]] || \
+        die "GLib dconf GSettings backend (libdconfsettings.so) is missing; install dconf / dconf-gsettings-backend."
+    mkdir -p "$appdir/usr/lib/gio/modules"
+    cp -f "$dconf_module" "$appdir/usr/lib/gio/modules/libdconfsettings.so"
+    APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
+        --appdir "$appdir" \
+        --deploy-deps-only "$appdir/usr/lib/gio/modules/libdconfsettings.so"
+    ok "Bundled GLib dconf settings backend: $dconf_module"
 
     resource_root="$appdir/usr/share/$BIN_NAME"
     copy_runtime_resources "$resource_root"

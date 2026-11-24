@@ -31,6 +31,7 @@ mod front_mirrors;
 mod zoom_slider;
 mod zoom_slider_widgets;
 mod session_state;
+mod scroll_motion;
 use session_state::{
     record as record_session, Entry as SessionEntry, LeaveSnapshot, SessionChange, SessionState,
     Viewport, WindowSize,

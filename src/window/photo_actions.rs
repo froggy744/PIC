@@ -420,6 +420,10 @@ fn show_photo_context_menu(
         })
     };
 
+    // A photo opened from outside the library has no catalogue row, so the
+    // library actions (albums, marks, edit recipes, rename, delete) cannot
+    // apply to it; they are hidden for it below.
+    let outside_library = photo.is_outside_library();
     let open = add_action("Open");
     let edit = add_action("Edit Photo…");
     let open_with = add_action("Open With…");
@@ -579,7 +583,9 @@ fn show_photo_context_menu(
         photo_mark_commands::run(&favorite_context, MarkIntent::ToggleFavorite, &favorite_photo);
     });
 
-    if let sidebar::SidebarFilter::Album(album_id) = context.filter.get() {
+    if let (false, sidebar::SidebarFilter::Album(album_id)) =
+        (outside_library, context.filter.get())
+    {
         // The cover only makes sense inside an album, and always applies to
         // the album being viewed: no album list, no cross-album choices.
         let already_cover = db::albums(&context.connection.borrow())
@@ -735,7 +741,7 @@ fn show_photo_context_menu(
         }
     });
 
-    if let Some(open_in_folder) = open_in_folder {
+    if let Some(open_in_folder) = open_in_folder.clone() {
         let folder_id = photo.folder_id();
         let navigate_to_folder = context.navigate_to_folder.clone();
         let dismiss_menu_for_folder = dismiss_menu.clone();
@@ -873,6 +879,30 @@ fn show_photo_context_menu(
     copy.set_sensitive(false);
     move_file.set_sensitive(false);
     print.set_sensitive(false);
+
+    if outside_library {
+        for action in [
+            Some(&add_to_album),
+            Some(&collage),
+            Some(&copy_edits),
+            Some(&paste_edits),
+            Some(&paste_overlays),
+            Some(&reset_edits),
+            Some(&favorite),
+            open_in_folder.as_ref(),
+            Some(&copy),
+            Some(&move_file),
+            Some(&rename),
+            Some(&print),
+            Some(&delete),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            action.set_visible(false);
+        }
+        hide_orphan_separators(&menu);
+    }
 
     let photo_for_rename = photo.clone();
     let anchor_for_rename = anchor.clone();
@@ -1015,6 +1045,27 @@ fn show_photo_context_menu(
                 glib::ControlFlow::Continue
             }
         });
+    }
+}
+
+/// Hide each separator that no longer divides two visible groups.
+fn hide_orphan_separators(menu: &gtk::Box) {
+    let mut item_before = false;
+    let mut pending: Option<gtk::Widget> = None;
+    let mut child = menu.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if widget.is::<gtk::Separator>() {
+            widget.set_visible(false);
+            if item_before {
+                pending.get_or_insert(widget);
+            }
+        } else if widget.is_visible() {
+            if let Some(separator) = pending.take() {
+                separator.set_visible(true);
+            }
+            item_before = true;
+        }
     }
 }
 

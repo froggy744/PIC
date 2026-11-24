@@ -547,6 +547,32 @@ mod window_tests {
             .query_row("SELECT COUNT(*) FROM photos", [], |row| row.get(0))
             .unwrap();
         assert_eq!(catalogued, 0, "editing added the photo to the library");
+
+        // The outside photo's context menu hides whole groups; only the
+        // separators between two visible groups stay.
+        let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let item = |visible: bool| {
+            let button = gtk::Button::with_label("item");
+            button.set_visible(visible);
+            menu.append(&button);
+        };
+        let separator = || menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        item(true);
+        separator();
+        item(false);
+        separator();
+        item(true);
+        separator();
+        item(false);
+        crate::window::hide_orphan_separators(&menu);
+        let shown = descendants(menu.upcast_ref())
+            .into_iter()
+            .skip(1)
+            .filter(|widget| widget.parent().as_ref() == Some(menu.upcast_ref()))
+            .filter(|widget| widget.is_visible())
+            .map(|widget| widget.is::<gtk::Separator>())
+            .collect::<Vec<_>>();
+        assert_eq!(shown, [false, true, false], "item, separator, item");
         window.close();
         let _ = std::fs::remove_dir_all(&directory);
     }

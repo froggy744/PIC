@@ -168,11 +168,10 @@ const REFRESH_GATE_KEY: &str = "picasa-sidebar-refresh-gate";
 const ALBUM_PANE_ANIMATION_MS: u32 = 250;
 const STARTUP_VISIBLE_ALBUM_ROWS: usize = 5;
 const SIDEBAR_ROOT_INSET: i32 = 10;
-const SIDEBAR_CONTENT_INSET: i32 = 5;
-// The root's 10px outer inset and this 6px start inset form the common baseline.
-const SIDEBAR_ALIGNMENT_INSET: i32 = 6;
+const SIDEBAR_CONTENT_INSET: i32 = 10;
+// The root's 10px outer inset and this 10px start inset form the common baseline.
+const SIDEBAR_ALIGNMENT_INSET: i32 = 10;
 const SIDEBAR_ITEM_SPACING: i32 = 6;
-const SIDEBAR_ICON_EXTRA_SPACING: i32 = 2;
 const SIDEBAR_HEADING_SPACING: i32 = 4;
 const SIDEBAR_COUNT_WARNING_SPACING: i32 = 6;
 const SIDEBAR_HEADER_MARGIN_TOP: i32 = 6;
@@ -2834,7 +2833,6 @@ fn append_folder_row(
     let icon_overlay = gtk::Overlay::new();
     icon_overlay.add_css_class("sidebar-icon-slot");
     icon_overlay.set_size_request(SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE);
-    icon_overlay.set_margin_end(SIDEBAR_ICON_EXTRA_SPACING);
     icon_overlay.set_halign(gtk::Align::Center);
     icon_overlay.set_valign(gtk::Align::Center);
     icon_overlay.set_hexpand(false);
@@ -3336,7 +3334,6 @@ fn sidebar_icon_slot_with_size(icon_name: &str, icon_size: i32) -> gtk::Box {
     let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     slot.add_css_class("sidebar-icon-slot");
     slot.set_size_request(SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE);
-    slot.set_margin_end(SIDEBAR_ICON_EXTRA_SPACING);
     slot.set_halign(gtk::Align::Center);
     slot.set_valign(gtk::Align::Center);
 
@@ -3995,7 +3992,7 @@ mod tests {
             let label = heading.first_child().and_downcast::<gtk::Label>().unwrap();
             assert_eq!(
                 label.compute_bounds(&sidebar).unwrap().x(),
-                16.0,
+                20.0,
                 "{}",
                 label.text()
             );
@@ -4045,12 +4042,12 @@ mod tests {
             );
             if nested {
                 assert!(
-                    icon_bounds.x() > 16.0 && title_bounds.x() > 42.0,
+                    icon_bounds.x() > 20.0 && title_bounds.x() > 44.0,
                     "{filter:?}"
                 );
             } else {
-                assert_eq!(icon_bounds.x(), 16.0, "{filter:?}");
-                assert_eq!(title_bounds.x(), 42.0, "{filter:?}");
+                assert_eq!(icon_bounds.x(), 20.0, "{filter:?}");
+                assert_eq!(title_bounds.x(), 44.0, "{filter:?}");
             }
         }
         window.close();

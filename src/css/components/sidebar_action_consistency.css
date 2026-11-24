@@ -78,7 +78,7 @@
     opacity: 0.65;
 }
 .navigation-sidebar .sidebar-navigation-icon {
-    opacity: 0.65;
+    opacity: 0.75;
 }
 .navigation-sidebar paned.sidebar-section-paned > separator {
     border-top-color: alpha(currentColor, 0.13);

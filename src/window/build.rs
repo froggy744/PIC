@@ -5257,28 +5257,23 @@ fn start_photo_export_single(
             if restored.replace(true) {
                 return;
             }
-            if initial_filter == sidebar::SidebarFilter::Albums {
-                let adjustment = albums_home.vadjustment();
-                glib::timeout_add_local_once(Duration::from_millis(50), move || {
-                    let upper = (adjustment.upper() - adjustment.page_size())
-                        .max(adjustment.lower());
-                    adjustment
-                        .set_value(saved_albums_scroll.clamp(adjustment.lower(), upper));
-                });
-            } else if !last_activated_for_restore
-                .get()
-                .is_some_and(|photo_id| gallery.restore_activated_photo(photo_id))
-            {
-                if let Some(photo_id) = saved_view_photo_id {
-                    gallery.restore_view(photo_id, saved_view_scroll);
-                }
-            }
+            restore_saved_viewport(
+                &gallery,
+                &albums_home,
+                SavedViewport {
+                    filter: initial_filter,
+                    activated_photo: last_activated_for_restore.get(),
+                    anchor_photo: saved_view_photo_id,
+                    gallery_scroll: saved_view_scroll,
+                    albums_scroll: saved_albums_scroll,
+                },
+            );
             recovery_requested.set(true);
         })
     };
     let startup_generation = REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     populate_startup_gallery(
-        startup_gallery, startup_photos_for_idle,
+        startup_gallery, gallery_scroll_stack.clone().upcast(), startup_photos_for_idle,
         Rc::new(move || REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == startup_generation),
         restore_startup_view,
     );
@@ -6701,6 +6696,8 @@ fn start_photo_export_single(
         let stop_scan = stop_scan.clone();
         let settings_window = settings_window_for_switch.clone();
         let start_next_scan = start_next_scan.clone();
+        let albums_home = albums_home.clone();
+        let gallery_surface: gtk::Widget = gallery_scroll_stack.clone().upcast();
         Rc::new(move |id: &str| -> Result<(), String> {
             let switch_started = Instant::now();
             let target = db::known_libraries()
@@ -6890,6 +6887,29 @@ fn start_photo_export_single(
                 for root in roots {scan_job.borrow_mut().enqueue_network_import(root,true);}
                 start_next_scan();
             }
+            // Come back to where this library was left, as startup does, once
+            // its gallery is built; any navigation before then wins.
+            let saved = SavedViewport {
+                filter: new_filter,
+                activated_photo: new_session.activated_photo,
+                anchor_photo: new_session.view_anchor,
+                gallery_scroll: new_session.gallery_scroll,
+                albums_scroll: new_session.albums_scroll,
+            };
+            let generation = REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+            let gallery_for_restore = gallery.clone();
+            let albums_home = albums_home.clone();
+            when_gallery_built(
+                gallery.clone(),
+                gallery_surface.clone(),
+                Rc::new(move || {
+                    REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation
+                }),
+                Rc::new(move || {
+                    restore_saved_viewport(&gallery_for_restore, &albums_home, saved);
+                    crate::startup_trace::mark("switch_viewport_restored", Some(switch_started));
+                }),
+            );
             crate::startup_trace::mark("switch_complete", Some(switch_started));
             Ok(())
         })

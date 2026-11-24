@@ -422,9 +422,18 @@ Session keys (`src/window.rs:60-70`, plus `compact-sidebar-width-v2` local to `l
 
 Merged 2026-11-23 (`4f47d674`) by the owner (the agent's merge was refused by the auto-mode permission check).
 
-**Follow-up after merge:**
-- Restore the incoming library's viewport after a switch (decision 6): wait for the stream build as `populate_startup_gallery` does, then apply the activated-photo / anchor rule.
-- A scripted check that exits through the Exit confirmation and switches library would cover the wiring.
+**Follow-up after merge:** done 2026-11-24 on `fix/library-switch-viewport`, see "11 follow-up" below.
+
+#### 11 follow-up · Library switch viewport (2026-11-24)
+- **Switching back restores the viewport** (decision 6's follow-up): after a switch, `when_gallery_built` waits for the incoming gallery, then `restore_saved_viewport` applies startup's rule (albums scroll; else the last opened photo; else the anchor photo and scroll). Any navigation before then wins (`REFRESH_GENERATION`). Startup uses the same two functions (`window/startup.rs`).
+- **Found by the new check, also on `main`:**
+  - A restart came back about 200 px off in All Photos: the restore ran after the build but before the split gave the sidebar its width, and the grid then reflowed from 4 to 3 columns. The restore now also waits until the gallery surface keeps one width for 100 ms; on screen it lands about a third of a second later, in the right place.
+  - In Folders, focusing the anchor tile scrolled it fully into view when the saved viewport cut it off (up to a tile away). The saved scroll is applied again after focus (`Gallery::restore_view`).
+- **Scripted check** `scripts/library-switch-checks/run.sh` (reuses the front-surface driver, which gained a prepare hook, a restart on the same library and a window size): two libraries (A, and B with A's first 8 photos so a switch really rebuilds the gallery), scroll A, switch to B in Settings > Libraries, back to A, one wheel click, Exit through the confirmation, restart, Exit again. The saved scroll is read from A's database: 320 on leaving, 480 (320 restored + 160) after Exit, 480 after the restart.
+  - On `main`: All Photos switch-back FAIL (268), restart FAIL (+204 px); Folders switch-back FAIL (333 for 480).
+  - On the branch: 5/5 in All Photos and 5/5 in Folders (`PIC_CHECK_VIEW=folder:1`).
+- Verification: unit suite 996 passed, 0 failed; startup display tests pass; owner script and `--self-test` ok; GUI harness `viewer` 19/19. GUI harness `editing` 27 PASS, **2 FAIL** (Editor Undo/Redo sequences, Editor Reset; 29 checks, against 39/39 on 2026-11-23). This branch changes no editor code; the run against `main` for comparison was interrupted (BLOCKED), so whether the failures are older is **still open**: run `PIC_GUI_SUITE=editing scripts/test-gui.sh` on `main`.
+- The owner checked the switch and restart by hand and merged ("all work").
 
 ### 5 · Gallery scroll motion (merged 2026-11-24)
 Branch `refactor/gallery-scroll-motion`.
@@ -479,18 +488,18 @@ The owner felt the wheel glide had changed since it went in (`88eb5d38`). It has
 
 **For the owner:** drag the scrollbar in Folders and in All Photos. If one feels better, matching the other is a change to `ALL_PHOTOS` or `FOLDERS` in `src/window/scroll_motion.rs`.
 
-### Next (updated 2026-11-23, after 11 merged)
+### Next (updated 2026-11-24, after 5 and the 11 follow-up)
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).
 
 Open candidates, in order:
-1. ~~5 · One gallery scroll-motion module.~~ Merged 2026-11-24 (`c169225e`). The owner dragged both scrollbars and is happy with them; the gallery scrollbar also got a browser-style handle (`feat/gallery-scrollbar-look`, merge `92693c80`). The owner is testing glide scrolling because "something feels off"; nothing from 12, 13, 6 or 11 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
-2. 11's follow-up (restore the incoming library's viewport after a switch; a scripted Exit / library-switch check), when the owner wants it.
-3. 7 (diagnostic only) and 8 (speculative) can wait, or be closed with a note.
+1. ~~5 · One gallery scroll-motion module.~~ Merged 2026-11-24 (`c169225e`). The owner dragged both scrollbars and is happy with them; the gallery scrollbar also got a browser-style handle (`feat/gallery-scrollbar-look`, merge `92693c80`).
+2. ~~11's follow-up~~ (library switch viewport, Exit / library-switch check). Done 2026-11-24, see "11 follow-up" under 11.
+3. **8 · Screensaver style descriptor.** Next: the owner chose it (2026-11-24). 7 (diagnostic only) can wait, or be closed with a note.
 
 How the owner works with these (from this session):
 - Each candidate: investigation, then decisions recorded here, then a branch, staged commits (pure module test-first, GTK adapter, owner rule, docs), then verification, merge with a merge commit, push.
 - Verification each time: unit and display tests (Xvfb, one process each), `cargo check`, owner script and `--self-test`, GUI harness `viewer` and `editing` (`scripts/test-gui.sh`), and the scripted interaction checks `scripts/front-surface-checks/run.sh` (`cargo run`, private display, copy of a harness library) on the branch and on `main` (`PIC_CHECK_REPO=<main worktree>`).
-- The owner has allowed deciding open questions autonomously and merging and pushing on success; say what was decided and why. Since 2026-11-23 the agent's `git merge` into `main` is refused by the auto-mode permission check: push the branch and hand the merge to the owner.
+- The owner has allowed deciding open questions autonomously and merging and pushing on success; say what was decided and why. On 2026-11-23 the agent's `git merge` into `main` was refused by the auto-mode permission check; on 2026-11-24 it worked after the owner said "merge push". Ask when unsure.
 - Pre-existing, not caused by today's work: two metadata panel display tests fail on `main` too (see 13); 3 dead-code warnings in `db/photos.rs` and `grid/honeycomb_raster.rs`.
 
 ### 7 · Editor preview plan

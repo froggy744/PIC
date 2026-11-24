@@ -1040,6 +1040,9 @@ impl Gallery {
             self.selection.select_item(position as u32, true);
             self.sectioned_folder.set_scroll_y(scroll_y);
             self.sectioned_folder.focus_photo(photo_id);
+            // Focusing scrolls a tile the saved viewport cuts off fully into
+            // view; the saved scroll is where the user left, so it wins.
+            self.sectioned_folder.set_scroll_y(scroll_y);
             return;
         }
         let folder_list_mode = self.group_mode.get() == GroupMode::Folder

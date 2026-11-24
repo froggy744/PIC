@@ -2,6 +2,7 @@
 /// caching the full loaded prefix after every startup append.
 fn populate_startup_gallery(
     gallery: Rc<grid::Gallery>,
+    surface: gtk::Widget,
     photos: Rc<Vec<db::Photo>>,
     is_current: Rc<dyn Fn() -> bool>,
     restore: Rc<dyn Fn()>,
@@ -14,18 +15,92 @@ fn populate_startup_gallery(
         }
         gallery.replace_while_current(&photos, is_current.clone());
         crate::startup_trace::mark("gallery_population_scheduled", Some(populate_started));
-        glib::timeout_add_local(Duration::from_millis(20), move || {
-            if !is_current() {
-                return glib::ControlFlow::Break;
-            }
-            if gallery.stream_building() {
-                return glib::ControlFlow::Continue;
-            }
-            restore();
-            crate::startup_trace::mark("gallery_population_restored", Some(populate_started));
-            glib::ControlFlow::Break
-        });
+        when_gallery_built(
+            gallery,
+            surface,
+            is_current,
+            Rc::new(move || {
+                restore();
+                crate::startup_trace::mark("gallery_population_restored", Some(populate_started));
+            }),
+        );
     });
+}
+
+/// How long the gallery surface's width must hold before a viewport is
+/// restored on it.
+const GALLERY_WIDTH_SETTLE: Duration = Duration::from_millis(100);
+
+/// Run `then` once the gallery has finished building the photos it was just
+/// given and its surface (`surface`, whose width sets the columns) has kept
+/// one width for `GALLERY_WIDTH_SETTLE`, unless the view changed first. A
+/// viewport restored on a half-built model is lost; one restored before the
+/// split gives the sidebar its width lands on other photos once the columns
+/// reflow (at startup that happens after the build).
+fn when_gallery_built(
+    gallery: Rc<grid::Gallery>,
+    surface: gtk::Widget,
+    is_current: Rc<dyn Fn() -> bool>,
+    then: Rc<dyn Fn()>,
+) {
+    const POLL: Duration = Duration::from_millis(20);
+    let mut width = None;
+    let mut held = Duration::ZERO;
+    glib::timeout_add_local(POLL, move || {
+        if !is_current() {
+            return glib::ControlFlow::Break;
+        }
+        if gallery.stream_building() {
+            return glib::ControlFlow::Continue;
+        }
+        let now = surface.width();
+        if width.replace(now) == Some(now) {
+            held += POLL;
+        } else {
+            held = Duration::ZERO;
+        }
+        if held < GALLERY_WIDTH_SETTLE {
+            return glib::ControlFlow::Continue;
+        }
+        then();
+        glib::ControlFlow::Break
+    });
+}
+
+/// A library's saved viewport, as left on close or before a library switch.
+#[derive(Clone, Copy)]
+struct SavedViewport {
+    filter: sidebar::SidebarFilter,
+    /// The photo last opened in the viewer.
+    activated_photo: Option<i64>,
+    /// The photo at the viewport centre, with the gallery scroll.
+    anchor_photo: Option<i64>,
+    gallery_scroll: f64,
+    albums_scroll: f64,
+}
+
+/// Bring a saved viewport back on a built gallery: the albums scroll on
+/// Albums; otherwise the last opened photo when this view holds it, else the
+/// anchor photo and its scroll. Startup and a library switch both use it.
+fn restore_saved_viewport(
+    gallery: &grid::Gallery,
+    albums_home: &gtk::ScrolledWindow,
+    saved: SavedViewport,
+) {
+    if saved.filter == sidebar::SidebarFilter::Albums {
+        let adjustment = albums_home.vadjustment();
+        glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            let upper = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+            adjustment.set_value(saved.albums_scroll.clamp(adjustment.lower(), upper));
+        });
+    } else if !saved
+        .activated_photo
+        .is_some_and(|photo_id| gallery.restore_activated_photo(photo_id))
+    {
+        if let Some(photo_id) = saved.anchor_photo {
+            gallery.restore_view(photo_id, saved.gallery_scroll);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -62,6 +137,7 @@ mod startup_gallery_tests {
         let target = restored.clone();
         populate_startup_gallery(
             gallery.clone(),
+            gtk::Box::new(gtk::Orientation::Vertical, 0).upcast(),
             photos.clone(),
             Rc::new(|| true),
             Rc::new(move || target.set(target.get() + 1)),
@@ -91,6 +167,7 @@ mod startup_gallery_tests {
         let target = restored.clone();
         populate_startup_gallery(
             gallery.clone(),
+            gtk::Box::new(gtk::Orientation::Vertical, 0).upcast(),
             photos,
             Rc::new(move || check.get()),
             Rc::new(move || target.set(true)),

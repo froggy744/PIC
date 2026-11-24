@@ -7,6 +7,7 @@
 #
 # Usage, from the repository root:
 #   scripts/library-switch-checks/run.sh
+#   PIC_CHECK_VIEW=folder:1 scripts/library-switch-checks/run.sh   (the Folder surface)
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIC_CHECKS="$here/checks.py" PIC_CHECK_REPORTS=library-switch-checks \
     exec "$here/../front-surface-checks/run.sh"

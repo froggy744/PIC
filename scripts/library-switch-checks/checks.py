@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "front-surface-
 from drv import *
 
 WHEEL_PX = 160  # GALLERY_WHEEL_STEP_PX
+# The view both libraries open on: "all" (All Photos) by default, or e.g.
+# "folder:1" (the harness sample folder) for the Folder surface.
+VIEW = os.environ.get("PIC_CHECK_VIEW", "all")
 results = []
 
 
@@ -41,7 +44,7 @@ def prepare(xdg):
     with sqlite3.connect(a) as c:
         c.execute("DELETE FROM settings WHERE key IN ('last-activated-photo-id', "
                   "'last-view-photo-id', 'last-view-scroll')")
-        for key, value in (("last-view", "all"), ("grid-thumbnail-size", "300")):
+        for key, value in (("last-view", VIEW), ("grid-thumbnail-size", "300")):
             c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", (key, value))
     with sqlite3.connect(a) as source, sqlite3.connect(b) as copy:
         source.backup(copy)

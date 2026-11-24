@@ -32,7 +32,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 2 | Sidebar presentation state machine | Strong | merged | merge `03a2fcb3` (`refactor/sidebar-presentation`) | `src/window/sidebar_presentation.rs` (pure), `src/window/sidebar_widgets.rs` (GTK adapter) |
 | 3 | Properties inspector as one owner | Strong | merged | merge `2da69bae` (`refactor/properties-presentation`) | `src/window/properties_presentation.rs` (pure), `src/window/properties_widgets.rs` (GTK adapter) |
 | 4 | InfoBar decides what it shows | Strong | merged | merge `9756c44f` (`refactor/infobar-presentation`) | `src/infobar_presentation.rs` (pure), `src/infobar.rs` (GTK adapter) |
-| 5 | One gallery scroll-motion module | Worth exploring | open | none | `src/window/navigation.rs`, `src/window/build.rs` (scrub, settle, pump), `src/smooth_scroll.rs` |
+| 5 | One gallery scroll-motion module | Worth exploring | awaiting merge (`refactor/gallery-scroll-motion`) | none yet | `src/window/scroll_motion.rs` (pure), `src/window/build.rs` (GTK adapter); wheel glide stays in `src/window/navigation.rs` |
 | 6 | Zoom slider router | Worth exploring | merged | merge `9c9c64ff` (`refactor/zoom-slider-router`) | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
@@ -426,11 +426,64 @@ Merged 2026-11-23 (`4f47d674`) by the owner (the agent's merge was refused by th
 - Restore the incoming library's viewport after a switch (decision 6): wait for the stream build as `populate_startup_gallery` does, then apply the activated-photo / anchor rule.
 - A scripted check that exits through the Exit confirmation and switches library would cover the wiring.
 
+### 5 · Gallery scroll motion (started 2026-11-24)
+Branch `refactor/gallery-scroll-motion`.
+
+#### What "feels off" turned out to be (2026-11-24, no code changed)
+The owner felt the wheel glide had changed since it went in (`88eb5d38`). It has not:
+- `src/window/navigation.rs` and `src/grid/navigation.rs` are identical between `88eb5d38` and `a4ccba2e`; both galleries install the glide at the same places.
+- The only new per-frame work since is the header fold tick (`toolbar.rs:656`, from `9d1a29eb`).
+- Both builds were driven in Xvfb on a copy of the FB-All library (6 single clicks, then a 12-click burst; `PIC_WHEEL_GLIDE_TRACE` + `PIC_SCROLL_FRAME_TRACE`). Folders and All Photos produced the same glide durations (224 ms single, 224 to 360 ms in a burst), the same per-click step curve and the same frame pacing within noise.
+- The owner's own trace on the real 75 Hz desktop (210 clicks, 866 glide frames): median 13.34 ms, 12 frames over 20 ms. The owner concluded it was their eyes. Nothing from it feeds this candidate.
+
+#### Investigation (at `a4ccba2e`)
+- Wheel glide: already one engine (`WheelGlide`, tested) for both galleries. Out of scope.
+- Scrub, sampling, settle and the per-frame thumbnail pump are written twice inline in `build.rs` (All Photos `:1979-2209`, Folders `:2211-2468`), with different numbers and slightly different rules:
+
+| Rule | All Photos | Folders |
+|---|---|---|
+| A move starts a scrub when it is at least | 1.75 pages, and at least 900 px | 1.60 pages |
+| Scrub target sampling | in the value-changed handler, at most every 40 ms | in the frame pump, at most every 50 ms (`FolderScrollbarScrub`) |
+| Settle | 90 ms after the last move, only while scrubbing | 110 ms after every move |
+| Pump frames after a move | 12 | 12 |
+| Visible tiles queued per pump frame | 128 | 96 |
+| Warm-ahead | every 3rd pump frame, 6 quiet pump frames after a scrub move | every 3rd pump frame, never while scrubbing |
+| Warm-ahead tiles | 32 | 24 |
+| Scrub target tiles | 192 | 192 |
+
+- `src/smooth_scroll.rs` (274 lines) has no callers. Its `PIC_SMOOTH_SCROLL*` variables are tuning knobs of that dead module and are not in `docs/development/TRACING.md`.
+- Only `FolderScrollbarScrub` (`window.rs:559`) has a test.
+
+#### Decisions (2026-11-24, owner)
+1. **Move, don't retune.** Each gallery keeps its own numbers and rules from the table above; nothing the owner sees or feels changes. With both specs side by side in one file, the owner compares scrollbar drags by hand and decides later whether to match them.
+2. **Module:** `src/window/scroll_motion.rs`, pure. A `ScrollMotionSpec` per gallery (`ALL_PHOTOS`, `FOLDERS`) holds every number in the table; a `ScrollMotion` owns the scrub state, the sample coalescing, the settle ticket, the pump countdown and the warm-ahead cadence. `FolderScrollbarScrub` and its test fold into it.
+3. **Seam:** the `ScrollMotion` interface (`moved`, `take_sample`, `settle`, `frame`), tested with table tests on plain values. The GTK work (queues, refreshes, timers, the Folder whole-pixel snap, the settle prefetch loop) stays in `build.rs` as the adapter.
+4. **One rule change, invisible:** both galleries start a scrub at "at least" the threshold (Folders used "more than"). They differ only when a move is exactly 1.60 pages to the pixel.
+5. **Delete `src/smooth_scroll.rs`.**
+
+#### Stages
+1. Pure `scroll_motion.rs`, test-first (9 table tests: scrub start per spec, scrub lasts until settle, newest settle ticket only, settle per gallery, 12-frame pump, warm-ahead cadence, warm-ahead during a scrub, sampling on moves / in the pump). Done: `9a5aeb9c`.
+2. Both galleries' value-changed handlers, pump ticks and settle timers ask `ScrollMotion`; `FolderScrollbarScrub` folded in. Done: `e91bc8be`.
+3. `src/smooth_scroll.rs` removed. Done: `bb8c85e9`.
+4. Owner rule `scroll-motion` (no hand-kept scrub cells, pump constants or scrub sampler outside the module) with 3 self-test cases. Done: `acff6213`.
+5. Docs: `AUDIT-INDEX.md` (module row, scroll pipeline, Quick-Edit rows), `GLOSSARY.md` (Scrub, Settle, Gallery scroll motion). Done: `e4ebb222`.
+
+#### Verification (2026-11-24, at `e4ebb222`)
+- `cargo check --locked`: only the 3 known dead-code warnings.
+- Unit suite once: 996 passed, 0 failed (220 ignored).
+- Display (Xvfb 1920×1080, one process each): `grid_wheel_glides_whole_pixels_to_an_exact_stop`, `grid_scrub_settle_preserves_loaded_thumbnail_after_ram_eviction`, `photo_wall_view_toggle_keeps_selection_and_grid_scroll_context`, `sectioned_folder_visibility_uses_scroll_viewport_not_content_height`: all pass.
+- Owner script ok, `--self-test` ok.
+- GUI harness `viewer` (debug binary via `PIC_GUI_APP`): 19 PASS, 0 FAIL.
+- Real app, `main` (`a4ccba2e`) against the branch, Xvfb, a copy of the FB-All library (9,283 photos), Folders and All Photos: 6 wheel clicks, a 12-click burst, then a scrollbar drag down and back. The same glide (durations, 960/1920 px), the same scrub (13 or 22-23 multi-page jumps, the same final position), frame pacing within noise, and every thumbnail loaded after the settle in both builds.
+- `scripts/front-surface-checks/run.sh`: 16/16 passed. The first runs aborted before any check: its AT-SPI bus launcher did not bring the bus up, and the clients' D-Bus activation fallback was denied. Fixed by starting the launcher with `ATSPI_DBUS_IMPLEMENTATION=dbus-daemon`, as `scripts/test-gui.sh` does.
+
+**For the owner:** drag the scrollbar in Folders and in All Photos. If one feels better, matching the other is a change to `ALL_PHOTOS` or `FOLDERS` in `src/window/scroll_motion.rs`.
+
 ### Next (updated 2026-11-23, after 11 merged)
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).
 
 Open candidates, in order:
-1. **5 · One gallery scroll-motion module.** Next. The owner is testing glide scrolling because "something feels off"; nothing from 12, 13, 6 or 11 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
+1. **5 · One gallery scroll-motion module.** Awaiting merge (2026-11-24, see its section). The owner is testing glide scrolling because "something feels off"; nothing from 12, 13, 6 or 11 touches scroll code. Start by asking the owner what feels off (which view, which input) and fold that into the investigation. Then the usual: investigation and design, decisions, branch. Facts are under "5, 6, 8, 10, 11, 12" below (two inline copies of scrub/settle in `build.rs` with different constants, unused `smooth_scroll.rs`, no tests).
 2. 11's follow-up (restore the incoming library's viewport after a switch; a scripted Exit / library-switch check), when the owner wants it.
 3. 7 (diagnostic only) and 8 (speculative) can wait, or be closed with a note.
 

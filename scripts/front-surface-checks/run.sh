@@ -40,7 +40,9 @@ sleep 1
 HOME="$out/portal" XDG_CONFIG_HOME="$out/portal/config" XDG_DATA_HOME="$out/portal/data" \
     XDG_CACHE_HOME="$out/portal/cache" XDG_CURRENT_DESKTOP=PIC_GUI XDG_SESSION_TYPE=x11 \
     dbus-run-session -- bash -c '
-        /usr/libexec/at-spi-bus-launcher --launch-immediately & launcher=$!
+        # As scripts/test-gui.sh: without this the launcher may not bring the
+        # bus up, and clients fall back to D-Bus activation, which is denied.
+        ATSPI_DBUS_IMPLEMENTATION=dbus-daemon /usr/libexec/at-spi-bus-launcher --launch-immediately & launcher=$!
         for _ in {1..50}; do
             gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
                 --method org.a11y.Bus.GetAddress >/dev/null 2>&1 && break

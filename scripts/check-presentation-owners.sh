@@ -31,6 +31,10 @@
 # widths) is loaded and saved in one place; no other file names its keys:
 #   - src/window/session_state.rs (SessionState::load, record). Window test
 #     fixtures may seed a library with them.
+# Gallery scroll motion (candidate 5: scrub, target sampling, settle and the
+# thumbnail pump) is decided in one place; window code keeps no hand-kept
+# scrub cells or pump constants of its own:
+#   - src/window/scroll_motion.rs (ScrollMotion, ALL_PHOTOS, FOLDERS).
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -53,6 +57,7 @@ FRONT_OWNER='src/window/front_surface.rs'
 MIRRORS_OWNER='src/window/front_mirrors.rs'
 ZOOM_OWNER='src/window/zoom_slider_widgets.rs'
 SESSION_OWNER='src/window/session_state.rs'
+SCROLL_OWNER='src/window/scroll_motion.rs'
 SESSION_FIXTURES='src/window/immersive_tests.rs src/window/responsive_tests.rs'
 ID='[[:alnum:]_]'
 
@@ -71,6 +76,7 @@ RULES=(
   "front-mirrors~$MIRRORS_OWNER $INFOBAR_OWNER src/window/metadata_panel.rs~(\.(set_lightbox_shown|set_date_overview_shown|set_page_allowed|set_lightbox_open|set_navigation_view)\(|(^|[^[:alnum:]_])info$ID*\.set_page\()~front inputs of the InfoBar, Properties and metadata panel (FrontMirrors)"
   "zoom-slider~$ZOOM_OWNER $INFOBAR_OWNER~grid_zoom$ID*\.(set_range|set_value|set_increments|set_round_digits|clear_marks|set_tooltip_text)\(~zoom slider range, steps, tooltip and shown value (ZoomSliderWidgets)"
   "session-state~$SESSION_OWNER $SESSION_FIXTURES~(LAST_(VIEW|VIEW_PHOTO_ID|ACTIVATED_PHOTO_ID|VIEW_SCROLL|ALBUMS_SCROLL)|WINDOW_(WIDTH|HEIGHT|MAXIMIZED)|SIDEBAR_WIDTH_FRACTION|SIDEBAR_COLLAPSED_WIDTH|PROPERTIES_WIDTH_FRACTION|COMPACT_SIDEBAR_WIDTH)_SETTING_KEY|\"(last-view|last-view-photo-id|last-activated-photo-id|last-view-scroll|last-albums-scroll|window-width|window-height|window-maximized|sidebar-width-fraction|properties-width-fraction|sidebar-collapsed-width|compact-sidebar-width-v2)\"~window session keys (load and save through window::session_state)"
+  "scroll-motion~$SCROLL_OWNER~(^|[^[:alnum:]_])(grid|folder)_(direct_)?scrub_(active|generation|frames|last_queue|sampler)([^[:alnum:]_(]|_for|$)|THUMBNAIL_MOTION_PUMP_FRAMES|ScrollbarScrub~a hand-kept gallery scrub, settle or pump state (ask window::scroll_motion)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -164,7 +170,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -238,6 +244,10 @@ RS
 pub(super) const LAST_VIEW_SETTING_KEY: &str = "last-view";
         SessionChange::CompactWidth(width) => store.set(COMPACT_SIDEBAR_WIDTH_SETTING_KEY, &width),
 RS
+  cat >"$root/$SCROLL_OWNER" <<'RS'
+// The old grid_scrub_active cell and FolderScrollbarScrub live here now.
+pub(super) struct ScrollbarScrubNote;
+RS
   cat >"$root/src/window/responsive_tests.rs" <<'RS'
         (WINDOW_WIDTH_SETTING_KEY, "1440"),
 RS
@@ -303,6 +313,9 @@ self_test() {
     "session key read in build.rs|src/window/build.rs|let width = numeric_setting(&c, WINDOW_WIDTH_SETTING_KEY);|session-state"
     "session key literal in layout.rs|src/window/layout.rs|db::set_setting(&c, \"sidebar-width-fraction\", &f)|session-state"
     "compact width key back in layout.rs|src/window/layout.rs|const COMPACT_SIDEBAR_WIDTH_SETTING_KEY: &str = \"x\";|session-state"
+    "scrub cell back in build.rs|src/window/build.rs|let grid_scrub_active = Rc::new(Cell::new(false));|scroll-motion"
+    "pump constant back in build.rs|src/window/build.rs|const FOLDER_THUMBNAIL_MOTION_PUMP_FRAMES: u8 = 12;|scroll-motion"
+    "scrub sampler back in build.rs|src/window/build.rs|let folder_scrub_sampler = Rc::new(RefCell::new(FolderScrollbarScrub::default()));|scroll-motion"
     "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"
   )
   local entry name file line rule

@@ -35,7 +35,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 5 | One gallery scroll-motion module | Worth exploring | merged | merge `c169225e` (`refactor/gallery-scroll-motion`) | `src/window/scroll_motion.rs` (pure), `src/window/build.rs` (GTK adapter); wheel glide stays in `src/window/navigation.rs` |
 | 6 | Zoom slider router | Worth exploring | merged | merge `9c9c64ff` (`refactor/zoom-slider-router`) | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
-| 8 | Screensaver style descriptor | Speculative | merged | merge (see below) (`refactor/screensaver-style-spec`) | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
+| 8 | Screensaver style descriptor | Speculative | merged | merge `dece41f2` (`refactor/screensaver-style-spec`) | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | merged | merge `4f47d674` (`refactor/window-session-state`) | `src/window/session_state.rs` (pure: keys, defaults, clamps, load, record; `SessionStore` seam) |

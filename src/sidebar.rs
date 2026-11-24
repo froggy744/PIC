@@ -2378,7 +2378,11 @@ fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk
     header_content.set_margin_start(SIDEBAR_ALIGNMENT_INSET);
     header_content.set_margin_end(SIDEBAR_CONTENT_INSET);
     let indicator = sidebar_action_button(
-        if expanded { "pan-down-symbolic" } else { "pan-end-symbolic" },
+        if expanded {
+            "pan-down-symbolic"
+        } else {
+            "pan-end-symbolic"
+        },
         Some(if expanded { "Collapse" } else { "Expand" }),
     );
     indicator.set_halign(gtk::Align::Center);
@@ -2393,7 +2397,9 @@ fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk
     heading.set_xalign(0.0);
     heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
     title_area.append(&heading);
-    title_area.set_tooltip_text(Some("Show all rated photos; double-click to expand or collapse ratings"));
+    title_area.set_tooltip_text(Some(
+        "Show all rated photos; double-click to expand or collapse ratings",
+    ));
     header_content.append(&title_area);
     header_content.append(&indicator);
     let (trailing, count) = sidebar_count_column(Some(counts.iter().sum()), None);
@@ -3987,7 +3993,12 @@ mod tests {
             .chain(shares.first_child());
         for heading in headings {
             let label = heading.first_child().and_downcast::<gtk::Label>().unwrap();
-            assert_eq!(label.compute_bounds(&sidebar).unwrap().x(), 16.0, "{}", label.text());
+            assert_eq!(
+                label.compute_bounds(&sidebar).unwrap().x(),
+                16.0,
+                "{}",
+                label.text()
+            );
         }
 
         let mut count_right_edge = None;
@@ -4008,7 +4019,11 @@ mod tests {
             assert_eq!(*count_right_edge.get_or_insert(right), right, "{filter:?}");
 
             let leading = row.child().unwrap().first_child().unwrap();
-            let slot = if nested { leading.next_sibling().unwrap() } else { leading };
+            let slot = if nested {
+                leading.next_sibling().unwrap()
+            } else {
+                leading
+            };
             let icon = slot.first_child().and_downcast::<gtk::Image>().unwrap();
             let title = slot.next_sibling().unwrap();
             let title = if title.is::<gtk::Box>() {
@@ -4020,10 +4035,19 @@ mod tests {
             let title_bounds = title.compute_bounds(&sidebar).unwrap();
             let middle_y = |bounds: gtk::graphene::Rect| bounds.y() + bounds.height() / 2.0;
             assert_eq!(icon.pixel_size(), 16, "{filter:?}");
-            assert!((middle_y(icon_bounds) - middle_y(title_bounds)).abs() <= 1.0, "{filter:?}");
-            assert!((middle_y(count_bounds) - middle_y(title_bounds)).abs() <= 1.0, "{filter:?}");
+            assert!(
+                (middle_y(icon_bounds) - middle_y(title_bounds)).abs() <= 1.0,
+                "{filter:?}"
+            );
+            assert!(
+                (middle_y(count_bounds) - middle_y(title_bounds)).abs() <= 1.0,
+                "{filter:?}"
+            );
             if nested {
-                assert!(icon_bounds.x() > 16.0 && title_bounds.x() > 42.0, "{filter:?}");
+                assert!(
+                    icon_bounds.x() > 16.0 && title_bounds.x() > 42.0,
+                    "{filter:?}"
+                );
             } else {
                 assert_eq!(icon_bounds.x(), 16.0, "{filter:?}");
                 assert_eq!(title_bounds.x(), 42.0, "{filter:?}");
@@ -4405,11 +4429,10 @@ mod tests {
             stored_widget::<gtk::ListBoxRow>(&sidebar, RATING_HEADER_KEY).unwrap()
         );
         let header_content = header.child().unwrap().downcast::<gtk::Box>().unwrap();
-        let title_area = std::iter::successors(header_content.first_child(), |child| {
-            child.next_sibling()
-        })
-        .find(|child| child.has_css_class("sidebar-icon-title"))
-        .unwrap();
+        let title_area =
+            std::iter::successors(header_content.first_child(), |child| child.next_sibling())
+                .find(|child| child.has_css_class("sidebar-icon-title"))
+                .unwrap();
         let header_icon = title_area
             .first_child()
             .and_then(|slot| slot.first_child())

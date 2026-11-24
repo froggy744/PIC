@@ -212,6 +212,33 @@ impl PhotoObject {
         }
     }
 
+    /// A photo shown in the viewer without being in the library, such as a
+    /// file opened from the file manager. It gets a unique negative id so
+    /// id-keyed presentation (InfoBar, Properties) can tell photos apart,
+    /// while no catalogue row can ever match it.
+    pub fn outside_library(path: &std::path::Path) -> Self {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        static NEXT_ID: AtomicI64 = AtomicI64::new(-1);
+        let metadata = std::fs::metadata(path).ok();
+        let photo = Photo {
+            id: NEXT_ID.fetch_sub(1, Ordering::Relaxed),
+            path: path.to_string_lossy().into_owned(),
+            size_bytes: metadata.as_ref().map(|metadata| metadata.len() as i64),
+            mtime: metadata
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs() as i64),
+            ..Photo::default()
+        };
+        Self::from_photo(&photo)
+    }
+
+    /// True for a photo opened from outside the library; it has no
+    /// catalogue row, so library actions (marks, edits, albums) skip it.
+    pub fn is_outside_library(&self) -> bool {
+        self.id() < 0
+    }
+
     pub fn from_photo(photo: &Photo) -> Self {
         let object: Self = glib::Object::new();
         object.set_from_photo(photo);

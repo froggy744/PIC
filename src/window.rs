@@ -46,6 +46,7 @@ use front_surface::{DateBrowser as DateBrowserLevel, Front, FrontSurface};
 use photo_marks::{MarkChange, MarkIntent};
 mod properties_presentation;
 mod properties_widgets;
+pub(crate) mod open_files;
 use properties_presentation::PropertiesSurface;
 use properties_widgets::PropertiesWidgets;
 mod sidebar_presentation;

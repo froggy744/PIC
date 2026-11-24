@@ -178,7 +178,7 @@ pub struct Album {
     pub cover_photo_id: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Photo {
     pub id: i64,
     pub path: String,

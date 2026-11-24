@@ -200,12 +200,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         lightbox.clone(),
     );
     lightbox.set_photo_changed_handler(move |photo| {
-        last_activated_for_lightbox.set(Some(photo.id()));
-        if let Err(error) = record_session(
-            &*connection_for_lightbox.borrow(),
-            SessionChange::ActivatedPhoto(photo.id()),
-        ) {
-            eprintln!("Could not save last activated photo: {error}");
+        // A photo opened from outside the library is not a gallery position
+        // to return to, so it never becomes the session's activated photo.
+        if !photo.is_outside_library() {
+            last_activated_for_lightbox.set(Some(photo.id()));
+            if let Err(error) = record_session(
+                &*connection_for_lightbox.borrow(),
+                SessionChange::ActivatedPhoto(photo.id()),
+            ) {
+                eprintln!("Could not save last activated photo: {error}");
+            }
         }
         info_for_lightbox.show_lightbox_photo(&photo);
         properties_for_lightbox.show_photo(PropertiesSurface::Lightbox, Some(&photo));
@@ -5803,6 +5807,7 @@ fn start_photo_export_single(
         });
     }
     window.add_action(&getting_started);
+    open_files::install(&window, &lightbox, &connection);
     {
         let owner = Rc::downgrade(&onboarding);
         let presented = Rc::new(Cell::new(false));

@@ -125,9 +125,27 @@ fn main() {
     register_bundled_icons();
     let application = adw::Application::new(
         Some("io.github.froggy744.PIC"),
-        gio::ApplicationFlags::default(),
+        // Files from the desktop ("Open With PIC", `pic-rs photo.jpg`) reach
+        // `open`; a second launch hands them to the running instance.
+        gio::ApplicationFlags::HANDLES_OPEN,
     );
     startup_trace::mark("application_created", None);
+    application.connect_open(|application, files, _hint| {
+        // Build or present the main window exactly as a plain launch does,
+        // then show the files in its viewer.
+        application.activate();
+        let paths = window::open_files::local_paths(files);
+        // Only the main window has the viewer action; the startup recovery
+        // window (no library open) does not.
+        if let Some(window) = application
+            .windows()
+            .into_iter()
+            .filter_map(|window| window.downcast::<adw::ApplicationWindow>().ok())
+            .find(|window| window.lookup_action(window::open_files::ACTION).is_some())
+        {
+            window::open_files::open_in(&window, paths);
+        }
+    });
     application.connect_activate(|application| {
         let activation_started = std::time::Instant::now();
         startup_trace::mark("activation_start", None);

@@ -733,6 +733,18 @@ pub fn photo(connection: &Connection, id: i64) -> Result<Option<Photo>> {
         .optional()?)
 }
 
+/// The catalogued, untrashed photo whose original is `path`, if any.
+pub fn photo_by_path(connection: &Connection, path: &str) -> Result<Option<Photo>> {
+    Ok(connection
+        .query_row(
+            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
+             FROM photos p LEFT JOIN folders f ON f.id = p.folder_id WHERE p.path = ?1 AND p.trashed = 0",
+            [path],
+            photo_from_row,
+        )
+        .optional()?)
+}
+
 pub fn photos(
     connection: &Connection,
     folder_id: Option<i64>,

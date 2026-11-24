@@ -1154,6 +1154,9 @@ impl InfoBar {
             .as_ref()
             .map(|written| written.photo.clone())
             .filter(|photo| photo.id() == id)
+            // A photo opened from outside the library has no catalogue row
+            // for the actions to write to.
+            .filter(|photo| !photo.is_outside_library())
     }
 
     fn remember_selection(&self, count: usize, photos: &[PhotoObject]) -> SelectionSample {
@@ -1409,7 +1412,12 @@ impl InfoBar {
     fn write_collage(&self, target: &InfoBarTarget) {
         self.view_toggle
             .set_sensitive(target.gallery_controls_enabled());
-        self.edit.set_sensitive(target.edit_enabled());
+        let outside = self
+            .written
+            .borrow()
+            .as_ref()
+            .is_some_and(|written| written.photo.is_outside_library());
+        self.edit.set_sensitive(target.edit_enabled() && !outside);
         // Collage has no presentation zoom. Disable the shared zoom slider
         // instead of letting it fall through and resize the hidden Gallery.
         self.grid_zoom
@@ -1512,14 +1520,17 @@ impl InfoBar {
                 self.favorite.set_tooltip_text(Some("Add to Favourites"));
             }
         }
-        if old.is_none() {
-            // Coming from no photo: show the name and enable the actions.
+        let outside = photo.is_outside_library();
+        let was_outside = old.map(|written| written.photo.is_outside_library());
+        if was_outside != Some(outside) {
+            // Coming from no photo, or between a library photo and one from
+            // outside the library: show the name and set the actions.
             self.has_photo.set(true);
             self.filename.set_visible(true);
-            let actions = target.photo_actions_enabled();
+            let actions = target.photo_actions_enabled() && !outside;
             self.favorite.set_sensitive(actions);
             self.rating.set_sensitive(actions);
-            self.edit.set_sensitive(target.edit_enabled());
+            self.edit.set_sensitive(target.edit_enabled() && !outside);
             self.add_to_album.set_sensitive(actions);
             self.rotate.set_sensitive(actions);
             self.export.set_sensitive(actions);

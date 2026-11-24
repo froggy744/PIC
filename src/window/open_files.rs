@@ -1,0 +1,352 @@
+//! Files handed to PIC by the desktop ("Open With PIC" in the file manager,
+//! or `pic-rs photo.jpg`) open in the viewer.
+//!
+//! A single file opens among the other photos of its folder, so the arrow
+//! keys browse the folder as they do in an image viewer. Several files open
+//! as exactly that set. Photos already in the library open as their library
+//! photo; any other file is shown as a photo outside the library
+//! (`PhotoObject::outside_library`) and is never added to the catalogue.
+
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use gio::prelude::*;
+use gtk4 as gtk;
+use gtk4::prelude::*;
+use libadwaita as adw;
+use rusqlite::Connection;
+
+use crate::db;
+use crate::lightbox::Lightbox;
+use crate::photo_object::PhotoObject;
+
+/// Window action that opens its `as` (array of paths) parameter in the viewer.
+pub(crate) const ACTION: &str = "open-paths";
+
+/// The viewer list for the requested paths and the index to start at.
+///
+/// One file: the supported photos of its folder, sorted by name, starting at
+/// that file (it is kept even when its type is not a library format). One
+/// folder: its supported photos. Several paths: those files in the given
+/// order, folders expanded. Returns an empty list when nothing can be shown.
+pub(crate) fn viewer_paths(requested: &[PathBuf]) -> (Vec<PathBuf>, usize) {
+    if let [file] = requested {
+        if file.is_file() {
+            let siblings = file.parent().map(folder_photos).unwrap_or_default();
+            if let Some(index) = siblings.iter().position(|path| path == file) {
+                return (siblings, index);
+            }
+            return (vec![file.clone()], 0);
+        }
+    }
+    let mut paths = Vec::new();
+    for path in requested {
+        if path.is_dir() {
+            paths.extend(folder_photos(path));
+        } else if path.is_file() {
+            paths.push(path.clone());
+        }
+    }
+    (paths, 0)
+}
+
+fn folder_photos(folder: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut photos = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file() && crate::scanner::supported(path))
+        .collect::<Vec<_>>();
+    photos.sort_by_cached_key(|path| {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        (name.to_lowercase(), name.into_owned())
+    });
+    photos
+}
+
+/// A library photo for each catalogued path, an outside-library photo for
+/// the rest.
+fn photo_objects(connection: &Connection, paths: &[PathBuf]) -> Vec<PhotoObject> {
+    paths
+        .iter()
+        .map(|path| {
+            db::photo_by_path(connection, &path.to_string_lossy())
+                .ok()
+                .flatten()
+                .map(|photo| PhotoObject::from_photo(&photo))
+                .unwrap_or_else(|| PhotoObject::outside_library(path))
+        })
+        .collect()
+}
+
+/// Install the window's `open-paths` action. Paths that arrive before the
+/// window is mapped (a cold start from the file manager) open once it is.
+pub(crate) fn install(
+    window: &adw::ApplicationWindow,
+    lightbox: &Rc<Lightbox>,
+    connection: &Rc<RefCell<Connection>>,
+) {
+    let pending: Rc<RefCell<Option<Vec<PathBuf>>>> = Rc::new(RefCell::new(None));
+    let open: Rc<dyn Fn(Vec<PathBuf>)> = {
+        let lightbox = Rc::downgrade(lightbox);
+        let connection = connection.clone();
+        Rc::new(move |requested| {
+            let Some(lightbox) = lightbox.upgrade() else {
+                return;
+            };
+            let (paths, index) = viewer_paths(&requested);
+            if paths.is_empty() {
+                eprintln!("PIC: nothing to open in {requested:?}");
+                return;
+            }
+            let photos = photo_objects(&connection.borrow(), &paths);
+            lightbox.open(photos, index);
+        })
+    };
+    {
+        let pending = pending.clone();
+        let open = open.clone();
+        window.connect_map(move |_| {
+            if let Some(paths) = pending.borrow_mut().take() {
+                // Let the first layout settle before the viewer covers it.
+                let open = open.clone();
+                glib::idle_add_local_once(move || open(paths));
+            }
+        });
+    }
+    let action = gio::SimpleAction::new(ACTION, Some(glib::VariantTy::STRING_ARRAY));
+    let window_for_action = window.downgrade();
+    action.connect_activate(move |_, parameter| {
+        let Some(paths) = parameter.and_then(|parameter| parameter.get::<Vec<String>>()) else {
+            return;
+        };
+        let paths = paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mapped = window_for_action
+            .upgrade()
+            .is_some_and(|window| window.is_mapped());
+        if mapped {
+            open(paths);
+        } else {
+            pending.replace(Some(paths));
+        }
+    });
+    window.add_action(&action);
+}
+
+/// The local paths of files handed to the application; files without a
+/// local path (no FUSE mount for a remote URI) are skipped.
+pub(crate) fn local_paths(files: &[gio::File]) -> Vec<String> {
+    files
+        .iter()
+        .filter_map(|file| file.path())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Hand `paths` to `window`'s viewer.
+pub(crate) fn open_in(window: &impl IsA<gtk::Widget>, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    let _ = window
+        .as_ref()
+        .activate_action(&format!("win.{ACTION}"), Some(&paths.to_variant()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A temporary folder holding empty `files`, removed on drop.
+    struct Folder(PathBuf);
+
+    impl Folder {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn folder(files: &[&str]) -> Folder {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "pic-open-files-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        for name in files {
+            std::fs::write(dir.join(name), b"").expect("write file");
+        }
+        Folder(dir)
+    }
+
+    #[test]
+    fn one_file_opens_among_its_folders_photos_sorted_by_name() {
+        let dir = folder(&["b.jpg", "A.png", "notes.txt", "c.JPG"]);
+        let (paths, index) = viewer_paths(&[dir.path().join("b.jpg")]);
+        let names = paths
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["A.png", "b.jpg", "c.JPG"]);
+        assert_eq!(index, 1);
+    }
+
+    #[test]
+    fn one_unsupported_file_opens_alone() {
+        let dir = folder(&["a.jpg", "notes.txt"]);
+        let file = dir.path().join("notes.txt");
+        assert_eq!(viewer_paths(&[file.clone()]), (vec![file], 0));
+    }
+
+    #[test]
+    fn several_files_open_as_given_and_missing_ones_are_dropped() {
+        let dir = folder(&["a.jpg", "b.jpg", "c.jpg"]);
+        let requested = [
+            dir.path().join("c.jpg"),
+            dir.path().join("gone.jpg"),
+            dir.path().join("a.jpg"),
+        ];
+        let (paths, index) = viewer_paths(&requested);
+        assert_eq!(paths, [requested[0].clone(), requested[2].clone()]);
+        assert_eq!(index, 0);
+    }
+
+    #[test]
+    fn a_folder_opens_its_photos() {
+        let dir = folder(&["b.jpg", "a.jpg", "notes.txt"]);
+        let (paths, index) = viewer_paths(&[dir.path().to_path_buf()]);
+        assert_eq!(paths, [dir.path().join("a.jpg"), dir.path().join("b.jpg")]);
+        assert_eq!(index, 0);
+    }
+
+    #[test]
+    fn catalogued_paths_open_as_library_photos_and_others_outside_it() {
+        let connection = Connection::open_in_memory().expect("database");
+        connection.execute_batch(db::SCHEMA).expect("schema");
+        connection
+            .execute(
+                "INSERT INTO photos (path, added_at) VALUES ('/photos/in.jpg', 0)",
+                [],
+            )
+            .expect("insert photo");
+        let photos = photo_objects(
+            &connection,
+            &[
+                PathBuf::from("/photos/in.jpg"),
+                PathBuf::from("/photos/out.jpg"),
+            ],
+        );
+        assert!(!photos[0].is_outside_library());
+        assert_eq!(photos[0].path(), "/photos/in.jpg");
+        assert!(photos[1].is_outside_library());
+        assert_eq!(photos[1].path(), "/photos/out.jpg");
+        assert!(photos[1].original_available());
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    use crate::window::{
+        LAST_VIEW_SETTING_KEY, WINDOW_HEIGHT_SETTING_KEY, WINDOW_WIDTH_SETTING_KEY,
+    };
+    use std::time::{Duration, Instant};
+
+    fn settle() {
+        let context = glib::MainContext::default();
+        let until = Instant::now() + Duration::from_millis(900);
+        while Instant::now() < until {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn descendants(widget: &gtk::Widget) -> Vec<gtk::Widget> {
+        let mut result = vec![widget.clone()];
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            result.extend(descendants(&widget));
+            child = widget.next_sibling();
+        }
+        result
+    }
+
+    // xvfb-run -a -s "-screen 0 1920x1080x24" env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
+    //   GSK_RENDERER=cairo cargo test --locked -- --test-threads=1 --exact \
+    //   window::open_files::window_tests::cold_start_opens_an_outside_photo_in_the_viewer --ignored
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn cold_start_opens_an_outside_photo_in_the_viewer() {
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id("io.pic.OpenFilesTest")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("pic-open-files-window-{}", std::process::id()));
+        let photos = directory.join("photos");
+        std::fs::create_dir_all(&photos).unwrap();
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            image::RgbImage::from_pixel(64, 48, image::Rgb([200, 120, 40]))
+                .save(photos.join(name))
+                .unwrap();
+        }
+        let connection = db::open(&directory.join("library.db")).unwrap();
+        for (key, value) in [
+            (LAST_VIEW_SETTING_KEY, "all"),
+            ("onboarding-never-show", "true"),
+            (WINDOW_WIDTH_SETTING_KEY, "1400"),
+            (WINDOW_HEIGHT_SETTING_KEY, "900"),
+        ] {
+            db::set_setting(&connection, key, value).unwrap();
+        }
+        let window = crate::window::build(&app, connection);
+        // As `connect_open` does on a cold start: the paths arrive before
+        // the window is mapped.
+        open_in(
+            &window,
+            vec![photos.join("b.jpg").to_string_lossy().into_owned()],
+        );
+        window.present();
+        settle();
+
+        let root = window.upcast_ref::<gtk::Widget>();
+        let widgets = descendants(root);
+        let backdrop = widgets
+            .iter()
+            .find(|widget| widget.has_css_class("lightbox-backdrop"))
+            .expect("lightbox missing");
+        assert!(backdrop.is_drawable(), "the viewer did not open");
+        assert!(
+            widgets.iter().any(|widget| widget
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|label| label.text() == "b.jpg" && label.is_drawable())),
+            "the opened photo is not the one shown"
+        );
+        let favourite = widgets
+            .iter()
+            .find(|widget| {
+                widget.is::<gtk::Button>()
+                    && widget.tooltip_text().as_deref() == Some("Add to Favourites")
+            })
+            .expect("favourite button missing");
+        assert!(
+            !favourite.is_sensitive(),
+            "library actions stay enabled for a photo outside the library"
+        );
+        window.close();
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+}

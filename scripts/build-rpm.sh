@@ -56,12 +56,13 @@ write_desktop() {
 Type=Application
 Name=${APP_NAME}
 Comment=${DESCRIPTION}
-Exec=${BIN_NAME}
+Exec=${BIN_NAME} %F
 Icon=${APP_ID}
 Terminal=false
 Categories=Graphics;Photography;
 StartupNotify=true
 StartupWMClass=${APP_ID}
+MimeType=image/jpeg;image/png;image/webp;image/gif;image/tiff;image/bmp;image/avif;image/heif;
 EOF
 }
 

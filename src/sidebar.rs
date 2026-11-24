@@ -168,11 +168,11 @@ const REFRESH_GATE_KEY: &str = "picasa-sidebar-refresh-gate";
 const ALBUM_PANE_ANIMATION_MS: u32 = 250;
 const STARTUP_VISIBLE_ALBUM_ROWS: usize = 5;
 const SIDEBAR_ROOT_INSET: i32 = 10;
-const SIDEBAR_CONTENT_INSET: i32 = 8;
-const SIDEBAR_ITEM_SPACING: i32 = 8;
+const SIDEBAR_CONTENT_INSET: i32 = 5;
+const SIDEBAR_ITEM_SPACING: i32 = 6;
 const SIDEBAR_HEADING_SPACING: i32 = 4;
 const SIDEBAR_COUNT_WARNING_SPACING: i32 = 6;
-const SIDEBAR_HEADER_MARGIN_TOP: i32 = 8;
+const SIDEBAR_HEADER_MARGIN_TOP: i32 = 6;
 const SIDEBAR_HEADER_MARGIN_BOTTOM: i32 = 4;
 const SIDEBAR_ROOT_MARGIN_TOP: i32 = 4;
 const SIDEBAR_ICON_SIZE: i32 = 18;
@@ -183,8 +183,8 @@ const SIDEBAR_CONTROL_SIZE: i32 = 28;
 const SIDEBAR_ACTION_ICON_SIZE: i32 = 14;
 const SIDEBAR_COUNT_WIDTH: i32 = 38;
 const SIDEBAR_WARNING_WIDTH: i32 = 16;
-const SIDEBAR_ROW_MARGIN_Y: i32 = 2;
-const SIDEBAR_ROW_PADDING_Y: i32 = 6;
+const SIDEBAR_ROW_MARGIN_Y: i32 = 1;
+const SIDEBAR_ROW_PADDING_Y: i32 = 5;
 
 /// Share the window's refresh sensitivity with existing and future menus.
 pub fn bind_refresh_gate(scrolled: &gtk::ScrolledWindow, gate: &gtk::Button) {
@@ -3345,11 +3345,13 @@ fn sidebar_count_column(
     warning: Option<gtk::Button>,
 ) -> (gtk::Box, Option<gtk::Label>) {
     let trailing = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_COUNT_WARNING_SPACING);
+    trailing.set_valign(gtk::Align::Center);
     trailing.add_css_class("sidebar-row-trailing");
-    trailing.set_size_request(
-        SIDEBAR_COUNT_WIDTH + SIDEBAR_WARNING_WIDTH + SIDEBAR_COUNT_WARNING_SPACING,
-        -1,
-    );
+    // Warnings sit before the count so the numbers stay right-aligned.
+    // Online folders and normal navigation rows need no warning slot.
+    if let Some(warning) = warning {
+        trailing.append(&warning);
+    }
 
     let count_label = if let Some(count) = count {
         let count_label = gtk::Label::new(Some(&format_count(count)));
@@ -3361,19 +3363,8 @@ fn sidebar_count_column(
         trailing.append(&count_label);
         Some(count_label)
     } else {
-        let count_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        count_spacer.set_size_request(SIDEBAR_COUNT_WIDTH, -1);
-        trailing.append(&count_spacer);
         None
     };
-
-    if let Some(warning) = warning {
-        trailing.append(&warning);
-    } else {
-        let warning_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        warning_slot.set_size_request(SIDEBAR_WARNING_WIDTH, SIDEBAR_WARNING_WIDTH);
-        trailing.append(&warning_slot);
-    }
     (trailing, count_label)
 }
 

@@ -13,6 +13,7 @@ use rusqlite::Connection;
 use crate::albums_view;
 use crate::{db, grid, infobar::InfoBar, lightbox::Lightbox, scanner, sidebar};
 
+mod brand_heading;
 mod metadata_panel;
 mod date_browser;
 mod onboarding;

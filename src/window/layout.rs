@@ -793,9 +793,8 @@
     // Normal themes retain the original understated PIC label.
     let brand = gtk::Box::new(gtk::Orientation::Horizontal, 5);
     brand.add_css_class("scrapbook-logo");
-    let regular_brand = gtk::Label::new(Some("PIC"));
+    let regular_brand = brand_heading::brand_heading();
     regular_brand.add_css_class("scrapbook-standard-only");
-    regular_brand.add_css_class("heading");
     brand.append(&regular_brand);
     let illustrated_brand = gtk::Box::new(gtk::Orientation::Horizontal, 7);
     illustrated_brand.add_css_class("scrapbook-only");
@@ -915,8 +914,7 @@
     compact_header.set_show_end_title_buttons(false);
     compact_header.set_height_request(46);
     compact_header.add_css_class("layout-left-header");
-    let compact_heading = gtk::Label::new(Some("PIC"));
-    compact_heading.add_css_class("heading");
+    let compact_heading = brand_heading::brand_heading();
     compact_heading.set_hexpand(true);
     compact_heading.set_halign(gtk::Align::Center);
     compact_header.set_title_widget(Some(&compact_heading));

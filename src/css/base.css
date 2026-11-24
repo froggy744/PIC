@@ -66,6 +66,17 @@ paned.sidebar-section-paned > separator {
   border-radius: 6px;
 }
 
+/* The round dot after "PIC" in the header wordmark, coloured like the logo
+ * artwork (logo/logo-long-SVG.svg). src/window/brand_heading.rs places it on
+ * the text baseline. Themes may override .brand-dot. */
+.brand-dot {
+  min-width: 4px;
+  min-height: 4px;
+  margin-left: 2px;
+  border-radius: 999px;
+  background-color: #0c0eed;
+}
+
 /* Remove GTK's extra headerbar shadow; each theme supplies its own bottom line. */
 .layout-left-header,
 .layout-right-header {

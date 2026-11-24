@@ -582,6 +582,11 @@
     header_tools.append(&sort_button);
     header_tools.append(&metadata_panel.button);
     header_tools.append(&rating_filter_button);
+    let rating_view_separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    rating_view_separator.add_css_class("infobar-group-separator");
+    rating_view_separator.set_valign(gtk::Align::Center);
+    rating_view_separator.set_height_request(24);
+    header_tools.append(&rating_view_separator);
     header_tools.append(&info.view_toggle);
     info.append_menu_action(&settings, "Appearance");
     let screensaver = gtk::Button::from_icon_name("media-playback-start-symbolic");
@@ -624,6 +629,11 @@
         overflow_popover.set_child(Some(&overflow_box));
         header_overflow.set_popover(Some(&overflow_popover));
         right_header.pack_end(&header_overflow);
+        let immersive_tools_separator = gtk::Separator::new(gtk::Orientation::Vertical);
+        immersive_tools_separator.add_css_class("infobar-group-separator");
+        immersive_tools_separator.set_valign(gtk::Align::Center);
+        immersive_tools_separator.set_height_request(24);
+        right_header.pack_end(&immersive_tools_separator);
         // Header order, left to right.
         let tools: Vec<(gtk::Widget, gtk::Box)> = [
             (date_browser_button.clone().upcast::<gtk::Widget>(), "Date browser"),
@@ -660,6 +670,12 @@
                 let in_menu = tool.parent().as_ref() == Some(row.upcast_ref());
                 row.set_visible(in_menu && tool.get_visible());
             }
+            let in_bar = |tool: &gtk::Widget| {
+                tool.get_visible()
+                    && tool.parent().as_ref() == Some(header_tools.upcast_ref())
+            };
+            rating_view_separator.set_visible(in_bar(&tools[3].0) && in_bar(&tools[4].0));
+            immersive_tools_separator.set_visible(tools.iter().any(|(tool, _)| in_bar(tool)));
             let width = header.width();
             if width <= 0 || header_overflow.is_active() {
                 return glib::ControlFlow::Continue;
@@ -742,8 +758,13 @@
                         previous = Some(tool.clone());
                     }
                 }
+                if in_bar(&tools[3].0) {
+                    header_tools.reorder_child_after(&rating_view_separator, Some(&tools[3].0));
+                }
                 header_overflow.set_visible(count > 0);
             }
+            rating_view_separator.set_visible(in_bar(&tools[3].0) && in_bar(&tools[4].0));
+            immersive_tools_separator.set_visible(tools.iter().any(|(tool, _)| in_bar(tool)));
             glib::ControlFlow::Continue
         });
     }

@@ -32,7 +32,6 @@ mod scroll_trace;
 mod sd_import;
 mod settings;
 mod sidebar;
-mod smooth_scroll;
 mod source;
 mod startup_trace;
 mod thumbnail;

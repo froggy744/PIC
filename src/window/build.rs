@@ -5273,7 +5273,7 @@ fn start_photo_export_single(
     };
     let startup_generation = REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     populate_startup_gallery(
-        startup_gallery, startup_photos_for_idle,
+        startup_gallery, gallery_scroll_stack.clone().upcast(), startup_photos_for_idle,
         Rc::new(move || REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == startup_generation),
         restore_startup_view,
     );
@@ -6697,6 +6697,7 @@ fn start_photo_export_single(
         let settings_window = settings_window_for_switch.clone();
         let start_next_scan = start_next_scan.clone();
         let albums_home = albums_home.clone();
+        let gallery_surface: gtk::Widget = gallery_scroll_stack.clone().upcast();
         Rc::new(move |id: &str| -> Result<(), String> {
             let switch_started = Instant::now();
             let target = db::known_libraries()
@@ -6900,6 +6901,7 @@ fn start_photo_export_single(
             let albums_home = albums_home.clone();
             when_gallery_built(
                 gallery.clone(),
+                gallery_surface.clone(),
                 Rc::new(move || {
                     REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation
                 }),

@@ -2,6 +2,7 @@
 /// caching the full loaded prefix after every startup append.
 fn populate_startup_gallery(
     gallery: Rc<grid::Gallery>,
+    surface: gtk::Widget,
     photos: Rc<Vec<db::Photo>>,
     is_current: Rc<dyn Fn() -> bool>,
     restore: Rc<dyn Fn()>,
@@ -16,6 +17,7 @@ fn populate_startup_gallery(
         crate::startup_trace::mark("gallery_population_scheduled", Some(populate_started));
         when_gallery_built(
             gallery,
+            surface,
             is_current,
             Rc::new(move || {
                 restore();
@@ -25,19 +27,39 @@ fn populate_startup_gallery(
     });
 }
 
+/// How long the gallery surface's width must hold before a viewport is
+/// restored on it.
+const GALLERY_WIDTH_SETTLE: Duration = Duration::from_millis(100);
+
 /// Run `then` once the gallery has finished building the photos it was just
-/// given, unless the view changed first. A viewport restored before the build
-/// ends lands on a half-built model and is lost.
+/// given and its surface (`surface`, whose width sets the columns) has kept
+/// one width for `GALLERY_WIDTH_SETTLE`, unless the view changed first. A
+/// viewport restored on a half-built model is lost; one restored before the
+/// split gives the sidebar its width lands on other photos once the columns
+/// reflow (at startup that happens after the build).
 fn when_gallery_built(
     gallery: Rc<grid::Gallery>,
+    surface: gtk::Widget,
     is_current: Rc<dyn Fn() -> bool>,
     then: Rc<dyn Fn()>,
 ) {
-    glib::timeout_add_local(Duration::from_millis(20), move || {
+    const POLL: Duration = Duration::from_millis(20);
+    let mut width = None;
+    let mut held = Duration::ZERO;
+    glib::timeout_add_local(POLL, move || {
         if !is_current() {
             return glib::ControlFlow::Break;
         }
         if gallery.stream_building() {
+            return glib::ControlFlow::Continue;
+        }
+        let now = surface.width();
+        if width.replace(now) == Some(now) {
+            held += POLL;
+        } else {
+            held = Duration::ZERO;
+        }
+        if held < GALLERY_WIDTH_SETTLE {
             return glib::ControlFlow::Continue;
         }
         then();
@@ -115,6 +137,7 @@ mod startup_gallery_tests {
         let target = restored.clone();
         populate_startup_gallery(
             gallery.clone(),
+            gtk::Box::new(gtk::Orientation::Vertical, 0).upcast(),
             photos.clone(),
             Rc::new(|| true),
             Rc::new(move || target.set(target.get() + 1)),
@@ -144,6 +167,7 @@ mod startup_gallery_tests {
         let target = restored.clone();
         populate_startup_gallery(
             gallery.clone(),
+            gtk::Box::new(gtk::Orientation::Vertical, 0).upcast(),
             photos,
             Rc::new(move || check.get()),
             Rc::new(move || target.set(true)),

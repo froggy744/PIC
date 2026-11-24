@@ -35,7 +35,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 5 | One gallery scroll-motion module | Worth exploring | merged | merge `c169225e` (`refactor/gallery-scroll-motion`) | `src/window/scroll_motion.rs` (pure), `src/window/build.rs` (GTK adapter); wheel glide stays in `src/window/navigation.rs` |
 | 6 | Zoom slider router | Worth exploring | merged | merge `9c9c64ff` (`refactor/zoom-slider-router`) | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
-| 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
+| 8 | Screensaver style descriptor | Speculative | merged | merge (see below) (`refactor/screensaver-style-spec`) | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | merged | merge `4f47d674` (`refactor/window-session-state`) | `src/window/session_state.rs` (pure: keys, defaults, clamps, load, record; `SessionStore` seam) |
@@ -488,13 +488,56 @@ The owner felt the wheel glide had changed since it went in (`88eb5d38`). It has
 
 **For the owner:** drag the scrollbar in Folders and in All Photos. If one feels better, matching the other is a change to `ALL_PHOTOS` or `FOLDERS` in `src/window/scroll_motion.rs`.
 
+### 8 · Screensaver style descriptor (merged 2026-11-24)
+Branch `refactor/screensaver-style-spec`. Chosen by the owner after 5 and the 11 follow-up.
+
+#### Investigation (at `146b36e6`)
+12 styles (`enum Style`, `screensaver.rs:58`). Each style's *facts* are spread over separate matches:
+- in `impl Style`: `default_tiles`, `from_saved`, `key`, `label`, `subtitle`, `single_photo`, `matrix`, `uses_photos`, `available`;
+- `default_background_colour` (`:397`), the Settings tile limit (`:1198`), the decode size per style family (`:1510`), the player's slot count (`:1687`);
+- which renderer `gpu::Stage::new` builds (`gpu.rs:528-549`: cinema, Cover Flow, flying, pile, or the tile wall).
+
+The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings preview icons, `gpu/pile.rs`, `gpu/cinema.rs`) and stay where they are. Most facts depend on a style's family, not the style:
+
+| Stage | Styles | Tile limit | Player slots | Decode size |
+|---|---|---|---|---|
+| Wall | Mosaic, Changing Grid (and Surprise Me in Settings) | 10,000 | the tile count | 1536 px down to 48 px by tile count |
+| Prints | Picture Pile, Floating Prints, Photo Drift | 64 | the tile count | 1920×1280 down to 640×430 |
+| Flying | Flying Photos | 32 | the tile count | 1920×1280, or 1440×960 above 6 |
+| Cover Flow | Cover Flow | 10,000 | none | 2560×1600 |
+| Cinema | Ken Burns, Fullscreen Fade, Matrix Rain, Matrix Ken Burns | 10,000 | none | 2560×1600 |
+
+43 tests in `screensaver.rs` (plus 58 under `screensaver/`).
+
+#### Decisions (2026-11-24, by the agent on the owner's standing instruction; closest to today's behaviour)
+1. **Move, don't change.** Every number and rule above stays; nothing on screen changes.
+2. **Module:** `src/screensaver/style.rs`, pure. `Style` moves there with `Style::spec() -> StyleSpec` (key, label, subtitle, stage, default tiles, background, photos, Terminal-only) as the one place a style's facts live, and `Stage` with `tile_limit`, `slots` and `decode_size`. The existing `Style` methods stay as thin readers of the spec, so callers do not change shape.
+3. **Seam:** `Style::spec` and the `Stage` functions, tested with table tests over all 12 styles.
+4. **Surprise Me** has the Wall stage: it is resolved to a real style before the player starts (`screensaver.rs:1376`) and behaves like Wall in Settings. Its player slot count would change from none to the tile count, but no player ever receives it unresolved.
+5. **Per-style drawing stays** in the preview, `gpu/pile.rs` and `gpu/cinema.rs`. Adding a style is then: the variant, its `CHOICES` entry, its spec, and its drawing.
+6. **No owner rule.** The rules guard widget writers; here the risk is a new `match` restating a style fact, which no text pattern tells apart from per-style drawing. The spec's table tests and AUDIT-INDEX's "adding a style" line carry it instead.
+
+#### Stages
+1. Pure `screensaver/style.rs` (`StyleSpec`, `Stage`), 4 table tests written red first. Done: `97fa06ed`.
+2. `Style` moved there; its methods, the background colour, the Settings tile limit, the decode size, the player's slots and `gpu::Stage`'s renderer choice read the spec. Done: `91dca8f9`.
+3. Docs: AUDIT-INDEX (`src/screensaver/` entry, Quick-Edit row), GLOSSARY (Screensaver style spec, Screensaver stage). Done: `ace360fa`.
+
+#### Verification (2026-11-24)
+- `cargo check`: only the 3 known warnings; rustfmt clean on the touched files.
+- Unit suite: 1000 passed, 0 failed (96 under `screensaver`, 4 new).
+- Display (Xvfb, one process each): 8 of the 9 screensaver display tests pass. `screensaver_coverflow_renders_in_a_live_gtk_window` fails on `main` too (empty screenshot; it needs real OpenGL, which this Xvfb lacks, with Cairo or GL renderer).
+- GUI harness `screensaver`: its report ends at the editing prerequisites (27 PASS, 2 FAIL: the pre-existing editor checks below), so it reached no screensaver step.
+- The owner checked Cover Flow and the other styles by hand: working.
+- **Pre-existing, found on 2026-11-24:** GUI harness `editing` fails "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand, so the harness checks themselves need a look. Undo history is per editing session by design; it does not survive closing the photo.
+
 ### Next (updated 2026-11-24, after 5 and the 11 follow-up)
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).
 
 Open candidates, in order:
 1. ~~5 · One gallery scroll-motion module.~~ Merged 2026-11-24 (`c169225e`). The owner dragged both scrollbars and is happy with them; the gallery scrollbar also got a browser-style handle (`feat/gallery-scrollbar-look`, merge `92693c80`).
 2. ~~11's follow-up~~ (library switch viewport, Exit / library-switch check). Done 2026-11-24, see "11 follow-up" under 11.
-3. **8 · Screensaver style descriptor.** Next: the owner chose it (2026-11-24). 7 (diagnostic only) can wait, or be closed with a note.
+3. ~~8 · Screensaver style descriptor.~~ Merged 2026-11-24, see its section.
+4. Open: 7 (diagnostic only; can be closed with a note), and the two GUI harness editor checks that fail on `main` (see 8's verification). 7 (diagnostic only) can wait, or be closed with a note.
 
 How the owner works with these (from this session):
 - Each candidate: investigation, then decisions recorded here, then a branch, staged commits (pure module test-first, GTK adapter, owner rule, docs), then verification, merge with a merge commit, push.

@@ -1766,6 +1766,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let grid_scroll = gtk::ScrolledWindow::new();
     grid_scroll.set_vexpand(true);
+    grid_scroll.add_css_class("pic-gallery-scroller");
     grid_scroll.set_hexpand(true);
     // GtkGridView remains the direct scrollable child for every non-Folder
     // view, preserving its existing virtualization and selection behavior.
@@ -1774,6 +1775,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let folder_scroll = gtk::ScrolledWindow::new();
     folder_scroll.set_vexpand(true);
+    folder_scroll.add_css_class("pic-gallery-scroller");
     folder_scroll.set_hexpand(true);
     // Folder mode now uses the section-aware flat-photo surface by default.
     // The legacy ListView remains available behind PICASA_LEGACY_FOLDER_LIST=1.

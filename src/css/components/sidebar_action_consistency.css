@@ -15,6 +15,12 @@
 
 .navigation-sidebar button.sidebar-section-action image {
     -gtk-icon-size: 14px;
+    opacity: 0.65;
+}
+.navigation-sidebar button.sidebar-section-action:hover image,
+.navigation-sidebar button.sidebar-section-action:active image,
+.navigation-sidebar button.sidebar-section-action:focus-visible image {
+    opacity: 1;
 }
 
 .navigation-sidebar button.sidebar-section-action:hover {
@@ -64,6 +70,20 @@
     border-right-width: 0;
 }
 
+/* The sidebar's own foreground follows its current theme. */
+.navigation-sidebar .sidebar-primary-section-heading .sidebar-section-heading-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: inherit;
+    opacity: 0.65;
+}
+.navigation-sidebar .sidebar-navigation-icon {
+    opacity: 0.65;
+}
+.navigation-sidebar paned.sidebar-section-paned > separator {
+    border-top-color: alpha(currentColor, 0.13);
+}
+
 /* Navigation rows form one list; only the selected row receives a fill. */
 .navigation-sidebar row.sidebar-navigation-row:not(:selected) {
     background: transparent;
@@ -80,7 +100,6 @@
 }
 .navigation-sidebar row.sidebar-navigation-row .sidebar-count,
 .navigation-sidebar row.sidebar-navigation-row .folder-count {
-    min-width: 0;
     opacity: 0.85;
     font-variant-numeric: tabular-nums;
 }

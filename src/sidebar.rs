@@ -174,15 +174,19 @@ const SIDEBAR_ALIGNMENT_INSET: i32 = 6;
 const SIDEBAR_ITEM_SPACING: i32 = 6;
 const SIDEBAR_ICON_EXTRA_SPACING: i32 = 2;
 const SIDEBAR_HEADING_SPACING: i32 = 4;
+const SIDEBAR_COUNT_WARNING_SPACING: i32 = 6;
 const SIDEBAR_HEADER_MARGIN_TOP: i32 = 6;
 const SIDEBAR_HEADER_MARGIN_BOTTOM: i32 = 4;
 const SIDEBAR_ROOT_MARGIN_TOP: i32 = 4;
+// Keep the existing slot size and shrink only the navigation glyph.
 const SIDEBAR_ICON_SIZE: i32 = 18;
+const SIDEBAR_NAVIGATION_GLYPH_SIZE: i32 = 16;
 pub(crate) const SHARED_ICON_NAME: &str = "folder-publicshare-symbolic";
 pub(crate) const SHARED_ICON_SIZE: i32 = SIDEBAR_ICON_SIZE;
 const SIDEBAR_DISCLOSURE_SLOT: i32 = 12;
 const SIDEBAR_CONTROL_SIZE: i32 = 28;
 const SIDEBAR_ACTION_ICON_SIZE: i32 = 14;
+const SIDEBAR_COUNT_WIDTH: i32 = 38;
 const SIDEBAR_WARNING_WIDTH: i32 = 16;
 const SIDEBAR_ROW_MARGIN_Y: i32 = 1;
 const SIDEBAR_ROW_PADDING_Y: i32 = 5;
@@ -266,7 +270,7 @@ pub fn build(
 
     // LIBRARY: collapsible.
     let (library_heading, library_indicator) = collapsible_heading(
-        "Library",
+        "LIBRARY",
         None,
         "",
         true,
@@ -347,7 +351,7 @@ pub fn build(
     // Each heading stays with its section so swapping the panes also swaps the
     // complete section, including its collapse controls.
     let (album_heading, album_indicator) = collapsible_heading(
-        "Albums",
+        "ALBUMS",
         Some(on_create_album.clone()),
         "Create album",
         true,
@@ -380,7 +384,7 @@ pub fn build(
     album_revealer.set_child(Some(&album_scroll));
 
     let (folder_heading, folder_indicator) = collapsible_heading(
-        "Folders",
+        "FOLDERS",
         Some(on_import_folder.clone()),
         "Import Folder",
         true,
@@ -431,7 +435,7 @@ pub fn build(
 
     // SHARED: registered smb:// and nfs:// roots, listed after Folders.
     let (share_heading, share_indicator) = collapsible_heading(
-        "Shared",
+        "SHARED",
         Some(on_add_share.clone()),
         "Add Network Share",
         true,
@@ -2382,17 +2386,21 @@ fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk
     indicator.set_visible(false);
     let title_area = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
     title_area.add_css_class("sidebar-icon-title");
+    title_area.set_hexpand(true);
     title_area.append(&sidebar_icon_slot("starred-symbolic"));
     let heading = gtk::Label::new(Some("Ratings"));
+    heading.set_valign(gtk::Align::Center);
     heading.set_xalign(0.0);
     heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
     title_area.append(&heading);
     title_area.set_tooltip_text(Some("Show all rated photos; double-click to expand or collapse ratings"));
-    let count = sidebar_count_label(counts.iter().sum());
-    title_area.append(&count);
     header_content.append(&title_area);
     header_content.append(&indicator);
-    unsafe { header.set_data(FILTER_COUNT_LABEL_KEY, count) };
+    let (trailing, count) = sidebar_count_column(Some(counts.iter().sum()), None);
+    header_content.append(&trailing);
+    if let Some(count) = count {
+        unsafe { header.set_data(FILTER_COUNT_LABEL_KEY, count) };
+    }
     header.set_child(Some(&header_content));
     unsafe {
         scrolled.set_data(RATING_HEADER_KEY, header.clone());
@@ -2422,8 +2430,11 @@ fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         content.append(&label);
-        let count = sidebar_count_label(counts[(rating - 1) as usize]);
-        content.append(&count);
+        label.set_hexpand(true);
+        label.set_valign(gtk::Align::Center);
+        let (trailing, count) = sidebar_count_column(Some(counts[(rating - 1) as usize]), None);
+        content.append(&trailing);
+        let count = count.expect("rating count column always has a count label");
         unsafe { row.set_data(FILTER_COUNT_LABEL_KEY, count) };
         row.set_child(Some(&content));
         parent.append(&row);
@@ -2827,15 +2838,10 @@ fn append_folder_row(
     } else {
         "folder-symbolic"
     });
-    icon.set_pixel_size(if is_shared_root {
-        SHARED_ICON_SIZE
-    } else {
-        SIDEBAR_ICON_SIZE
-    });
-    if is_shared_root {
-        icon.set_halign(gtk::Align::Center);
-        icon.set_valign(gtk::Align::Center);
-    }
+    icon.set_pixel_size(SIDEBAR_NAVIGATION_GLYPH_SIZE);
+    icon.set_halign(gtk::Align::Start);
+    icon.set_valign(gtk::Align::Center);
+    icon.add_css_class("sidebar-navigation-icon");
     icon_overlay.set_child(Some(&icon));
 
     if folder.watched {
@@ -2855,16 +2861,15 @@ fn append_folder_row(
     let title_label = gtk::Label::new(Some(&folder.name));
     title_label.set_xalign(0.0);
     title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    title_label.set_hexpand(true);
+    title_label.set_valign(gtk::Align::Center);
     content.append(&title_label);
-    let count_label = sidebar_count_label(folder.photo_count);
-    count_label.add_css_class("folder-count");
-    content.append(&count_label);
-    // A root's arrow follows the inline count, so only children use a leading slot.
+    // A root's arrow stays clear of the shared icon and label alignment.
     if let Some(disclosure_slot) = disclosure_slot {
         content.append(&disclosure_slot);
     }
 
-    if !folder.available {
+    let warning = if !folder.available {
         let warning = gtk::Button::with_label("!");
         warning.add_css_class("sidebar-offline-badge");
         warning.set_halign(gtk::Align::Center);
@@ -2873,8 +2878,14 @@ fn append_folder_row(
         warning.set_tooltip_text(Some("Source folder unavailable"));
         let on_unavailable = on_unavailable.clone();
         warning.connect_clicked(move |_| (on_unavailable)());
-        content.append(&warning);
-    }
+        Some(warning)
+    } else {
+        None
+    };
+    let (trailing, count_label) = sidebar_count_column(Some(folder.photo_count), warning);
+    let count_label = count_label.expect("folder count column always has a count label");
+    count_label.add_css_class("folder-count");
+    content.append(&trailing);
 
     row.set_child(Some(&content));
     if has_children {
@@ -3312,7 +3323,7 @@ fn rebuild_folder_list_from_rows(list: &gtk::ListBox, state: &Rc<RefCell<Sidebar
 }
 
 fn sidebar_icon_slot(icon_name: &str) -> gtk::Box {
-    sidebar_icon_slot_with_size(icon_name, SIDEBAR_ICON_SIZE)
+    sidebar_icon_slot_with_size(icon_name, SIDEBAR_NAVIGATION_GLYPH_SIZE)
 }
 
 fn sidebar_icon_slot_with_size(icon_name: &str, icon_size: i32) -> gtk::Box {
@@ -3325,6 +3336,9 @@ fn sidebar_icon_slot_with_size(icon_name: &str, icon_size: i32) -> gtk::Box {
 
     let icon = gtk::Image::from_icon_name(icon_name);
     icon.set_pixel_size(icon_size);
+    icon.set_halign(gtk::Align::Start);
+    icon.set_valign(gtk::Align::Center);
+    icon.add_css_class("sidebar-navigation-icon");
     slot.append(&icon);
     slot
 }
@@ -3333,16 +3347,36 @@ fn sidebar_leading_slot() -> gtk::Box {
     let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     slot.add_css_class("sidebar-leading-slot");
     slot.set_size_request(SIDEBAR_DISCLOSURE_SLOT, SIDEBAR_ICON_SIZE);
+    slot.set_valign(gtk::Align::Center);
     slot
 }
 
-fn sidebar_count_label(count: i64) -> gtk::Label {
-    let label = gtk::Label::new(Some(&format_count(count)));
-    label.set_xalign(0.0);
-    label.set_valign(gtk::Align::Center);
-    label.add_css_class("dim-label");
-    label.add_css_class("sidebar-count");
-    label
+fn sidebar_count_column(
+    count: Option<i64>,
+    warning: Option<gtk::Button>,
+) -> (gtk::Box, Option<gtk::Label>) {
+    let trailing = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_COUNT_WARNING_SPACING);
+    trailing.set_valign(gtk::Align::Center);
+    trailing.add_css_class("sidebar-row-trailing");
+    // Warnings sit before the count so the numbers stay right-aligned.
+    // Online folders and normal navigation rows need no warning slot.
+    if let Some(warning) = warning {
+        trailing.append(&warning);
+    }
+
+    let count_label = if let Some(count) = count {
+        let count_label = gtk::Label::new(Some(&format_count(count)));
+        count_label.set_width_request(SIDEBAR_COUNT_WIDTH);
+        count_label.set_xalign(1.0);
+        count_label.set_valign(gtk::Align::Center);
+        count_label.add_css_class("dim-label");
+        count_label.add_css_class("sidebar-count");
+        trailing.append(&count_label);
+        Some(count_label)
+    } else {
+        None
+    };
+    (trailing, count_label)
 }
 
 fn append_filter(
@@ -3370,14 +3404,7 @@ fn append_filter(
     let title_label = gtk::Label::new(Some(title));
     title_label.set_xalign(0.0);
     title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let title_line = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
-    title_line.append(&title_label);
-    if let Some(count) = count {
-        let count_label = sidebar_count_label(count);
-        title_line.append(&count_label);
-        unsafe { row.set_data(FILTER_COUNT_LABEL_KEY, count_label) };
-    }
-    labels.append(&title_line);
+    labels.append(&title_label);
     if let Some(subtitle) = subtitle {
         let subtitle_label = gtk::Label::new(Some(subtitle));
         subtitle_label.set_xalign(0.0);
@@ -3385,9 +3412,11 @@ fn append_filter(
         subtitle_label.add_css_class("dim-label");
         labels.append(&subtitle_label);
     }
+    labels.set_hexpand(true);
+    labels.set_valign(gtk::Align::Center);
     content.append(&labels);
 
-    if offline {
+    let warning = if offline {
         let warning = gtk::Button::with_label("!");
         warning.add_css_class("sidebar-offline-badge");
         warning.set_halign(gtk::Align::Center);
@@ -3396,7 +3425,18 @@ fn append_filter(
         warning.set_tooltip_text(Some("Source folder unavailable"));
         let on_unavailable = on_unavailable.clone();
         warning.connect_clicked(move |_| (on_unavailable)());
-        content.append(&warning);
+        Some(warning)
+    } else {
+        None
+    };
+    if count.is_some() || warning.is_some() {
+        let (trailing, count_label) = sidebar_count_column(count, warning);
+        content.append(&trailing);
+        if let Some(count_label) = count_label {
+            unsafe {
+                row.set_data(FILTER_COUNT_LABEL_KEY, count_label);
+            }
+        }
     }
     row.set_child(Some(&content));
     unsafe {
@@ -3538,6 +3578,7 @@ fn collapsible_heading(
     label.set_hexpand(true);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.add_css_class("sidebar-section-heading-title");
+    label.set_valign(gtk::Align::Center);
     if let Some(title_action) = title_action {
         let click = gtk::GestureClick::new();
         // Left button only: the section heading itself carries a right-click
@@ -3580,6 +3621,7 @@ fn sidebar_action_button(icon_name: &str, tooltip: Option<&str>) -> gtk::Button 
     button.set_child(Some(&image));
     button.add_css_class("flat");
     button.add_css_class("sidebar-section-action");
+    button.set_valign(gtk::Align::Center);
     button.set_focusable(false);
     button.set_size_request(SIDEBAR_CONTROL_SIZE, SIDEBAR_CONTROL_SIZE);
     button.set_tooltip_text(tooltip);
@@ -3903,7 +3945,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn sidebar_counts_follow_labels_across_sections() {
+    fn sidebar_rows_share_alignment_and_right_aligned_counts() {
         gtk::init().unwrap();
         let display = gtk::gdk::Display::default().unwrap();
         crate::css::install_foundation(&display);
@@ -3948,6 +3990,7 @@ mod tests {
             assert_eq!(label.compute_bounds(&sidebar).unwrap().x(), 16.0, "{}", label.text());
         }
 
+        let mut count_right_edge = None;
         for (key, filter, nested) in [
             (LIBRARY_LIST_KEY, SidebarFilter::All, false),
             (ALBUM_LIST_KEY, SidebarFilter::Album(1), false),
@@ -3959,20 +4002,31 @@ mod tests {
             let row = row_for_filter(&list, filter).unwrap();
             let count = unsafe { row.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY).unwrap() };
             let count = unsafe { count.as_ref() };
-            let label = count.prev_sibling().and_downcast::<gtk::Label>().unwrap();
-            let label_bounds = label.compute_bounds(&sidebar).unwrap();
             let count_bounds = count.compute_bounds(&sidebar).unwrap();
-            let gap = count_bounds.x() - label_bounds.x() - label_bounds.width();
-            assert_eq!(gap, SIDEBAR_ITEM_SPACING as f32, "{filter:?}");
-            assert_eq!(count.xalign(), 0.0, "{filter:?}");
+            let right = count_bounds.x() + count_bounds.width();
+            assert_eq!(count.xalign(), 1.0, "{filter:?}");
+            assert_eq!(*count_right_edge.get_or_insert(right), right, "{filter:?}");
+
             let leading = row.child().unwrap().first_child().unwrap();
-            let icon = if nested { leading.next_sibling().unwrap() } else { leading };
-            let icon_x = icon.compute_bounds(&sidebar).unwrap().x();
-            if nested {
-                assert!(icon_x > 16.0 && label_bounds.x() > 42.0, "{filter:?}");
+            let slot = if nested { leading.next_sibling().unwrap() } else { leading };
+            let icon = slot.first_child().and_downcast::<gtk::Image>().unwrap();
+            let title = slot.next_sibling().unwrap();
+            let title = if title.is::<gtk::Box>() {
+                title.first_child().unwrap()
             } else {
-                assert_eq!(icon_x, 16.0, "{filter:?}");
-                assert_eq!(label_bounds.x(), 42.0, "{filter:?}");
+                title
+            };
+            let icon_bounds = icon.compute_bounds(&sidebar).unwrap();
+            let title_bounds = title.compute_bounds(&sidebar).unwrap();
+            let middle_y = |bounds: gtk::graphene::Rect| bounds.y() + bounds.height() / 2.0;
+            assert_eq!(icon.pixel_size(), 16, "{filter:?}");
+            assert!((middle_y(icon_bounds) - middle_y(title_bounds)).abs() <= 1.0, "{filter:?}");
+            assert!((middle_y(count_bounds) - middle_y(title_bounds)).abs() <= 1.0, "{filter:?}");
+            if nested {
+                assert!(icon_bounds.x() > 16.0 && title_bounds.x() > 42.0, "{filter:?}");
+            } else {
+                assert_eq!(icon_bounds.x(), 16.0, "{filter:?}");
+                assert_eq!(title_bounds.x(), 42.0, "{filter:?}");
             }
         }
         window.close();
@@ -4404,11 +4458,7 @@ mod tests {
         );
         let count = unsafe { row_five.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY).unwrap() };
         assert_eq!(unsafe { count.as_ref() }.text(), "50");
-        let arrow = header_content
-            .last_child()
-            .unwrap()
-            .downcast::<gtk::Button>()
-            .unwrap();
+        let arrow = stored_widget::<gtk::Button>(&sidebar, RATING_INDICATOR_KEY).unwrap();
         arrow.emit_by_name::<()>("clicked", &[]);
         assert!(!stored_rating_expanded(&sidebar).get());
         assert_eq!(selected.get(), Some(SidebarFilter::Rating(5)));

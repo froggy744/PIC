@@ -17,6 +17,7 @@ use rusqlite::Connection;
 use crate::{db, edit, thumbnail};
 mod gpu;
 mod matrix;
+mod style;
 
 const STYLE_KEY: &str = "screensaver-style";
 const TERMINAL_STYLE_KEY: &str = "screensaver-terminal-style";

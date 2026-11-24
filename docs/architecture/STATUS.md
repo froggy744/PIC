@@ -34,7 +34,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 4 | InfoBar decides what it shows | Strong | merged | merge `9756c44f` (`refactor/infobar-presentation`) | `src/infobar_presentation.rs` (pure), `src/infobar.rs` (GTK adapter) |
 | 5 | One gallery scroll-motion module | Worth exploring | merged | merge `c169225e` (`refactor/gallery-scroll-motion`) | `src/window/scroll_motion.rs` (pure), `src/window/build.rs` (GTK adapter); wheel glide stays in `src/window/navigation.rs` |
 | 6 | Zoom slider router | Worth exploring | merged | merge `9c9c64ff` (`refactor/zoom-slider-router`) | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
-| 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
+| 7 | Editor preview plan | Worth exploring | closed 2026-11-24 (diagnostic only; see its section) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | merged | merge `dece41f2` (`refactor/screensaver-style-spec`) | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
@@ -528,7 +528,7 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - Display (Xvfb, one process each): 8 of the 9 screensaver display tests pass. `screensaver_coverflow_renders_in_a_live_gtk_window` fails on `main` too (empty screenshot; it needs real OpenGL, which this Xvfb lacks, with Cairo or GL renderer).
 - GUI harness `screensaver`: its report ends at the editing prerequisites (27 PASS, 2 FAIL: the pre-existing editor checks below), so it reached no screensaver step.
 - The owner checked Cover Flow and the other styles by hand: working.
-- **Pre-existing, found on 2026-11-24:** GUI harness `editing` fails "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand, so the harness checks themselves need a look. Undo history is per editing session by design; it does not survive closing the photo.
+- **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
 
 ### Next (updated 2026-11-24, after 5 and the 11 follow-up)
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).
@@ -537,7 +537,10 @@ Open candidates, in order:
 1. ~~5 · One gallery scroll-motion module.~~ Merged 2026-11-24 (`c169225e`). The owner dragged both scrollbars and is happy with them; the gallery scrollbar also got a browser-style handle (`feat/gallery-scrollbar-look`, merge `92693c80`).
 2. ~~11's follow-up~~ (library switch viewport, Exit / library-switch check). Done 2026-11-24, see "11 follow-up" under 11.
 3. ~~8 · Screensaver style descriptor.~~ Merged 2026-11-24, see its section.
-4. Open: 7 (diagnostic only; can be closed with a note), and the two GUI harness editor checks that fail on `main` (see 8's verification). 7 (diagnostic only) can wait, or be closed with a note.
+4. ~~7 · Editor preview plan.~~ Closed 2026-11-24 with a note (see its section).
+5. ~~The two GUI harness editor checks.~~ Fixed 2026-11-24: the harness clicked Undo, Redo, Reset and the screensaver Start button at positions the header and dialog changes had moved. It now presses them by AT-SPI label (`fix/gui-harness-editor-checks`): `editing` 39/39, and `screensaver` 45/45 (it now reaches playback, the fullscreen window, the transition and both exits).
+
+All candidates from both review rounds are merged or closed. A new review round (`mattpocock-skills:improve-codebase-architecture`) is the next step when the owner wants one. 7 (diagnostic only) can wait, or be closed with a note.
 
 How the owner works with these (from this session):
 - Each candidate: investigation, then decisions recorded here, then a branch, staged commits (pure module test-first, GTK adapter, owner rule, docs), then verification, merge with a merge commit, push.
@@ -545,7 +548,9 @@ How the owner works with these (from this session):
 - The owner has allowed deciding open questions autonomously and merging and pushing on success; say what was decided and why. On 2026-11-23 the agent's `git merge` into `main` was refused by the auto-mode permission check; on 2026-11-24 it worked after the owner said "merge push". Ask when unsure.
 - Pre-existing, not caused by today's work: two metadata panel display tests fail on `main` too (see 13); 3 dead-code warnings in `db/photos.rs` and `grid/honeycomb_raster.rs`.
 
-### 7 · Editor preview plan
+### 7 · Editor preview plan (closed 2026-11-24)
+**Closed by the owner's choice (2026-11-24)**, who took 11's follow-up and 8 instead. Nothing on screen depends on it: the wrong reason only mislabels the `PIC_EDIT_RENDERER renderer=cpu_fallback` trace. Reopen if that trace misleads a diagnosis, or if the renderer choice (`editor.rs:1270`) and its hand-built copy (`:1529`, `has_source_for`) drift; the facts below still hold at `dece41f2`.
+
 **Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.
 
 Re-checked 2026-11-23 (round two): the wrong reason only mislabels the trace; it never changes the renderer.

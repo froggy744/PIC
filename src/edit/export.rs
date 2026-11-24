@@ -47,12 +47,9 @@ fn present_quick_save_error(parent: &gtk::Window, heading: &str, error: &str) {
     dialog.present(Some(parent));
 }
 
-/// Copy: put the edited image on the clipboard as PNG, so it can be pasted
-/// into a chat or another app. It renders and encodes through the export
-/// path off the main thread; the button shows a check mark for a moment
-/// once it is copied.
-/// The clipboard is served by PIC, so the image stays pasteable while PIC
-/// runs (or longer when the desktop keeps a clipboard history).
+/// Copy: put the edited image on the clipboard as PNG
+/// (`quick_save::copy_to_clipboard`), so it can be pasted into a chat or
+/// another app. The button shows a check mark for a moment once copied.
 fn connect_copy_action(
     copy: &gtk::Button,
     photo: crate::photo_object::PhotoObject,
@@ -66,27 +63,14 @@ fn connect_copy_action(
         apply_crop();
         let job = current_edit_job(&photo, &session, &active_rotation);
         copy.set_sensitive(false);
-        let copy = copy.clone();
+        let button = copy.clone();
         let parent = parent.clone();
         let tooltip = tooltip.clone();
-        glib::MainContext::default().spawn_local(async move {
-            let rendered = gio::spawn_blocking(move || {
-                super::quick_save::clipboard_png(&job).map_err(|error| format!("{error:#}"))
-            })
-            .await
-            .unwrap_or_else(|_| Err("the renderer stopped unexpectedly".to_string()));
+        super::quick_save::copy_to_clipboard(copy.clipboard(), job, move |copied| {
+            let copy = button;
             copy.set_sensitive(true);
-            let png = match rendered {
-                Ok(png) => png,
-                Err(error) => {
-                    present_quick_save_error(&parent, "Could not copy the photo", &error);
-                    return;
-                }
-            };
-            let content =
-                gtk::gdk::ContentProvider::for_bytes("image/png", &glib::Bytes::from_owned(png));
-            if let Err(error) = copy.clipboard().set_content(Some(&content)) {
-                present_quick_save_error(&parent, "Could not copy the photo", &error.to_string());
+            if let Err(error) = copied {
+                present_quick_save_error(&parent, "Could not copy the photo", &error);
                 return;
             }
             copy.set_icon_name("object-select-symbolic");

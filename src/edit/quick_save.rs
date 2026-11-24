@@ -70,6 +70,34 @@ pub fn clipboard_png(job: &ExportJob) -> Result<Vec<u8>> {
     encode_png(&render_job(job)?)
 }
 
+/// Render `job` off the main thread and put it on `clipboard` as PNG
+/// (see `clipboard_png`). `done` runs on the main thread with the outcome.
+/// The clipboard is served by PIC, so the image stays pasteable while PIC
+/// runs (or longer when the desktop keeps a clipboard history).
+pub fn copy_to_clipboard(
+    clipboard: gtk4::gdk::Clipboard,
+    job: ExportJob,
+    done: impl FnOnce(std::result::Result<(), String>) + 'static,
+) {
+    glib::MainContext::default().spawn_local(async move {
+        let png = gio::spawn_blocking(move || {
+            clipboard_png(&job).map_err(|error| format!("{error:#}"))
+        })
+        .await
+        .unwrap_or_else(|_| Err("the renderer stopped unexpectedly".to_string()));
+        let copied = png.and_then(|png| {
+            let content = gtk4::gdk::ContentProvider::for_bytes(
+                "image/png",
+                &glib::Bytes::from_owned(png),
+            );
+            clipboard
+                .set_content(Some(&content))
+                .map_err(|error| error.to_string())
+        });
+        done(copied);
+    });
+}
+
 fn encode_png(image: &RgbaImage) -> Result<Vec<u8>> {
     use image::ImageEncoder;
     let mut bytes = Vec::new();

@@ -5011,23 +5011,7 @@ fn start_photo_export_single(
         // scalar/string values into the print requests; the renders happen on
         // a worker thread while the dialog runs here.
         let ids = gallery_for_print.selected_photo_ids(Some(photo.id()));
-        let requests: Vec<PhotoPrintRequest> = ids
-            .iter()
-            .filter_map(|id| db::photo(&connection_for_print.borrow(), *id).ok().flatten())
-            .map(|record| PhotoPrintRequest {
-                job_name: record
-                    .path
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or("photo")
-                    .to_string(),
-                reference: record.path,
-                rotation: record.rotation,
-                edit_recipe: record.edit_recipe,
-                source_width: record.width.unwrap_or(0),
-                source_height: record.height.unwrap_or(0),
-            })
-            .collect();
+        let requests = photo_print_requests(&connection_for_print.borrow(), &ids);
 
         print_photos(&window_for_print, &connection_for_print, requests);
     });

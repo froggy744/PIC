@@ -654,7 +654,6 @@ fn show_photo_context_menu(
         separator.add_css_class("photo-context-separator");
         menu.append(&separator);
     }
-    let move_file = add_action("Move…");
     let rename = add_action("Rename…");
     let file_manager = add_action("Open in File Manager");
     let wallpaper = add_action("Set as Wallpaper");
@@ -682,7 +681,7 @@ fn show_photo_context_menu(
     delete.add_css_class("destructive-action");
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(&photo.path()) {
-        for action in [&move_file, &rename, &file_manager, &delete] {
+        for action in [&rename, &file_manager, &delete] {
             action.set_sensitive(false);
             action.set_tooltip_text(Some("Direct network shares are read-only inside PIC; no desktop mount or remote write is attempted"));
         }
@@ -874,11 +873,49 @@ fn show_photo_context_menu(
         });
     });
 
-    // These actions are not implemented yet; do not present them as working
-    // commands that merely close the menu.
-    copy.set_sensitive(false);
-    move_file.set_sensitive(false);
-    print.set_sensitive(false);
+    // Copy puts the clicked photo, edits applied, on the clipboard as PNG,
+    // the same as the editor's Copy button.
+    {
+        let photo = photo.clone();
+        let window = context.window.clone();
+        let display = anchor.display();
+        let dismiss_menu = dismiss_menu.clone();
+        copy.connect_clicked(move |_| {
+            dismiss_menu();
+            let job = crate::edit::export_batch::ExportJob::from_record(
+                photo.path(),
+                photo.rotation(),
+                photo.edit_recipe(),
+                photo.width(),
+                photo.height(),
+                &photo.filename(),
+            );
+            let window = window.clone();
+            crate::edit::quick_save::copy_to_clipboard(display.clipboard(), job, move |copied| {
+                if let (Err(error), Some(window)) = (copied, window.upgrade()) {
+                    show_error(window.upcast_ref(), "Could not copy the photo", &error);
+                }
+            });
+        });
+    }
+    // Print runs the InfoBar's print flow on the same photos the menu acts on.
+    {
+        let photo = photo.clone();
+        let context = context.clone();
+        let ids = selection_ids.clone();
+        let dismiss_menu = dismiss_menu.clone();
+        print.connect_clicked(move |_| {
+            dismiss_menu();
+            let requests = if photo.is_outside_library() {
+                vec![print_request_for_object(&photo)]
+            } else {
+                photo_print_requests(&context.connection.borrow(), &ids)
+            };
+            if let Some(window) = context.window.upgrade() {
+                print_photos(&window, &context.connection, requests);
+            }
+        });
+    }
 
     if outside_library {
         for action in [
@@ -890,10 +927,7 @@ fn show_photo_context_menu(
             Some(&reset_edits),
             Some(&favorite),
             open_in_folder.as_ref(),
-            Some(&copy),
-            Some(&move_file),
             Some(&rename),
-            Some(&print),
             Some(&delete),
         ]
         .into_iter()
@@ -1045,6 +1079,40 @@ fn show_photo_context_menu(
                 glib::ControlFlow::Continue
             }
         });
+    }
+}
+
+/// Print requests for library photos, read fresh from the catalogue.
+/// `PhotoObject` stays on the GTK thread; the requests carry plain values
+/// for the background renders.
+fn photo_print_requests(connection: &Connection, ids: &[i64]) -> Vec<PhotoPrintRequest> {
+    ids.iter()
+        .filter_map(|id| db::photo(connection, *id).ok().flatten())
+        .map(|record| PhotoPrintRequest {
+            job_name: record
+                .path
+                .rsplit('/')
+                .next()
+                .unwrap_or("photo")
+                .to_string(),
+            reference: record.path,
+            rotation: record.rotation,
+            edit_recipe: record.edit_recipe,
+            source_width: record.width.unwrap_or(0),
+            source_height: record.height.unwrap_or(0),
+        })
+        .collect()
+}
+
+/// The print request for a photo outside the library (no catalogue row).
+fn print_request_for_object(photo: &crate::photo_object::PhotoObject) -> PhotoPrintRequest {
+    PhotoPrintRequest {
+        job_name: photo.filename(),
+        reference: photo.path(),
+        rotation: photo.rotation(),
+        edit_recipe: photo.edit_recipe(),
+        source_width: photo.width(),
+        source_height: photo.height(),
     }
 }
 
@@ -2064,6 +2132,32 @@ fn show_error(parent: &gtk::Widget, heading: &str, message: &str) {
         .build();
     dialog.add_response("close", "Close");
     dialog.present(Some(parent));
+}
+
+#[cfg(test)]
+mod photo_print_request_tests {
+    use super::*;
+
+    #[test]
+    fn print_requests_read_library_photos_fresh_and_skip_unknown_ids() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        connection
+            .execute(
+                "INSERT INTO photos (id, path, width, height, rotation, edit_recipe)
+                 VALUES (7, '/p/IMG_7.jpg', 4000, 3000, 90, 'recipe')",
+                [],
+            )
+            .unwrap();
+        let requests = photo_print_requests(&connection, &[7, 99]);
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert_eq!(request.job_name, "IMG_7.jpg");
+        assert_eq!(request.reference, "/p/IMG_7.jpg");
+        assert_eq!((request.source_width, request.source_height), (4000, 3000));
+        assert_eq!(request.rotation, 90);
+        assert_eq!(request.edit_recipe, "recipe");
+    }
 }
 
 #[cfg(test)]

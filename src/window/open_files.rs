@@ -81,6 +81,64 @@ fn photo_objects(connection: &Connection, paths: &[PathBuf]) -> Vec<PhotoObject>
         .collect()
 }
 
+/// Read the dimensions and capture facts of a photo outside the library
+/// before it is edited: crop, straighten and the preview bounds need its
+/// real size, which opening the folder does not read for every file.
+pub(crate) fn load_outside_metadata(photo: &PhotoObject) {
+    if !photo.is_outside_library() || (photo.width() > 0 && photo.height() > 0) {
+        return;
+    }
+    let path = photo.path();
+    let metadata = crate::source::file(&path)
+        .query_info(
+            "time::modified,standard::size",
+            gio::FileQueryInfoFlags::NONE,
+            gio::Cancellable::NONE,
+        )
+        .map_err(anyhow::Error::from)
+        .and_then(|info| crate::scanner::read_metadata(&path, &info));
+    let metadata = match metadata {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            eprintln!("PIC: could not read {path}: {error:#}");
+            return;
+        }
+    };
+    photo.set_width(metadata.width.unwrap_or_default());
+    photo.set_height(metadata.height.unwrap_or_default());
+    if let Some(taken_at) = metadata.taken_at.as_deref() {
+        photo.set_taken_at(taken_at);
+    }
+    if let Some(camera) = metadata.camera.as_deref() {
+        photo.set_camera(camera);
+    }
+    photo.set_aperture(metadata.aperture.unwrap_or_default());
+    photo.set_iso(metadata.iso.unwrap_or_default());
+    photo.set_shutter_speed(metadata.shutter_speed.unwrap_or_default());
+    photo.set_focal_length(metadata.focal_length.unwrap_or_default());
+}
+
+/// The viewer to return to after editing photo `id` of `viewer`: on the
+/// saved copy, placed right after its original, or else on the photo.
+pub(crate) fn viewer_after_edit(
+    mut viewer: Vec<PhotoObject>,
+    id: i64,
+    saved_copy: Option<PathBuf>,
+) -> (Vec<PhotoObject>, usize) {
+    let index = viewer
+        .iter()
+        .position(|photo| photo.id() == id)
+        .unwrap_or_default();
+    match saved_copy {
+        Some(path) => {
+            let at = (index + 1).min(viewer.len());
+            viewer.insert(at, PhotoObject::outside_library(&path));
+            (viewer, at)
+        }
+        None => (viewer, index),
+    }
+}
+
 /// Install the window's `open-paths` action. Paths that arrive before the
 /// window is mapped (a cold start from the file manager) open once it is.
 pub(crate) fn install(
@@ -230,6 +288,23 @@ mod tests {
     }
 
     #[test]
+    fn after_save_copy_the_viewer_opens_on_the_copy_beside_its_original() {
+        let viewer = ["/p/a.png", "/p/b.png", "/p/c.png"]
+            .map(|path| PhotoObject::outside_library(Path::new(path)))
+            .to_vec();
+        let edited = viewer[1].id();
+        let (photos, index) =
+            viewer_after_edit(viewer.clone(), edited, Some(PathBuf::from("/p/b_edit.png")));
+        let paths = photos.iter().map(PhotoObject::path).collect::<Vec<_>>();
+        assert_eq!(paths, ["/p/a.png", "/p/b.png", "/p/b_edit.png", "/p/c.png"]);
+        assert_eq!(index, 2);
+        assert!(photos[2].is_outside_library());
+        let (photos, index) = viewer_after_edit(viewer, edited, None);
+        assert_eq!(photos.len(), 3);
+        assert_eq!(index, 1);
+    }
+
+    #[test]
     fn catalogued_paths_open_as_library_photos_and_others_outside_it() {
         let connection = Connection::open_in_memory().expect("database");
         connection.execute_batch(db::SCHEMA).expect("schema");
@@ -285,10 +360,10 @@ mod window_tests {
 
     // xvfb-run -a -s "-screen 0 1920x1080x24" env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
     //   GSK_RENDERER=cairo cargo test --locked -- --test-threads=1 --exact \
-    //   window::open_files::window_tests::cold_start_opens_an_outside_photo_in_the_viewer --ignored
+    //   window::open_files::window_tests::outside_photo_opens_in_the_viewer_and_saves_an_edited_copy --ignored
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn cold_start_opens_an_outside_photo_in_the_viewer() {
+    fn outside_photo_opens_in_the_viewer_and_saves_an_edited_copy() {
         adw::init().unwrap();
         let app = adw::Application::builder()
             .application_id("io.pic.OpenFilesTest")
@@ -303,7 +378,9 @@ mod window_tests {
                 .save(photos.join(name))
                 .unwrap();
         }
-        let connection = db::open(&directory.join("library.db")).unwrap();
+        let original = std::fs::read(photos.join("b.jpg")).unwrap();
+        let database = directory.join("library.db");
+        let connection = db::open(&database).unwrap();
         for (key, value) in [
             (LAST_VIEW_SETTING_KEY, "all"),
             ("onboarding-never-show", "true"),
@@ -335,6 +412,17 @@ mod window_tests {
                 .is_some_and(|label| label.text() == "b.jpg" && label.is_drawable())),
             "the opened photo is not the one shown"
         );
+        // Only the file name and size are shown for an outside photo.
+        let shown_metrics = widgets
+            .iter()
+            .filter_map(|widget| widget.downcast_ref::<gtk::Label>())
+            .filter(|label| label.has_css_class("metric-key") && label.is_drawable())
+            .map(|label| label.text().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            shown_metrics == ["File name", "Size"],
+            "an outside photo shows {shown_metrics:?}"
+        );
         let favourite = widgets
             .iter()
             .find(|widget| {
@@ -346,6 +434,60 @@ mod window_tests {
             !favourite.is_sensitive(),
             "library actions stay enabled for a photo outside the library"
         );
+        let button = |widgets: &[gtk::Widget], matches: &dyn Fn(&gtk::Widget) -> bool| {
+            widgets
+                .iter()
+                .find(|widget| {
+                    widget.is::<gtk::Button>() && widget.is_drawable() && matches(widget)
+                })
+                .cloned()
+                .and_downcast::<gtk::Button>()
+        };
+        let edit = button(&widgets, &|widget| {
+            widget.tooltip_text().as_deref() == Some("Open or close photo editor")
+        })
+        .expect("Edit button missing");
+        assert!(
+            edit.is_sensitive(),
+            "Edit is disabled for a photo outside the library"
+        );
+        edit.emit_clicked();
+        settle();
+
+        let widgets = descendants(root);
+        let save_copy = button(&widgets, &|widget| {
+            descendants(widget).iter().any(|child| {
+                child
+                    .downcast_ref::<gtk::Label>()
+                    .is_some_and(|label| label.text() == "Save Copy")
+            })
+        })
+        .expect("the editor did not offer Save Copy");
+        assert!(
+            button(&widgets, &|widget| widget.tooltip_text().as_deref()
+                == Some("Copy the edited photo to paste into another app"))
+            .is_some(),
+            "the editor has no Copy button"
+        );
+        save_copy.emit_clicked();
+        settle();
+        settle();
+
+        let copy = photos.join("b_edit.jpg");
+        assert!(copy.is_file(), "Save Copy wrote no file");
+        assert_eq!(std::fs::read(photos.join("b.jpg")).unwrap(), original);
+        let widgets = descendants(root);
+        assert!(
+            widgets.iter().any(|widget| widget
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|label| label.text() == "b_edit.jpg" && label.is_drawable())),
+            "the viewer did not return on the saved copy"
+        );
+        let library = db::open_existing(&database).unwrap();
+        let catalogued: i64 = library
+            .query_row("SELECT COUNT(*) FROM photos", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(catalogued, 0, "editing added the photo to the library");
         window.close();
         let _ = std::fs::remove_dir_all(&directory);
     }

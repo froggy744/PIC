@@ -1159,6 +1159,17 @@ impl InfoBar {
             .filter(|photo| !photo.is_outside_library())
     }
 
+    /// The photo Edit opens: the current photo, or the shown photo when it
+    /// is outside the library (its editor saves a copy instead of a recipe).
+    pub(crate) fn editable_photo(&self) -> Option<PhotoObject> {
+        let id = self.presentation.borrow().target().photo?;
+        self.written
+            .borrow()
+            .as_ref()
+            .map(|written| written.photo.clone())
+            .filter(|photo| photo.id() == id)
+    }
+
     fn remember_selection(&self, count: usize, photos: &[PhotoObject]) -> SelectionSample {
         self.selection_photos.replace(photos.to_vec());
         SelectionSample::new(count, photos.iter().map(PhotoObject::id).collect())
@@ -1412,12 +1423,7 @@ impl InfoBar {
     fn write_collage(&self, target: &InfoBarTarget) {
         self.view_toggle
             .set_sensitive(target.gallery_controls_enabled());
-        let outside = self
-            .written
-            .borrow()
-            .as_ref()
-            .is_some_and(|written| written.photo.is_outside_library());
-        self.edit.set_sensitive(target.edit_enabled() && !outside);
+        self.edit.set_sensitive(target.edit_enabled());
         // Collage has no presentation zoom. Disable the shared zoom slider
         // instead of letting it fall through and resize the hidden Gallery.
         self.grid_zoom
@@ -1487,7 +1493,16 @@ impl InfoBar {
             return;
         };
 
-        let summary = PhotoSummary::of(&photo_facts(photo));
+        let mut summary = PhotoSummary::of(&photo_facts(photo));
+        if photo.is_outside_library() {
+            // A file opened from outside the library shows its name and file
+            // size only: its capture facts were never read (the editor loads
+            // them later), so Taken would show the file's date, Dimensions
+            // nothing, and both would change under the viewer after an edit.
+            let size = std::mem::take(&mut summary.metrics[3]);
+            summary.metrics = Default::default();
+            summary.metrics[3] = size;
+        }
         let preview = PreviewInputs::of(photo);
         let same_photo = previous
             .as_ref()
@@ -1530,7 +1545,7 @@ impl InfoBar {
             let actions = target.photo_actions_enabled() && !outside;
             self.favorite.set_sensitive(actions);
             self.rating.set_sensitive(actions);
-            self.edit.set_sensitive(target.edit_enabled() && !outside);
+            self.edit.set_sensitive(target.edit_enabled());
             self.add_to_album.set_sensitive(actions);
             self.rotate.set_sensitive(actions);
             self.export.set_sensitive(actions);

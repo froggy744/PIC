@@ -3827,7 +3827,19 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             })
         };
         edit_open_slot.replace(Some(Rc::new(move |id| {
-            let Some(db_photo) = db::photo(&connection.borrow(), id).ok().flatten() else {
+            // A photo outside the library has no row: it is the viewer's
+            // photo, and closing the editor returns to that viewer.
+            let outside_viewer = (id < 0).then(|| lightbox.photos());
+            let photo = match &outside_viewer {
+                Some(viewer) => viewer.iter().find(|photo| photo.id() == id).cloned().inspect(|photo| {
+                    open_files::load_outside_metadata(photo);
+                }),
+                None => db::photo(&connection.borrow(), id)
+                    .ok()
+                    .flatten()
+                    .map(|photo| crate::photo_object::PhotoObject::from_photo(&photo)),
+            };
+            let Some(photo) = photo else {
                 // The open failed; drop any pending collage-edit marker so
                 // the flag cannot get stuck and spare the collage forever.
                 collage_editing.set(false);
@@ -3844,8 +3856,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             while let Some(child) = edit_page.first_child() {
                 edit_page.remove(&child);
             }
-            let photo = crate::photo_object::PhotoObject::from_photo(&db_photo);
             let trace_uri = photo.path();
+            // Save Copy reports the new file; the viewer then opens on it.
+            let saved_copy: Rc<RefCell<Option<std::path::PathBuf>>> = Rc::new(RefCell::new(None));
             crate::thumbnail_trace::event(&trace_uri, "editor", "opened");
             info.one_to_one.set_active(false);
             let close = {
@@ -3860,13 +3873,21 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let collage_editor = collage_editor.clone();
                 let connection = connection.clone();
                 let trace_uri = trace_uri.clone();
+                let lightbox = lightbox.clone();
+                let outside_viewer = outside_viewer.clone();
+                let saved_copy = saved_copy.clone();
                 Rc::new(move || {
                     crate::thumbnail_trace::event(&trace_uri, "editor", "closed");
                     edit_space_slot.borrow_mut().take();
                     edit_escape_slot.borrow_mut().take();
                     one_to_one.set_active(false);
                     let returning_to_collage = collage_editing.get();
-                    if returning_to_collage {
+                    if let Some(viewer) = outside_viewer.clone() {
+                        main_stack.set_visible_child_name("photos");
+                        let (photos, index) =
+                            open_files::viewer_after_edit(viewer, id, saved_copy.borrow_mut().take());
+                        lightbox.open(photos, index);
+                    } else if returning_to_collage {
                         // Bring the collage tile up to date with any edits
                         // saved during this detour.
                         if let Ok(editor_handle) = collage_editor.try_borrow() {
@@ -3918,6 +3939,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let one_to_one = info.one_to_one.clone();
                 editor.set_one_to_one_sync_handler(move |enabled| {
                     one_to_one.set_active(enabled);
+                });
+            }
+            {
+                let saved_copy = saved_copy.clone();
+                editor.set_copy_saved_handler(move |path| {
+                    saved_copy.replace(Some(path));
                 });
             }
             {

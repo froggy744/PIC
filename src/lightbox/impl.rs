@@ -1788,6 +1788,11 @@ impl Lightbox {
         self.open_internal(photos, selected, None);
     }
 
+    /// The photos the viewer is browsing, in order.
+    pub fn photos(&self) -> Vec<PhotoObject> {
+        self.photos.borrow().clone()
+    }
+
     pub fn current_photo(&self) -> Option<PhotoObject> {
         self.photos.borrow().get(self.index.get()).cloned()
     }

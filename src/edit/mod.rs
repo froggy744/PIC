@@ -8,6 +8,7 @@ pub mod filters;
 pub mod live_gpu;
 pub mod model;
 pub mod overlays;
+pub mod quick_save;
 pub mod render;
 pub mod text_render;
 

@@ -31,6 +31,7 @@ pub struct EditEditor {
     zoom_sync: Rc<RefCell<Option<Box<dyn Fn(f64, f64)>>>>,
     text_toggle: gtk::ToggleButton,
     escape_action: Rc<dyn Fn()>,
+    copy_saved: Rc<RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
 }
 
 impl EditEditor {
@@ -72,6 +73,12 @@ impl EditEditor {
 
     pub fn set_one_to_one_sync_handler(&self, handler: impl Fn(bool) + 'static) {
         self.one_to_one_sync.replace(Some(Box::new(handler)));
+    }
+
+    /// Reports the new file after Save Copy (photos outside the library),
+    /// just before the editor closes.
+    pub fn set_copy_saved_handler(&self, handler: impl Fn(std::path::PathBuf) + 'static) {
+        self.copy_saved.replace(Some(Box::new(handler)));
     }
 
     /// Reports absolute native-image scale together with the current Fit scale
@@ -293,12 +300,29 @@ pub fn build(
         "Export the current edited photo (size and file type)",
     );
     toolbar_actions.append(&export);
+    let copy = toolbar_icon_button(
+        "edit-copy-symbolic",
+        "Copy the edited photo to paste into another app",
+    );
+    toolbar_actions.append(&copy);
     append_action_separator();
 
     let done = gtk::Button::new();
     let done_content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
     done_content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
-    done_content.append(&gtk::Label::new(Some("Done")));
+    // A photo outside the library has no catalogue row to keep its edits,
+    // so its editor saves them as a new file instead.
+    let outside_library = photo.is_outside_library();
+    done_content.append(&gtk::Label::new(Some(if outside_library {
+        "Save Copy"
+    } else {
+        "Done"
+    })));
+    if outside_library {
+        done.set_tooltip_text(Some(
+            "Save the edited photo as a new file next to the original",
+        ));
+    }
     done.set_child(Some(&done_content));
     done.add_css_class("suggested-action");
     done.add_css_class("edit-toolbar-done");
@@ -2537,15 +2561,50 @@ pub fn build(
         })
     };
 
+    // Leaving without saving. Library photos keep their saved recipe, so
+    // they close at once; unsaved edits of a photo outside the library
+    // exist nowhere else, so ask before dropping them.
+    let request_close: Rc<dyn Fn()> = {
+        let session = session.clone();
+        let photo = photo.clone();
+        let on_close = on_close.clone();
+        let parent = parent.clone();
+        Rc::new(move || {
+            let unsaved = photo.is_outside_library()
+                && session.borrow().recipe.encode() != photo.edit_recipe()
+                && super::export_batch::recipe_is_edited(&session.borrow().recipe.encode());
+            if !unsaved {
+                on_close();
+                return;
+            }
+            let dialog = adw::AlertDialog::builder()
+                .heading("Discard edits?")
+                .body("This photo is not in the library, so unsaved edits are lost. Use Save Copy or Copy to keep them.")
+                .close_response("cancel")
+                .default_response("cancel")
+                .build();
+            dialog.add_response("cancel", "Keep Editing");
+            dialog.add_response("discard", "Discard");
+            dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+            let on_close = on_close.clone();
+            dialog.connect_response(None, move |_, response| {
+                if response == "discard" {
+                    on_close();
+                }
+            });
+            dialog.present(Some(&parent));
+        })
+    };
+
     let escape_action: Rc<dyn Fn()> = {
         let crop_overlay = crop_overlay.clone();
         let cancel_crop = cancel_crop.clone();
-        let on_close = on_close.clone();
+        let request_close = request_close.clone();
         Rc::new(move || {
             if crop_overlay.is_visible() {
                 cancel_crop();
             } else {
-                on_close();
+                request_close();
             }
         })
     };
@@ -2939,8 +2998,8 @@ pub fn build(
     redraw_overlay_canvas();
 
     {
-        let on_close = on_close.clone();
-        back.connect_clicked(move |_| on_close());
+        let request_close = request_close.clone();
+        back.connect_clicked(move |_| request_close());
     }
     connect_export_action(
         &export,
@@ -2951,7 +3010,28 @@ pub fn build(
         start_export.clone(),
     );
 
-    {
+    connect_copy_action(
+        &copy,
+        photo.clone(),
+        session.clone(),
+        active_rotation.clone(),
+        apply_crop.clone(),
+        parent.clone(),
+    );
+    let copy_saved: Rc<RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>> =
+        Rc::new(RefCell::new(None));
+    if outside_library {
+        connect_save_copy_action(
+            &done,
+            photo.clone(),
+            session.clone(),
+            active_rotation.clone(),
+            apply_crop.clone(),
+            parent.clone(),
+            on_close.clone(),
+            copy_saved.clone(),
+        );
+    } else {
         let connection = connection.clone();
         let session = session.clone();
         let photo = photo.clone();
@@ -2996,6 +3076,7 @@ pub fn build(
         zoom_sync,
         text_toggle,
         escape_action,
+        copy_saved,
     }
 }
 

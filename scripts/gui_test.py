@@ -238,6 +238,43 @@ def find_accessible(role: str, name: str):
     return None
 
 
+def find_button(label: str):
+    """A showing button whose accessible name or description is `label`.
+    Icon-only buttons (the editor toolbar) carry their tooltip only as the
+    description."""
+    wanted = label.casefold()
+    for node in accessible_nodes() or ():
+        try:
+            if (node.getRoleName() == "button"
+                    and node.getState().contains(pyatspi.STATE_SHOWING)
+                    and wanted in {(node.name or "").casefold(), (node.description or "").casefold()}):
+                return node
+        except Exception:
+            continue
+    return None
+
+
+def press_button(label: str) -> bool:
+    """Press a button once, by its label, as a click would. A disabled button
+    is not pressed (returns False), like a click on a greyed-out control."""
+    node = find_button(label)
+    if node is None:
+        raise RuntimeError(f"button {label!r} not found")
+    if not node.getState().contains(pyatspi.STATE_SENSITIVE):
+        return False
+    actions = node.queryAction()
+    for index in range(actions.nActions):
+        if actions.getName(index) in {"click", "press"}:
+            return bool(actions.doAction(index))
+    return False
+
+
+def button_enabled(label: str) -> int:
+    """1 when the button is enabled, 0 when it is greyed out."""
+    node = find_button(label)
+    return int(node is not None and node.getState().contains(pyatspi.STATE_SENSITIVE))
+
+
 def select_accessible_list_item(name: str, timeout: float = 5):
     """Select a showing list row by its accessible name, through its list's
     AT-SPI Selection interface. GTK 4 reports no screen extents for rows, so
@@ -1257,25 +1294,24 @@ def smoke_test() -> None:
         # At the empty-history boundary, Undo and Redo must leave the original
         # preview untouched. This catches accidental edits when disabled
         # controls still receive pointer events.
-        click_at(1085, 86)
+        press_button("Undo")
         empty_undo_shot = screenshot("10a-editor-undo-empty.png")
         empty_undo_delta = sum(abs(a - b) for a, b in zip(
             center_before, Image.open(empty_undo_shot).convert("RGB").getpixel(
                 (1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))))
-        click_at(1134, 86)
+        press_button("Redo")
         empty_redo_shot = screenshot("10a-editor-redo-empty.png")
         empty_redo_delta = sum(abs(a - b) for a, b in zip(
             center_before, Image.open(empty_redo_shot).convert("RGB").getpixel(
                 (1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))))
-        def toolbar_ink(path: Path, button_x: int) -> int:
-            image = Image.open(path).convert("RGB")
-            crop = image.crop((button_x - 17 + MOUSE_OFFSET_X, 71 + MOUSE_OFFSET_Y,
-                               button_x + 17 + MOUSE_OFFSET_X, 101 + MOUSE_OFFSET_Y))
-            return sum(1 for red, green, blue in crop.getdata()
-                       if max(red, green, blue) < 120)
+        # Whether Undo / Redo are enabled, read from AT-SPI right after each
+        # screenshot (the buttons moved when the header changed; their
+        # labels did not).
+        def toolbar_ink(path: Path, label: str) -> int:
+            return button_enabled(label)
 
-        empty_undo_ink = toolbar_ink(empty_undo_shot, 1085)
-        empty_redo_ink = toolbar_ink(empty_redo_shot, 1134)
+        empty_undo_ink = toolbar_ink(empty_undo_shot, "Undo")
+        empty_redo_ink = toolbar_ink(empty_redo_shot, "Redo")
         click_at(570, 199)
         wait_for(lambda: sum(abs(a - b) for a, b in zip(
             Image.open(screenshot("11-editor-exposure-wait.png")).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y)),
@@ -1284,8 +1320,8 @@ def smoke_test() -> None:
         exposure_shot = screenshot("11-editor-exposure-adjusted.png")
         center_after = Image.open(exposure_shot).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
         center_delta = sum(abs(center_before[i] - center_after[i]) for i in range(3))
-        exposure_undo_ink = toolbar_ink(exposure_shot, 1085)
-        exposure_redo_ink = toolbar_ink(exposure_shot, 1134)
+        exposure_undo_ink = toolbar_ink(exposure_shot, "Undo")
+        exposure_redo_ink = toolbar_ink(exposure_shot, "Redo")
         record(add_case("Editor exposure adjustment", "Exposure interaction changes preview pixels"),
                center_delta > 20, f"preview center RGB delta={center_delta}; screenshot={exposure_shot.name}")
         sequence_errors = []
@@ -1299,7 +1335,7 @@ def smoke_test() -> None:
                 preview_center(screenshot("11a-editor-undo-wait.png")), color)) <= 16,
                 description, timeout=8)
 
-        click_at(1085, 86)
+        press_button("Undo")
         try:
             wait_center_matches(center_before, "Undo to restore the baseline preview")
         except TimeoutError as error:
@@ -1307,10 +1343,10 @@ def smoke_test() -> None:
         undo_shot = screenshot("11a-editor-undo.png")
         undo_center = preview_center(undo_shot)
         undo_delta = sum(abs(center_before[i] - undo_center[i]) for i in range(3))
-        undo_undo_ink = toolbar_ink(undo_shot, 1085)
-        undo_redo_ink = toolbar_ink(undo_shot, 1134)
+        undo_undo_ink = toolbar_ink(undo_shot, "Undo")
+        undo_redo_ink = toolbar_ink(undo_shot, "Redo")
 
-        click_at(1134, 86)
+        press_button("Redo")
         try:
             wait_center_matches(center_after, "Redo to restore the Exposure preview")
         except TimeoutError as error:
@@ -1318,8 +1354,8 @@ def smoke_test() -> None:
         redo_shot = screenshot("11a-editor-redo.png")
         redo_delta = sum(abs(exposure_color - redone) for exposure_color, redone
                          in zip(center_after, preview_center(redo_shot)))
-        redo_undo_ink = toolbar_ink(redo_shot, 1085)
-        redo_redo_ink = toolbar_ink(redo_shot, 1134)
+        redo_undo_ink = toolbar_ink(redo_shot, "Undo")
+        redo_redo_ink = toolbar_ink(redo_shot, "Redo")
 
         # Contrast is a separate edit tool. Undo must step back through it and
         # Exposure independently, then Redo must replay both in order.
@@ -1328,35 +1364,42 @@ def smoke_test() -> None:
         multi_center = preview_center(multi_shot)
         if sum(abs(a - b) for a, b in zip(center_after, multi_center)) <= 20:
             sequence_errors.append("Contrast tool did not change the rendered preview")
-        click_at(1085, 86)
+        press_button("Undo")
         try:
             wait_center_matches(center_after, "first Undo to remove only Contrast")
         except TimeoutError as error:
             sequence_errors.append(str(error))
         multi_undo_one = screenshot("11a-editor-undo-contrast.png")
         multi_undo_one_delta = sum(abs(a - b) for a, b in zip(center_after, preview_center(multi_undo_one)))
-        multi_undo_one_ink = (toolbar_ink(multi_undo_one, 1085), toolbar_ink(multi_undo_one, 1134))
-        click_at(1085, 86)
+        multi_undo_one_ink = (toolbar_ink(multi_undo_one, "Undo"), toolbar_ink(multi_undo_one, "Redo"))
+        press_button("Undo")
         try:
             wait_center_matches(center_before, "second Undo to remove Exposure")
         except TimeoutError as error:
             sequence_errors.append(str(error))
         multi_undo_two = screenshot("11a-editor-undo-exposure.png")
         multi_undo_two_delta = sum(abs(a - b) for a, b in zip(center_before, preview_center(multi_undo_two)))
-        multi_undo_two_ink = (toolbar_ink(multi_undo_two, 1085), toolbar_ink(multi_undo_two, 1134))
-        click_at(1134, 86)
-        click_at(1134, 86)
+        multi_undo_two_ink = (toolbar_ink(multi_undo_two, "Undo"), toolbar_ink(multi_undo_two, "Redo"))
+        # Two Redo presses, as two clicks: the second follows once the first
+        # has brought Exposure back (pressed back to back through AT-SPI,
+        # the second can arrive before the first is applied).
+        press_button("Redo")
+        try:
+            wait_center_matches(center_after, "first Redo to restore Exposure")
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
+        press_button("Redo")
         try:
             wait_center_matches(multi_center, "two Redo actions to restore both adjustments")
         except TimeoutError as error:
             sequence_errors.append(str(error))
         multi_redo = screenshot("11a-editor-redo-multiple.png")
         multi_redo_delta = sum(abs(a - b) for a, b in zip(multi_center, preview_center(multi_redo)))
-        multi_redo_ink = (toolbar_ink(multi_redo, 1085), toolbar_ink(multi_redo, 1134))
+        multi_redo_ink = (toolbar_ink(multi_redo, "Undo"), toolbar_ink(multi_redo, "Redo"))
 
         # Undo to the Exposure-only state, then make a different edit. That
         # new edit must discard the old Contrast redo branch.
-        click_at(1085, 86)
+        press_button("Undo")
         try:
             wait_center_matches(center_after, "Undo before creating a new branch")
         except TimeoutError as error:
@@ -1373,12 +1416,12 @@ def smoke_test() -> None:
         branch_edit = screenshot("11a-editor-new-branch.png")
         branch_center = preview_center(branch_edit)
         branch_edit_delta = sum(abs(a - b) for a, b in zip(center_after, branch_center))
-        click_at(1134, 86)
+        press_button("Redo")
         time.sleep(0.7)
         branch_redo = screenshot("11a-editor-redo-discarded-branch.png")
         branch_redo_delta = sum(abs(a - b) for a, b in zip(branch_center, preview_center(branch_redo)))
         old_branch_delta = sum(abs(a - b) for a, b in zip(multi_center, preview_center(branch_redo)))
-        branch_redo_ink = (toolbar_ink(branch_redo, 1085), toolbar_ink(branch_redo, 1134))
+        branch_redo_ink = (toolbar_ink(branch_redo, "Undo"), toolbar_ink(branch_redo, "Redo"))
         undo_sequence_passed = (
             undo_delta <= 16 and redo_delta <= 16
             and empty_undo_delta <= 16 and empty_redo_delta <= 16
@@ -1404,7 +1447,7 @@ def smoke_test() -> None:
                f"two-step redo delta={multi_redo_delta}; sequence_errors={sequence_errors}; "
                f"branch undo delta={branch_undo_delta}, new Fill Light delta={branch_edit_delta}, "
                f"redo after new edit delta={branch_redo_delta}, distance from discarded state={old_branch_delta}; "
-               f"toolbar dark pixels empty(U/R)={empty_undo_ink}/{empty_redo_ink}, "
+               f"toolbar enabled empty(U/R)={empty_undo_ink}/{empty_redo_ink}, "
                f"edited(U/R)={exposure_undo_ink}/{exposure_redo_ink}, "
                f"after-Undo(U/R)={undo_undo_ink}/{undo_redo_ink}, "
                f"after-Redo(U/R)={redo_undo_ink}/{redo_redo_ink}, "
@@ -1416,7 +1459,7 @@ def smoke_test() -> None:
         wait_for(lambda: sum(abs(a - b) for a, b in zip(
             Image.open(screenshot("11b-editor-reset-adjusted-wait.png")).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y)),
             center_before)) > 20, "second Exposure change to render", timeout=10)
-        click_at(1224, 86)
+        press_button("Reset all edits to the original")
         try:
             wait_for(lambda: sum(abs(a - b) for a, b in zip(
                 Image.open(screenshot("11b-editor-reset-wait.png")).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y)),
@@ -1594,7 +1637,7 @@ def smoke_test() -> None:
     command(["xdotool", "key", "Home"])
     command(["xdotool", "key", "Return"])
     all_photos_source = screenshot("20a-screensaver-all-photos-source.png")
-    click_at(848, 635)
+    press_button("Start")
     wait_for(lambda: db_setting("screensaver-source") == "all",
              "screensaver source to save as All Photos", timeout=8)
     record(add_case("Screensaver all-photo source", "Screensaver is configured to play all generated fixture photos"),
@@ -1640,7 +1683,7 @@ def smoke_test() -> None:
     click_at(1360, 866)
     saver_setup_again = wait_for_screen_change(main_return, "23-screensaver-setup-again.png",
                                                "reopen screensaver setup after keyboard dismissal")
-    click_at(848, 635)
+    press_button("Start")
     wait_for(fullscreen_saver_window, "second fullscreen screensaver window", timeout=12)
     # The screensaver intentionally ignores mouse motion for its first 850 ms
     # to avoid treating the activation pointer position as a user exit.

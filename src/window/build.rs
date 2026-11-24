@@ -1976,39 +1976,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Search) needs the same current-viewport protection as Folder mode. Fast
     // scrollbar motion can otherwise leave hundreds of stale bind requests in
     // front of the final viewport and make thumbnails appear blank until idle.
-    const GRID_THUMBNAIL_MOTION_PUMP_FRAMES: u8 = 12;
-    let grid_thumbnail_motion_frames = Rc::new(Cell::new(0u8));
-    let grid_thumbnail_motion_frames_for_event = grid_thumbnail_motion_frames.clone();
-    let grid_thumbnail_motion_frames_for_tick = grid_thumbnail_motion_frames.clone();
-    let grid_thumbnail_motion_phase = Rc::new(Cell::new(0u8));
-    let grid_thumbnail_motion_phase_for_tick = grid_thumbnail_motion_phase.clone();
+    // What All Photos does while it moves: scrub, target sampling, settle
+    // and the per-frame thumbnail pump (see `window/scroll_motion.rs`).
+    let grid_motion = Rc::new(RefCell::new(scroll_motion::ScrollMotion::new(
+        scroll_motion::ALL_PHOTOS,
+    )));
     let grid_scroll_direction = Rc::new(Cell::new(0.0_f64));
-    let grid_scroll_direction_for_event = grid_scroll_direction.clone();
-    let grid_scroll_direction_for_tick = grid_scroll_direction.clone();
     let last_grid_scroll_y = Rc::new(Cell::new(0.0_f64));
-    let last_grid_scroll_y_for_event = last_grid_scroll_y.clone();
-    // Large adjustment jumps are scrollbar/page teleports. For a few frames
-    // after one, do not spend decoder capacity on speculative ahead-prefetch;
-    // the newly targeted viewport must become useful first.
-    let grid_scrub_frames = Rc::new(Cell::new(0u8));
-    let grid_scrub_frames_for_event = grid_scrub_frames.clone();
-    let grid_scrub_frames_for_tick = grid_scrub_frames.clone();
-    let grid_scrub_generation = Rc::new(Cell::new(0u64));
-    let grid_scrub_generation_for_event = grid_scrub_generation.clone();
-    let grid_scrub_active = Rc::new(Cell::new(false));
-    let grid_scrub_active_for_event = grid_scrub_active.clone();
-    let grid_scrub_active_for_tick = grid_scrub_active.clone();
-    // GtkAdjustment emits tiny correction events (often -1/0/+1) while the
-    // scrollbar thumb is being dragged. Replacing the visible decode queue on
-    // every correction cancels almost-finished work and leaves a wall of
-    // placeholders. Coalesce scrub destinations so one viewport gets enough
-    // time to finish before we replace it with a newer one.
-    let grid_scrub_last_queue = Rc::new(RefCell::new(None::<std::time::Instant>));
-    let grid_scrub_last_queue_for_event = grid_scrub_last_queue.clone();
-    let grid_scrub_latest_value = Rc::new(Cell::new(0.0_f64));
-    let grid_scrub_latest_value_for_event = grid_scrub_latest_value.clone();
-    let grid_scrub_latest_page = Rc::new(Cell::new(0.0_f64));
-    let grid_scrub_latest_page_for_event = grid_scrub_latest_page.clone();
+    // The latest scrub position and page, for the settle's final target.
+    let grid_scrub_latest = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
 
     // Optional native frame-clock trace for real-gallery scroll profiling.
     // The adjustment is driven by GTK; this records presentation intervals
@@ -2074,135 +2050,104 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
 
     let gallery_for_group_scroll = gallery.clone();
+    let grid_motion_for_event = grid_motion.clone();
+    let grid_scroll_direction_for_event = grid_scroll_direction.clone();
     grid_scroll
         .vadjustment()
         .connect_value_changed(move |adjustment| {
             let value = adjustment.value();
-            let previous = last_grid_scroll_y_for_event.replace(value);
+            let previous = last_grid_scroll_y.replace(value);
             let delta = value - previous;
             grid_scroll_direction_for_event.set(delta.signum());
-            grid_thumbnail_motion_frames_for_event.set(GRID_THUMBNAIL_MOTION_PUMP_FRAMES);
             crate::grid::set_gallery_scrolling(true);
 
             // A scrollbar scrub can teleport farther than GTK can realize
-            // GridView children in the same frame. Queue the destination from
-            // the photo model immediately instead of waiting for widget binds.
-            // Treat only multi-page motion as the *start* of a direct
-            // scrollbar scrub. Once started, every following adjustment belongs
-            // to that same drag until the bar has been quiet for 90 ms. This is
-            // important because the user's final thumb movement can be much
-            // smaller than the first large jump.
-            let jump_threshold = (adjustment.page_size() * 1.75).max(900.0);
-            if delta.abs() >= jump_threshold {
-                grid_scrub_active_for_event.set(true);
+            // GridView children in the same frame, so a scrub queues its
+            // destination from the photo model instead of waiting for widget
+            // binds. Once started, every following move belongs to the same
+            // drag until it settles: the final thumb movement can be much
+            // smaller than the first jump.
+            let page = adjustment.page_size();
+            let moved = grid_motion_for_event
+                .borrow_mut()
+                .moved(delta, page, Instant::now());
+            let spec = scroll_motion::ALL_PHOTOS;
+            if moved.scrub_started {
                 crate::grid::set_grid_scrub_active(true);
             }
-
-            if grid_scrub_active_for_event.get() {
-                grid_scrub_frames_for_event.set(6);
-                grid_scrub_latest_value_for_event.set(value);
-                grid_scrub_latest_page_for_event.set(adjustment.page_size());
-
-                // Do not repeatedly replace the visible queue for GTK's tiny
-                // adjustment corrections. At 40 ms the four/eight local-cache
-                // workers get several decode slots per scrub sample, while the
-                // newest scrollbar position still wins quickly enough to feel
-                // live. A final forced sample is queued when the drag settles.
-                let now = std::time::Instant::now();
-                let should_queue = grid_scrub_last_queue_for_event
-                    .borrow()
-                    .as_ref()
-                    .map(|last| now.duration_since(*last) >= Duration::from_millis(40))
-                    .unwrap_or(true);
-                if should_queue {
-                    *grid_scrub_last_queue_for_event.borrow_mut() = Some(now);
-                    gallery_for_group_scroll.queue_grid_scroll_target_cached_tiles_async(
-                        value,
-                        adjustment.page_size(),
-                        192,
-                    );
-                }
-
-                // End scrub mode only after the adjustment has stayed quiet for
-                // a short interval. Old timeout callbacks are ignored by the
-                // generation check, so an active drag cannot be ended early.
-                let generation = grid_scrub_generation_for_event
-                    .get()
-                    .wrapping_add(1);
-                grid_scrub_generation_for_event.set(generation);
-                let generation_cell = grid_scrub_generation_for_event.clone();
-                let scrub_active_cell = grid_scrub_active_for_event.clone();
-                let last_queue_cell = grid_scrub_last_queue_for_event.clone();
-                let latest_value_cell = grid_scrub_latest_value_for_event.clone();
-                let latest_page_cell = grid_scrub_latest_page_for_event.clone();
+            if moved.scrubbing {
+                grid_scrub_latest.set((value, page));
+            }
+            if moved.sample {
+                gallery_for_group_scroll.queue_grid_scroll_target_cached_tiles_async(
+                    value,
+                    page,
+                    spec.target_tiles,
+                );
+            }
+            if let Some(ticket) = moved.settle {
+                let motion = grid_motion_for_event.clone();
+                let latest = grid_scrub_latest.clone();
                 let gallery = gallery_for_group_scroll.clone();
-                glib::timeout_add_local_once(Duration::from_millis(90), move || {
-                    if generation_cell.get() != generation {
+                glib::timeout_add_local_once(spec.settle_after, move || {
+                    let settled = motion.borrow_mut().settle(ticket);
+                    if !settled {
                         return;
                     }
                     crate::grid::set_gallery_scrolling(false);
-
-                    // Force the final destination once more. The user may have
-                    // released the thumb less than 40 ms after our last sample.
+                    // Force the final destination once more: the thumb may
+                    // have been released between two samples.
+                    let (value, page) = latest.get();
                     gallery.queue_grid_scroll_target_cached_tiles_async(
-                        latest_value_cell.get(),
-                        latest_page_cell.get(),
-                        192,
+                        value,
+                        page,
+                        spec.target_tiles,
                     );
-                    *last_queue_cell.borrow_mut() = None;
-                    scrub_active_cell.set(false);
                     crate::grid::set_grid_scrub_active(false);
                     gallery.refresh_visible_grid_tiles();
                 });
-
             }
-
 
             gallery_for_group_scroll.update_group_header_for_scroll(value);
         });
 
     let gallery_for_grid_motion_tick = gallery.clone();
+    let grid_motion_for_tick = grid_motion.clone();
     grid_scroll.add_tick_callback(move |_, _| {
-        let frames_left = grid_thumbnail_motion_frames_for_tick.get();
-        if frames_left == 0 {
+        let frame = grid_motion_for_tick.borrow_mut().frame(Instant::now());
+        let Some(frame) = frame else {
             return glib::ControlFlow::Continue;
-        }
-        grid_thumbnail_motion_frames_for_tick.set(frames_left.saturating_sub(1));
+        };
+        let spec = scroll_motion::ALL_PHOTOS;
 
-        // During direct scrollbar scrubbing the model-derived target queued by
-        // the adjustment callback is authoritative. Do NOT replace it with
-        // widget-derived visibility here: GtkGridView may still expose recycled
-        // cells from the previous viewport for several frames. Applying the
-        // paintables the workers already finished is still required, though:
-        // during fast movement a tile binds once, usually before its decode
+        // During a scrub the model-derived target queued by the adjustment
+        // callback is authoritative. Do NOT replace it with widget-derived
+        // visibility here: GtkGridView may still expose recycled cells from
+        // the previous viewport for several frames. Applying the paintables
+        // the workers already finished is still required, though: during
+        // fast movement a tile binds once, usually before its decode
         // completes, and the completion drain misses tiles that were recycled
         // again before the decode arrived. Re-checking visible tiles against
         // the RAM cache every frame heals exactly those tiles.
-        if grid_scrub_active_for_tick.get() {
+        if frame.scrubbing {
             gallery_for_grid_motion_tick
                 .apply_visible_cached_paintables(crate::grid::GalleryScroller::Photos);
         } else {
-            gallery_for_grid_motion_tick
-                .queue_visible_cached_tiles_async(crate::grid::GalleryScroller::Photos, 128);
+            gallery_for_grid_motion_tick.queue_visible_cached_tiles_async(
+                crate::grid::GalleryScroller::Photos,
+                spec.visible_tiles,
+            );
         }
 
-        let scrub_left = grid_scrub_frames_for_tick.get();
-        if scrub_left > 0 {
-            grid_scrub_frames_for_tick.set(scrub_left.saturating_sub(1));
-        }
-
-        let phase = grid_thumbnail_motion_phase_for_tick.get().wrapping_add(1);
-        grid_thumbnail_motion_phase_for_tick.set(phase);
-        // During a scrollbar teleport, all decode capacity belongs to the
-        // target viewport. Normal directional warming resumes once GTK has had
-        // several frames to rebind the destination cells.
-        if scrub_left == 0 && phase % 3 == 0 {
-            gallery_for_grid_motion_tick
-                .prefetch_cached_tiles(
-                    crate::grid::GalleryScroller::Photos,
-                    32,
-                    grid_scroll_direction_for_tick.get(),
-                );
+        // During a scrollbar teleport all decode capacity belongs to the
+        // target viewport; warming ahead resumes once GTK has had several
+        // frames to rebind the destination cells.
+        if frame.warm_ahead {
+            gallery_for_grid_motion_tick.prefetch_cached_tiles(
+                crate::grid::GalleryScroller::Photos,
+                spec.warm_tiles,
+                grid_scroll_direction.get(),
+            );
         }
 
         glib::ControlFlow::Continue
@@ -2223,45 +2168,35 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let folder_thumbnail_prefetch: Rc<RefCell<Option<glib::SourceId>>> =
         Rc::new(RefCell::new(None));
     let folder_thumbnail_prefetch_for_event = folder_thumbnail_prefetch.clone();
-    // Coalesces scrub-target sampling: one sample in the jump frame itself,
-    // then at most once per 50 ms while the drag continues. Frame-driven from
-    // the motion tick below, not from a wall-clock timeout.
-    let folder_scrub_sampler = Rc::new(RefCell::new(FolderScrollbarScrub::default()));
-    let folder_scrub_sampler_for_event = folder_scrub_sampler.clone();
-    let folder_scrub_sampler_for_tick = folder_scrub_sampler.clone();
+    // What Folders does while it moves: scrub, target sampling, settle and
+    // the per-frame thumbnail pump (see `window/scroll_motion.rs`). Only a
+    // real multi-page scrollbar scrub counts; Page Up/Down does not, because
+    // Folder row bind submits its own async visible request.
+    let folder_motion = Rc::new(RefCell::new(scroll_motion::ScrollMotion::new(
+        scroll_motion::FOLDERS,
+    )));
+    let folder_motion_for_event = folder_motion.clone();
     let latest_folder_scroll_y_for_tick = latest_folder_scroll_y.clone();
     let folder_vadjustment = folder_scroll.vadjustment();
-    // True only for a real multi-page Folder scrollbar scrub. Page Up/Down is
-    // deliberately excluded: Folder row bind now submits its own async visible
-    // request, so page navigation must not repeatedly replace the queue.
-    let folder_direct_scrub_active = Rc::new(Cell::new(false));
-    let folder_direct_scrub_active_for_event = folder_direct_scrub_active.clone();
-    let folder_direct_scrub_active_for_tick = folder_direct_scrub_active.clone();
     // The settled loader paints the final viewport after motion stops. During
     // active motion, drive thumbnail work from GTK frame ticks instead of a
     // 16 ms timeout. A timeout can run before GtkListView has rebound/allocated
     // the rows for a large scrollbar jump, which warms the old viewport and
-    // leaves the new one blank. The short frame pump keeps retrying long enough
-    // for recycled rows and async cache decodes to catch up.
-    const FOLDER_THUMBNAIL_MOTION_PUMP_FRAMES: u8 = 12;
-    let folder_thumbnail_motion_frames = Rc::new(Cell::new(0u8));
-    let folder_thumbnail_motion_frames_for_event = folder_thumbnail_motion_frames.clone();
-    let folder_thumbnail_motion_frames_for_tick = folder_thumbnail_motion_frames.clone();
-    let folder_thumbnail_motion_phase = Rc::new(Cell::new(0u8));
-    let folder_thumbnail_motion_phase_for_tick = folder_thumbnail_motion_phase.clone();
+    // leaves the new one blank. The pump keeps retrying long enough for
+    // recycled rows and async cache decodes to catch up.
     let gallery_for_thumbnail_motion_tick = gallery.clone();
     let folder_scroll_direction_for_tick = folder_scroll_direction.clone();
     folder_scroll.add_tick_callback(move |_, _| {
-        let frames_left = folder_thumbnail_motion_frames_for_tick.get();
-        if frames_left == 0 {
+        let frame = folder_motion.borrow_mut().frame(Instant::now());
+        let Some(frame) = frame else {
             return glib::ControlFlow::Continue;
-        }
-        folder_thumbnail_motion_frames_for_tick.set(frames_left.saturating_sub(1));
+        };
+        let spec = scroll_motion::FOLDERS;
 
         // Always prioritise the tiles actually visible in the frame GTK is
         // about to paint. queue_visible... uses reserved async capacity, so
         // stale prefetch requests cannot starve a scrollbar jump.
-        if folder_direct_scrub_active_for_tick.get() {
+        if frame.scrubbing {
             // The model-derived scrub target is authoritative while the thumb is
             // teleporting. GtkListView may still expose rows from the previous
             // viewport, so never let those recycled widgets replace the target
@@ -2273,41 +2208,30 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             gallery_for_thumbnail_motion_tick
                 .apply_visible_cached_paintables(crate::grid::GalleryScroller::Folder);
         } else {
-            gallery_for_thumbnail_motion_tick
-                .queue_visible_cached_tiles_async(crate::grid::GalleryScroller::Folder, 96);
+            gallery_for_thumbnail_motion_tick.queue_visible_cached_tiles_async(
+                crate::grid::GalleryScroller::Folder,
+                spec.visible_tiles,
+            );
         }
 
         // Scrub decode targets are frame-driven: the first sample fires in the
-        // jump frame itself (not a wall-clock interval later), then at most
-        // every 50 ms while the drag continues. Coalescing keeps the decode
-        // queue owned by one destination instead of one per ±1 px anchor
-        // correction GtkListView emits during drags.
-        let _scrub_target_queued = if folder_direct_scrub_active_for_tick.get()
-            && folder_scrub_sampler_for_tick
-                .borrow_mut()
-                .sample_due(Instant::now())
-        {
+        // jump frame itself, then at most every `sample_every` while the drag
+        // continues.
+        if frame.sample {
             let page = folder_vadjustment.page_size().max(1.0);
             gallery_for_thumbnail_motion_tick.queue_folder_scroll_target_cached_tiles_async(
                 latest_folder_scroll_y_for_tick.get(),
                 page,
-                192,
-            )
-        } else {
-            0
-        };
+                spec.target_tiles,
+            );
+        }
 
         // Warming ahead is useful, but doing the larger offscreen scan on every
-        // frame is unnecessary. Run it every third pump frame so visible work
-        // remains dominant and GTK has plenty of time to render.
-        let phase = folder_thumbnail_motion_phase_for_tick
-            .get()
-            .wrapping_add(1);
-        folder_thumbnail_motion_phase_for_tick.set(phase);
-        if !folder_direct_scrub_active_for_tick.get() && phase % 3 == 0 {
+        // frame is unnecessary, so it runs on every third pump frame.
+        if frame.warm_ahead {
             gallery_for_thumbnail_motion_tick.prefetch_cached_tiles(
                 crate::grid::GalleryScroller::Folder,
-                24,
+                spec.warm_tiles,
                 folder_scroll_direction_for_tick.get(),
             );
         }
@@ -2336,27 +2260,21 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             crate::grid::set_gallery_scrolling(true);
 
-            // Folder bind now submits its own visible-priority async request on
+            // Folder bind submits its own visible-priority async request on
             // every RAM miss. That is sufficient for wheel motion and Page
-            // Up/Down, and avoids the old failure mode where each ~one-page
-            // adjustment step replaced another 30-60 useful requests.
-            //
-            // Only true multi-page scrollbar teleports use model-derived target
-            // preloading. Coalesce those samples so workers can finish useful
-            // work instead of decoding every intermediate thumb position.
+            // Up/Down; only a multi-page scrollbar scrub uses model-derived
+            // target preloading, sampled by the pump.
             let page_size = adjustment.page_size().max(1.0);
-            let direct_scrub = direction.abs() > page_size * 1.60;
-            if direct_scrub {
-                folder_direct_scrub_active_for_event.set(true);
+            let moved = folder_motion_for_event
+                .borrow_mut()
+                .moved(direction, page_size, Instant::now());
+            if moved.scrub_started {
                 // Folder and grid views are never visible at the same time,
                 // so reuse the shared scrub thread-local: it keeps recycled
                 // folder tiles from being blanked at unbind while rows are
                 // rebound faster than thumbnail decodes can land. The folder
                 // settle callback clears it again.
                 crate::grid::set_grid_scrub_active(true);
-                // First target sample fires in the next frame tick; further
-                // samples are coalesced to one per 50 ms by the sampler.
-                folder_scrub_sampler_for_event.borrow_mut().begin();
             }
 
             // Keep only the cheap position bookkeeping in the raw adjustment
@@ -2366,37 +2284,34 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             gallery_for_folder_scroll.update_group_header_for_scroll(scroll_y);
 
             // Cancel the previous settle callback and arm a new one. Only the
-            // final viewport after ~90 ms of idle motion gets a full visible
-            // refresh. During sustained scrolling, separately warm a tiny
-            // budgeted batch so the viewport does not remain blank until the
-            // user fully stops.
+            // final viewport after the settle delay gets a full visible
+            // refresh; the frame pump (re-armed by every move) covers
+            // wheel/touchpad motion, kinetic scrolling and scrollbar jumps
+            // in between.
             if let Some(source) = folder_thumbnail_debounce_for_event.borrow_mut().take() {
                 source.remove();
             }
             if let Some(source) = folder_thumbnail_prefetch_for_event.borrow_mut().take() {
                 source.remove();
             }
-            // Keep a frame-synchronised thumbnail pump alive after every
-            // movement. Re-arming it is cheap and covers wheel/touchpad motion,
-            // kinetic scrolling, and direct scrollbar jumps with the same path.
-            // The pump runs after GtkListView has had frame opportunities to
-            // recycle/rebind rows, so it follows the new viewport instead of a
-            // stale one captured by a wall-clock timeout.
-            folder_thumbnail_motion_frames_for_event
-                .set(FOLDER_THUMBNAIL_MOTION_PUMP_FRAMES);
+            let Some(ticket) = moved.settle else {
+                return;
+            };
             let gallery_for_visible = gallery_for_folder_scroll.clone();
             let debounce_slot = folder_thumbnail_debounce_for_event.clone();
             let prefetch_slot = folder_thumbnail_prefetch_for_event.clone();
             let direction_for_settle = folder_scroll_direction_for_event.get();
             let final_scroll_y = latest_folder_scroll_y.clone();
-            let final_page_size = adjustment.page_size().max(1.0);
-            let direct_scrub_active_for_settle = folder_direct_scrub_active_for_event.clone();
-            let folder_scrub_sampler_for_settle = folder_scrub_sampler_for_event.clone();
-            let source = glib::timeout_add_local(Duration::from_millis(110), move || {
+            let final_page_size = page_size;
+            let motion_for_settle = folder_motion_for_event.clone();
+            let spec = scroll_motion::FOLDERS;
+            let source = glib::timeout_add_local(spec.settle_after, move || {
                 debounce_slot.borrow_mut().take();
+                let settled = motion_for_settle.borrow_mut().settle(ticket);
+                if !settled {
+                    return glib::ControlFlow::Break;
+                }
                 crate::grid::set_gallery_scrolling(false);
-                direct_scrub_active_for_settle.set(false);
-                folder_scrub_sampler_for_settle.borrow_mut().end();
                 // End the shared scrub window before the visible refresh so
                 // tiles that never received their thumbnail drop the stale
                 // backstop image and return to the normal placeholder state.
@@ -2404,7 +2319,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 gallery_for_visible.queue_folder_scroll_target_cached_tiles_async(
                     final_scroll_y.get(),
                     final_page_size,
-                    192,
+                    spec.target_tiles,
                 );
                 // Defer the visible refresh to the next main-loop pass so GTK
                 // can finish this frame's post-jump anchor/allocation work

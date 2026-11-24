@@ -549,68 +549,6 @@ include!("window/operation_progress.rs");
 include!("window/build.rs");
 include!("window/startup.rs");
 
-/// Folder scrollbar-scrub sampling state.
-///
-/// A direct scrub samples its decode target immediately in the frame the jump
-/// happens, then at most once per 50 ms while the drag continues, and never
-/// after it ends. GtkListView emits tiny ±1 px anchor corrections during
-/// drags; coalescing samples keeps the decode queue owned by one destination
-/// at a time instead of one per correction.
-#[derive(Default)]
-struct FolderScrollbarScrub {
-    active: bool,
-    last_sample: Option<Instant>,
-}
-
-impl FolderScrollbarScrub {
-    const SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
-
-    fn begin(&mut self) {
-        self.active = true;
-    }
-
-    fn end(&mut self) {
-        self.active = false;
-        self.last_sample = None;
-    }
-
-    /// Returns true (and records the sample time) when a new scrub sample
-    /// should be queued now.
-    fn sample_due(&mut self, now: Instant) -> bool {
-        if !self.active {
-            return false;
-        }
-        let due = self.last_sample.map_or(true, |last| {
-            now.duration_since(last) >= Self::SAMPLE_INTERVAL
-        });
-        if due {
-            self.last_sample = Some(now);
-        }
-        due
-    }
-}
-
-#[cfg(test)]
-mod folder_scroll_tests {
-    use super::{Duration, FolderScrollbarScrub, Instant};
-
-    #[test]
-    fn thumb_drag_samples_immediately_then_waits_for_the_interval() {
-        let started = Instant::now();
-        let mut scrub = FolderScrollbarScrub::default();
-
-        assert!(!scrub.sample_due(started));
-
-        scrub.begin();
-        assert!(scrub.sample_due(started));
-        assert!(!scrub.sample_due(started + Duration::from_millis(49)));
-        assert!(scrub.sample_due(started + Duration::from_millis(50)));
-
-        scrub.end();
-        assert!(!scrub.sample_due(started + Duration::from_millis(100)));
-    }
-}
-
 #[cfg(test)]
 mod photo_scan_authorization_tests {
     use super::{watch_scan_root, PhotoScanRequestReason, ScanJobKind, ScanJobState};

@@ -183,10 +183,6 @@ impl ScrollMotion {
         })
     }
 
-    pub(super) fn spec(&self) -> ScrollMotionSpec {
-        self.spec
-    }
-
     /// The scroll position moved by `delta` px with a page of `page` px.
     pub(super) fn moved(&mut self, delta: f64, page: f64, now: Instant) -> Moved {
         let threshold = (page * self.spec.scrub_pages).max(self.spec.scrub_min_px);

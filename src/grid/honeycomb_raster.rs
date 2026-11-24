@@ -329,6 +329,7 @@ pub(super) fn cache_insert(key: MaskCacheKey, pixels: glib::Bytes) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 pub(super) struct MaskMetrics {
     pub(super) hits: u64,
     pub(super) misses: u64,
@@ -344,6 +345,7 @@ pub(super) struct MaskMetrics {
     pub(super) estimated_upload_bytes: u64,
 }
 
+#[cfg(test)]
 pub(super) fn metrics_snapshot() -> MaskMetrics {
     let cache_bytes = global_cache()
         .lock()

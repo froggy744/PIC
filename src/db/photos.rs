@@ -864,6 +864,7 @@ pub fn photos_in_album_filtered(connection:&Connection,album_id:i64,search:Optio
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+#[cfg(test)]
 pub fn set_favorite(connection: &Connection, id: i64, favorite: bool) -> Result<()> {
     connection.execute(
         "UPDATE photos SET favorite = ?1 WHERE id = ?2",

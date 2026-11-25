@@ -22,6 +22,9 @@ struct DrawGesture {
     resizing: bool,
     selecting_box: bool,
     additive_selection: bool,
+    /// The press selected a text or overlay layer and opened its tab; the
+    /// rest of this drag must not draw, move or erase anything.
+    handed_off: bool,
 }
 
 fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
@@ -55,6 +58,7 @@ fn build_draw_panel(
     draw_toggle: gtk::ToggleButton,
     update_history_buttons: Rc<dyn Fn()>,
     queue_preview: Rc<dyn Fn()>,
+    select_other_layer: Rc<dyn Fn((f32, f32)) -> bool>,
 ) -> (Rc<dyn Fn()>, Rc<dyn Fn(usize)>) {
     use super::model::DrawAnnotation;
     let tools = Rc::new(Cell::new(DrawTool::Pen));
@@ -612,6 +616,7 @@ fn build_draw_panel(
         let opacity = opacity.clone();
         let color = color.clone();
         let selected_many = selected_many.clone();
+        let select_other_layer = select_other_layer.clone();
         drag.connect_drag_begin(move |g, x, y| {
             let d = display(layer.width() as f64, layer.height() as f64);
             let (pw, ph) = preview_dimensions.get();
@@ -690,6 +695,18 @@ fn build_draw_panel(
                         session.borrow_mut().begin_action();
                     }
                 } else {
+                    // No drawing here: a text or overlay layer under the
+                    // pointer opens its own tab, as clicks do from there.
+                    let (dx, dy, dw, dh) = d;
+                    let inside_photo = x >= dx && x <= dx + dw && y >= dy && y <= dy + dh;
+                    if !state.additive_selection && inside_photo && select_other_layer(p) {
+                        gesture.replace(DrawGesture {
+                            handed_off: true,
+                            ..Default::default()
+                        });
+                        layer.queue_draw();
+                        return;
+                    }
                     if !state.additive_selection {
                         selected_many.borrow_mut().clear();
                         selected.set(None);
@@ -743,6 +760,9 @@ fn build_draw_panel(
         let preview_dimensions = preview_dimensions.clone();
         let session = session.clone();
         drag.connect_drag_update(move |_, dx, dy| {
+            if gesture.borrow().handed_off {
+                return;
+            }
             let d = display(layer.width() as f64, layer.height() as f64);
             let (pw, ph) = preview_dimensions.get();
             let (nx, ny) = screen_to_normalized(
@@ -836,6 +856,10 @@ fn build_draw_panel(
         let color = color.clone();
         let arrowheads = arrowheads.clone();
         drag.connect_drag_end(move |_, _, _| {
+            if gesture.borrow().handed_off {
+                gesture.replace(DrawGesture::default());
+                return;
+            }
             let s = gesture.borrow().clone();
             let tool = tools.get();
             if is_drawing_tool(tool) {

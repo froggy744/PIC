@@ -2938,9 +2938,14 @@ pub fn build(
             let in_crop = crop_overlay.is_visible();
             overlay_layer.set_visible(!in_crop);
             let recipe = session.borrow();
+            // Text and Overlays take clicks whenever any layer exists, so any
+            // text, overlay or drawing can be clicked from either tab.
+            let has_layers = !recipe.recipe.overlays.is_empty()
+                || !recipe.recipe.text_layers.is_empty()
+                || !recipe.recipe.drawings.is_empty();
             let enable = !draw_toggle_for_input.is_active()
-                && (overlays_toggle.is_active() && !recipe.recipe.overlays.is_empty()
-                    || text_toggle.is_active() && !recipe.recipe.text_layers.is_empty())
+                && (overlays_toggle.is_active() || text_toggle.is_active())
+                && has_layers
                 && !in_crop;
             drop(recipe);
             overlay_layer.set_can_target(enable);
@@ -3014,6 +3019,72 @@ pub fn build(
     );
     sync_text_slot.replace(Some(sync_text_panel.clone()));
 
+    // From Draw's Select tool: pick the topmost text, then image overlay,
+    // under a photo-normalised point and open its tab, like the overlay
+    // canvas does from Text and Overlays.
+    let select_other_layer: Rc<dyn Fn((f32, f32)) -> bool> = {
+        let session = session.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        let selected_text = selected_text.clone();
+        let selected_overlay = selected_overlay.clone();
+        let text_toggle = text_toggle.clone();
+        let overlays_toggle = overlays_toggle.clone();
+        let sync_text_panel = sync_text_panel.clone();
+        let sync_overlays_panel = sync_overlays_panel.clone();
+        let update_canvas_input = update_canvas_input.clone();
+        let redraw_overlay_canvas = redraw_overlay_canvas.clone();
+        Rc::new(move |(x, y)| {
+            let (photo_w, photo_h) = preview_dimensions.get();
+            let (photo_w, photo_h) = (photo_w.max(1) as f32, photo_h.max(1) as f32);
+            let contains = |rect: super::model::NormRect| {
+                x >= rect.left
+                    && x <= rect.left + rect.width
+                    && y >= rect.top
+                    && y <= rect.top + rect.height
+            };
+            let (text_hit, overlay_hit) = {
+                let recipe = session.borrow();
+                let text_hit = recipe
+                    .recipe
+                    .text_layers
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|(_, text)| text.visible)
+                    .find(|(_, text)| {
+                        text_norm_rect(text, photo_w, photo_h).is_some_and(contains)
+                    })
+                    .map(|(index, _)| index);
+                let overlay_hit = recipe
+                    .recipe
+                    .overlays
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|(_, overlay)| overlay.visible)
+                    .find(|(_, overlay)| {
+                        overlay_norm_rect(overlay, photo_w, photo_h).is_some_and(contains)
+                    })
+                    .map(|(index, _)| index);
+                (text_hit, overlay_hit)
+            };
+            if let Some(index) = text_hit {
+                selected_text.set(Some(index));
+                text_toggle.set_active(true);
+                sync_text_panel();
+            } else if let Some(index) = overlay_hit {
+                selected_overlay.set(Some(index));
+                overlays_toggle.set_active(true);
+                sync_overlays_panel();
+            } else {
+                return false;
+            }
+            update_canvas_input();
+            redraw_overlay_canvas();
+            true
+        })
+    };
+
     let (update_draw_canvas, select_drawing) = build_draw_panel(
         &draw_box,
         &draw_layer,
@@ -3025,6 +3096,7 @@ pub fn build(
         draw_toggle.clone(),
         update_history_buttons.clone(),
         queue_preview.clone(),
+        select_other_layer,
     );
     {
         let update_draw_canvas = update_draw_canvas.clone();

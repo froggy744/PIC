@@ -289,7 +289,7 @@ fn update_folder_suggestions(
         })
         .collect::<Vec<_>>();
 
-    let mut append = |button: gtk::Button| {
+    let append = |button: gtk::Button| {
         list.append(&button);
         if let Some(row) = button.parent().and_downcast::<gtk::ListBoxRow>() {
             row.set_can_focus(false);

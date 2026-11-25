@@ -399,6 +399,8 @@ pub fn build(
     tools_box.set_margin_start(14);
     tools_box.set_margin_end(14);
     let filters_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    filters_box.add_css_class("pic-editor-panel");
+    filters_box.set_valign(gtk::Align::Start);
     filters_box.set_hexpand(true);
     filters_box.set_vexpand(true);
     filters_box.set_margin_top(12);
@@ -877,7 +879,7 @@ pub fn build(
     }
     picture_scroll.add_controller(pan_drag);
 
-    add_section_label(&filters_box, "QUICK FIXES");
+    editor_section_heading(&filters_box, "QUICK FIXES");
     let auto_row = gtk::Grid::new();
     auto_row.add_css_class("quick-fix-row");
     auto_row.set_column_spacing(6);
@@ -902,14 +904,11 @@ pub fn build(
 
     // Consistent with preset intensity controls: 100% is the existing full
     // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
-    let filter_amount = add_slider(
-        &filters_box,
-        "Opacity",
-        0.0,
-        100.0,
-        1.0,
-        0,
-    );
+    let (filter_amount, _filter_amount_value) =
+        editor_slider_column(&filters_box, "Intensity", (0.0, 100.0, 1.0), 0.0, |n| {
+            format!("{n:.0}%")
+        });
+    filter_amount.set_digits(0);
     filter_amount.set_tooltip_text(Some("Opacity of enabled filters and Quick Fixes (0–100%). Manual adjustments stay unchanged."));
 
     let mut filter_buttons = Vec::new();
@@ -923,7 +922,8 @@ pub fn build(
     let mut black_white = None;
     let mut sepia = None;
     for (section, effects) in FilterTileEffect::sections() {
-        add_section_label(&filters_box, section);
+        editor_section_divider(&filters_box);
+        editor_section_heading(&filters_box, section);
         let filter_grid = gtk::FlowBox::new();
         filter_grid.set_row_spacing(10);
         filter_grid.set_column_spacing(6);

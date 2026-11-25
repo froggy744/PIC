@@ -283,4 +283,13 @@ fn main() {
     });
     startup_trace::mark("application_run_call", None);
     application.run();
+    // A second launch only asks the running instance (possibly the installed
+    // Flatpak) to present its window, then exits. Say so, rather than
+    // returning silently as if nothing had started.
+    if application.is_remote() {
+        eprintln!(
+            "PIC is already running (another instance owns {}); activated that window instead.",
+            application.application_id().unwrap_or_default()
+        );
+    }
 }

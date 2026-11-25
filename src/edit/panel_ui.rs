@@ -170,7 +170,9 @@ fn editor_destructive_button(label: &str) -> gtk::Button {
 fn editor_action_row(parent: &gtk::Box, buttons: &[&gtk::Button]) {
     editor_section_divider(parent);
     for button in buttons {
-        if !button.has_css_class("editor-destructive-button") {
+        if !button.has_css_class("editor-destructive-button")
+            && !button.has_css_class("suggested-action")
+        {
             button.add_css_class("editor-neutral-button");
         }
     }

@@ -406,6 +406,8 @@ pub fn build(
     filters_box.set_margin_start(14);
     filters_box.set_margin_end(14);
     let crop_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    crop_box.add_css_class("pic-editor-panel");
+    crop_box.set_valign(gtk::Align::Start);
     crop_box.set_hexpand(true);
     crop_box.set_vexpand(true);
     crop_box.set_margin_top(12);
@@ -951,13 +953,7 @@ pub fn build(
 
     // Crop has its own geometry workspace again. The tab earns its space by
     // grouping aspect ratio, orientation, straighten and crop reset controls.
-    add_section_label(&crop_box, "ASPECT RATIO");
-    let aspect_grid = gtk::Grid::new();
-    aspect_grid.set_column_spacing(6);
-    aspect_grid.set_row_spacing(6);
-    aspect_grid.set_column_homogeneous(true);
-    aspect_grid.add_css_class("crop-aspect-grid");
-
+    let aspect_section = editor_section(&crop_box, "ASPECT RATIO");
     let aspect_presets = [
         CropAspectPreset::Free,
         CropAspectPreset::Original,
@@ -968,58 +964,52 @@ pub fn build(
         CropAspectPreset::A4,
         CropAspectPreset::UsLetter,
     ];
-    let mut aspect_buttons = Vec::new();
-    let first_aspect = gtk::ToggleButton::with_label(aspect_presets[0].label());
-    first_aspect.set_active(true);
-    first_aspect.set_hexpand(true);
-    first_aspect.add_css_class("crop-aspect-button");
-    aspect_grid.attach(&first_aspect, 0, 0, 1, 1);
-    aspect_buttons.push((aspect_presets[0], first_aspect.clone()));
-    for (index, preset) in aspect_presets.iter().copied().enumerate().skip(1) {
+    let mut aspect_buttons: Vec<(CropAspectPreset, gtk::ToggleButton)> = Vec::new();
+    for preset in aspect_presets {
         let button = gtk::ToggleButton::with_label(preset.label());
-        button.set_group(Some(&first_aspect));
-        button.set_hexpand(true);
+        if let Some((_, first)) = aspect_buttons.first() {
+            button.set_group(Some(first));
+        }
         button.add_css_class("crop-aspect-button");
-        aspect_grid.attach(&button, (index % 2) as i32, (index / 2) as i32, 1, 1);
         aspect_buttons.push((preset, button));
     }
-    crop_box.append(&aspect_grid);
+    let first_aspect = aspect_buttons[0].1.clone();
+    first_aspect.set_active(true);
+    let aspect_grid = editor_button_group(
+        3,
+        &aspect_buttons
+            .iter()
+            .map(|(_, button)| button)
+            .collect::<Vec<_>>(),
+    );
+    aspect_grid.add_css_class("crop-aspect-grid");
+    aspect_section.append(&aspect_grid);
+    editor_section_divider(&crop_box);
 
-    add_section_label(&crop_box, "ORIENTATION");
-    let orientation_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    orientation_row.add_css_class("linked");
-    orientation_row.add_css_class("crop-orientation-row");
+    let orientation_section = editor_section(&crop_box, "ORIENTATION");
     let landscape = gtk::ToggleButton::with_label("Landscape");
-    landscape.set_hexpand(true);
     landscape.set_active(true);
     let portrait = gtk::ToggleButton::with_label("Portrait");
     portrait.set_group(Some(&landscape));
-    portrait.set_hexpand(true);
-    orientation_row.append(&landscape);
-    orientation_row.append(&portrait);
-    crop_box.append(&orientation_row);
+    let orientation_row = editor_button_group(2, &[&landscape, &portrait]);
+    orientation_row.add_css_class("crop-orientation-row");
+    orientation_section.append(&orientation_row);
+    editor_section_divider(&crop_box);
 
-    add_section_label(&crop_box, "STRAIGHTEN");
-    let straighten_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    straighten_box.add_css_class("crop-straighten");
-    let straighten = add_slider(&straighten_box, "Angle", -10.0, 10.0, 0.1, 1);
+    let (straighten, _straighten_value) =
+        editor_slider_column(&crop_box, "Straighten", (-10.0, 10.0, 0.1), 0.0, |n| {
+            format!("{n:.1}°")
+        });
+    straighten.set_digits(1);
     straighten.add_css_class("crop-straighten-scale");
-    crop_box.append(&straighten_box);
 
-    let crop_action_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    crop_action_row.add_css_class("crop-action-row");
+    let reset_crop = gtk::Button::with_label("Reset Crop");
+    reset_crop.set_tooltip_text(Some("Remove the crop and return to the full photo"));
     let apply_crop_button = gtk::Button::with_label("Apply Crop");
-    apply_crop_button.set_hexpand(true);
     apply_crop_button.set_tooltip_text(Some("Commit the crop and leave selection mode"));
     apply_crop_button.add_css_class("suggested-action");
     apply_crop_button.add_css_class("crop-apply-button");
-    let reset_crop = gtk::Button::with_label("Reset Crop");
-    reset_crop.set_hexpand(true);
-    reset_crop.set_tooltip_text(Some("Remove the crop and return to the full photo"));
-    reset_crop.add_css_class("crop-reset-button");
-    crop_action_row.append(&apply_crop_button);
-    crop_action_row.append(&reset_crop);
-    crop_box.append(&crop_action_row);
+    editor_action_row(&crop_box, &[&reset_crop, &apply_crop_button]);
 
     add_section_label(&tools_box, "LIGHT");
     let light_box = gtk::Box::new(gtk::Orientation::Vertical, 8);

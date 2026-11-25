@@ -148,6 +148,11 @@
   background: alpha(@theme_fg_color, 0.04);
 }
 
+/* Action-row buttons share one baseline (base.css adds a crop top margin). */
+.pic-editor-panel .editor-action-row button {
+  margin-top: 0;
+}
+
 /* Each inspector panel sits in one soft card. */
 .pic-editor-panel {
   padding: 12px;

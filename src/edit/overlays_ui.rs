@@ -1105,6 +1105,9 @@ fn build_overlays_panel(
     let reset_placement = gtk::Button::with_label("Reset");
     reset_placement.set_tooltip_text(Some("Centre this overlay and reset its position offsets"));
     reset_placement.add_css_class("crop-reset-button");
+    for button in [&fit_width, &fit_screen, &reset_placement] {
+        editor_neutral_button(button);
+    }
     let fit_row = editor_button_group(3, &[&fit_width, &fit_screen, &reset_placement]);
     fit_row.add_css_class("edit-fit-row");
     position_section.append(&fit_row);

@@ -898,6 +898,9 @@ pub fn build(
     auto_contrast.set_hexpand(true);
     auto_color.set_hexpand(true);
     auto_brightness.set_hexpand(true);
+    for button in [&auto_enhance, &auto_contrast, &auto_color, &auto_brightness] {
+        editor_neutral_button(button);
+    }
     auto_row.attach(&auto_enhance, 0, 0, 1, 1);
     auto_row.attach(&auto_contrast, 1, 0, 1, 1);
     auto_row.attach(&auto_color, 0, 1, 1, 1);
@@ -973,6 +976,7 @@ pub fn build(
             button.set_group(Some(first));
         }
         button.add_css_class("crop-aspect-button");
+        editor_neutral_button(&button);
         aspect_buttons.push((preset, button));
     }
     let first_aspect = aspect_buttons[0].1.clone();
@@ -993,6 +997,8 @@ pub fn build(
     landscape.set_active(true);
     let portrait = gtk::ToggleButton::with_label("Portrait");
     portrait.set_group(Some(&landscape));
+    editor_neutral_button(&landscape);
+    editor_neutral_button(&portrait);
     let orientation_row = editor_button_group(2, &[&landscape, &portrait]);
     orientation_row.add_css_class("crop-orientation-row");
     orientation_section.append(&orientation_row);

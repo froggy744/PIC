@@ -1,6 +1,7 @@
 // Editor fragment included by editor.rs. Shared presentation pieces for the
 // inspector panels built on the Draw panel's design language (Draw, Text).
-// Their styling lives in src/css/edit_mode.css under `.pic-editor-panel`.
+// Their styling lives in src/css/edit_mode.css under `.pic-editor-panel`;
+// neutral buttons in src/css/components/editor_buttons.css.
 
 /// Colour palette swatch names and the CSS classes that paint them. Each
 /// panel pairs these with its own stored colour values.
@@ -159,6 +160,12 @@ fn editor_slider_column(
     (scale, value)
 }
 
+/// The one style for every non-primary panel button, plain or toggle.
+/// Styled in src/css/components/editor_buttons.css, above theme gradients.
+fn editor_neutral_button(button: &impl IsA<gtk::Widget>) {
+    button.add_css_class("editor-neutral-button");
+}
+
 /// Section heading with a small action button on its right.
 fn editor_heading_with_action(parent: &gtk::Box, text: &str, action: &gtk::Button) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -169,7 +176,7 @@ fn editor_heading_with_action(parent: &gtk::Box, text: &str, action: &gtk::Butto
     heading.add_css_class("editor-section-heading");
     row.append(&heading);
     action.set_valign(gtk::Align::Center);
-    action.add_css_class("editor-neutral-button");
+    editor_neutral_button(action);
     action.add_css_class("editor-heading-action");
     row.append(action);
     parent.append(&row);
@@ -180,7 +187,7 @@ fn editor_action_row(parent: &gtk::Box, buttons: &[&gtk::Button]) {
     editor_section_divider(parent);
     for button in buttons {
         if !button.has_css_class("suggested-action") {
-            button.add_css_class("editor-neutral-button");
+            editor_neutral_button(*button);
         }
     }
     let row = editor_button_group(buttons.len(), buttons);

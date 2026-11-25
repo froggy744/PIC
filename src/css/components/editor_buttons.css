@@ -1,0 +1,57 @@
+/* Editor inspector panels use one flat neutral button style for every
+ * non-primary button (src/edit/panel_ui.rs `editor_neutral_button`).
+ * Installed at APPLICATION + 8, above every theme layer, so theme-wide
+ * gradients on .crop-aspect-button, .edit-fit-row and .quick-fix-row do not
+ * reach the editor panels. Colours come from the active theme palette.
+ * Geometry stays with base.css and corner radius with the corner-style layer.
+ * The primary action (suggested-action, e.g. Apply Crop) keeps the theme. */
+.pic-editor-panel button.editor-neutral-button {
+  color: @theme_fg_color;
+  background-color: alpha(@theme_fg_color, 0.07);
+  background-image: none;
+  border: none;
+  box-shadow: inset 0 0 0 1px alpha(@theme_fg_color, 0.08);
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+
+.pic-editor-panel button.editor-neutral-button:hover {
+  background-color: alpha(@theme_fg_color, 0.11);
+}
+
+.pic-editor-panel button.editor-neutral-button:active {
+  background-color: alpha(@theme_fg_color, 0.15);
+}
+
+.pic-editor-panel button.editor-neutral-button:checked,
+.pic-editor-panel button.editor-neutral-button:checked:hover {
+  color: @theme_fg_color;
+  background-color: alpha(@accent_bg_color, 0.19);
+  box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.38);
+}
+
+.pic-editor-panel button.editor-neutral-button:disabled {
+  opacity: 0.45;
+}
+
+.pic-editor-panel button.editor-neutral-button:focus-visible {
+  outline: 2px solid @accent_bg_color;
+  outline-offset: -2px;
+}
+
+/* Bottom action row (e.g. Reset Crop + Apply Crop). */
+.pic-editor-panel .editor-action-row button {
+  min-height: 32px;
+  margin-top: 0;
+}
+
+.pic-editor-panel .editor-action-row button.editor-neutral-button {
+  padding: 4px 8px;
+}
+
+/* Small action beside a section heading (e.g. "+ Add text"). */
+.pic-editor-panel button.editor-neutral-button.editor-heading-action {
+  min-height: 26px;
+  padding: 2px 10px;
+  font-size: 12px;
+}

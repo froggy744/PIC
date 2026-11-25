@@ -121,8 +121,7 @@
   font-weight: 600;
 }
 
-.pic-editor-panel button.editor-neutral-button,
-.pic-editor-panel button.editor-destructive-button {
+.pic-editor-panel button.editor-neutral-button {
   min-height: 32px;
   padding: 4px 8px;
   color: @theme_fg_color;
@@ -131,21 +130,8 @@
   box-shadow: none;
 }
 
-.pic-editor-panel button.editor-destructive-button {
-  color: @error_color;
-}
-
 .pic-editor-panel button.editor-neutral-button:hover {
   background: alpha(@theme_fg_color, 0.11);
-}
-
-.pic-editor-panel button.editor-destructive-button:hover {
-  background: alpha(@error_color, 0.1);
-}
-
-.pic-editor-panel button.editor-destructive-button:disabled {
-  color: alpha(@theme_fg_color, 0.42);
-  background: alpha(@theme_fg_color, 0.04);
 }
 
 /* Action-row buttons share one baseline (base.css adds a crop top margin). */

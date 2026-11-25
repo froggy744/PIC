@@ -175,20 +175,11 @@ fn editor_heading_with_action(parent: &gtk::Box, text: &str, action: &gtk::Butto
     parent.append(&row);
 }
 
-/// Destructive action, styled as a quiet button with error-coloured text.
-fn editor_destructive_button(label: &str) -> gtk::Button {
-    let button = gtk::Button::with_label(label);
-    button.add_css_class("editor-destructive-button");
-    button
-}
-
-/// Bottom row of equal-width layer actions (e.g. add + delete selected).
+/// Bottom row of equal-width panel actions (e.g. Reset Crop + Apply Crop).
 fn editor_action_row(parent: &gtk::Box, buttons: &[&gtk::Button]) {
     editor_section_divider(parent);
     for button in buttons {
-        if !button.has_css_class("editor-destructive-button")
-            && !button.has_css_class("suggested-action")
-        {
+        if !button.has_css_class("suggested-action") {
             button.add_css_class("editor-neutral-button");
         }
     }

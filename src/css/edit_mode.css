@@ -103,7 +103,8 @@
   margin: 2px 0;
 }
 
-.editor-slider-column > box > label:first-child {
+.editor-slider-column > box > label:first-child,
+.pic-editor-panel label.editor-control-title {
   font-size: 12px;
   font-weight: 600;
 }
@@ -120,21 +121,56 @@
   font-weight: 600;
 }
 
+.pic-editor-panel button.editor-neutral-button,
 .pic-editor-panel button.editor-destructive-button {
   min-height: 32px;
   padding: 4px 8px;
-  color: @error_color;
-  background: transparent;
-  border: 1px solid transparent;
+  color: @theme_fg_color;
+  background: alpha(@theme_fg_color, 0.07);
+  border: 1px solid alpha(@theme_fg_color, 0.08);
   box-shadow: none;
 }
 
+.pic-editor-panel button.editor-destructive-button {
+  color: @error_color;
+}
+
+.pic-editor-panel button.editor-neutral-button:hover {
+  background: alpha(@theme_fg_color, 0.11);
+}
+
 .pic-editor-panel button.editor-destructive-button:hover {
-  background: alpha(@error_color, 0.08);
+  background: alpha(@error_color, 0.1);
 }
 
 .pic-editor-panel button.editor-destructive-button:disabled {
-  color: alpha(@theme_fg_color, 0.48);
+  color: alpha(@theme_fg_color, 0.42);
+  background: alpha(@theme_fg_color, 0.04);
+}
+
+/* Each inspector panel sits in one soft card. */
+.pic-editor-panel {
+  padding: 12px;
+  background-color: alpha(@theme_fg_color, 0.035);
+  border: 1px solid alpha(@theme_fg_color, 0.08);
+  border-radius: 12px;
+}
+
+/* Text style and alignment toggles read as one bordered button row. */
+.editor-tool-group.editor-format-group button.editor-tool-button {
+  min-height: 30px;
+  background-color: alpha(@theme_fg_color, 0.06);
+  border-color: alpha(@theme_fg_color, 0.1);
+}
+
+.editor-tool-group.editor-format-group button.editor-tool-button:checked,
+.editor-tool-group.editor-format-group button.editor-tool-button:checked:hover {
+  background-color: alpha(@accent_bg_color, 0.19);
+  border-color: alpha(@accent_bg_color, 0.38);
+}
+
+.editor-tool-group.editor-format-group button.editor-tool-button label {
+  font-size: 15px;
 }
 
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {

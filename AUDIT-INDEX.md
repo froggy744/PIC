@@ -158,13 +158,13 @@
 | `render.rs` | 2363 | **The rendering chokepoint.** `apply_recipe` / `apply_geometry` / `render_thumbnail` / `render_for_viewer` / `render_for_export` - every CPU surface (thumb, lightbox, export, print, collage) renders through here. Add rendering here. |
 | `editor.rs` | 3560 | `EditEditor` - the editor window UI: canvas, pan/zoom, tool wiring, live preview. |
 | `live_gpu.rs` | 5960 | GPU live-preview renderer: `EditRendererMode` (env `PIC_EDIT_RENDERER` = auto/gpu/cpu), auto GPU decision with retry, shaders on a `gtk::GLArea` (`LiveGpuCanvas`), CPU `Picture` kept behind the GLArea as fallback. Largest editor file. Doc: `docs/experimental-live-gpu.md`. |
-| `overlays_ui.rs` | 1901 | Overlay layer UI: drag/resize/move, layer selection. |
+| `overlays_ui.rs` | 1865 | Overlay layer UI: drag/resize/move, layer selection. |
 | `export_batch.rs` | 1865 | Batch export: `ExportFormat`, unique naming, per-file export on `std::thread`. |
 | `overlays.rs` | 1059 | Overlay asset loading/scaling cache, `PreparedOverlay`. |
 | `filters.rs` | 968 | `FilterPreset` enum + CPU filter implementations. |
-| `panel_ui.rs` | 202 | Shared inspector panel components (section heading/divider, equal-width button group, colour palette, side-by-side slider columns, position offset column, destructive button) used by Draw, Text and Overlays; styled in `src/css/edit_mode.css` under `.pic-editor-panel`. |
-| `draw_ui.rs` | 1126 | Drawing tools panel UI. |
-| `text_ui.rs` | 926 | Text layer panel UI (position grid, fonts). |
+| `panel_ui.rs` | 240 | Shared inspector panel components (section heading/divider, equal-width button group, colour palette, side-by-side slider columns, offset row and position buttons, bottom action row, destructive button) used by Draw, Text and Overlays; styled in `src/css/edit_mode.css` under `.pic-editor-panel`. |
+| `draw_ui.rs` | 1125 | Drawing tools panel UI. |
+| `text_ui.rs` | 931 | Text layer panel UI (position grid, fonts). |
 | `auto_develop.rs` | 668 | Auto-correct: region analysis, challenge scoring, auto plan. |
 | `controls.rs` | 622 | Sliders/filter-tile controls, filter thumbnail rendering. |
 | `export_benchmark.rs` | 658 | `PIC_EXPORT_BENCH_ALBUM` resize-method benchmark (debug builds). |

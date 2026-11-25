@@ -415,6 +415,7 @@ pub fn build(
     let overlays_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     overlays_box.add_css_class("pic-editor-overlay-controls");
     overlays_box.add_css_class("pic-editor-panel");
+        overlays_box.set_valign(gtk::Align::Start);
     overlays_box.set_hexpand(true);
     overlays_box.set_vexpand(true);
     overlays_box.set_margin_top(12);
@@ -424,6 +425,7 @@ pub fn build(
     let text_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     text_box.add_css_class("pic-editor-text-controls");
     text_box.add_css_class("pic-editor-panel");
+        text_box.set_valign(gtk::Align::Start);
     text_box.set_hexpand(true);
     text_box.set_vexpand(true);
     text_box.set_halign(gtk::Align::Fill);
@@ -434,6 +436,7 @@ pub fn build(
     let draw_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     draw_box.add_css_class("pic-editor-draw-controls");
     draw_box.add_css_class("pic-editor-panel");
+        draw_box.set_valign(gtk::Align::Start);
     draw_box.set_hexpand(true);
     draw_box.set_vexpand(true);
     draw_box.set_margin_top(12);

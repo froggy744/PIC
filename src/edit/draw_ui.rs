@@ -150,10 +150,9 @@ fn build_draw_panel(
         100.0,
         |n| format!("{n:.0}%"),
     );
-    editor_section_divider(parent);
     let delete = editor_destructive_button("Delete selected");
     delete.set_sensitive(false);
-    parent.append(&delete);
+    editor_action_row(parent, &[&delete]);
     for (b, tool) in [
         (&select, DrawTool::Select),
         (&pen, DrawTool::Pen),

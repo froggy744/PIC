@@ -392,38 +392,6 @@ fn draw_selection_chrome(
     let _ = context.restore();
 }
 
-fn build_overlay_position_grid(parent: &gtk::Box) -> Vec<((u8, u8), gtk::ToggleButton)> {
-    let grid = gtk::Grid::new();
-    grid.add_css_class("text-position-grid");
-    let glyphs = [["↖", "↑", "↗"], ["←", "•", "→"], ["↙", "↓", "↘"]];
-    let mut buttons: Vec<((u8, u8), gtk::ToggleButton)> = Vec::with_capacity(9);
-    for row in 0..3u8 {
-        for col in 0..3u8 {
-            let button = gtk::ToggleButton::with_label(glyphs[row as usize][col as usize]);
-            button.set_size_request(34, 34);
-            button.set_tooltip_text(Some(match (col, row) {
-                (0, 0) => "Top left",
-                (1, 0) => "Top centre",
-                (2, 0) => "Top right",
-                (0, 1) => "Centre left",
-                (1, 1) => "Centre",
-                (2, 1) => "Centre right",
-                (0, 2) => "Bottom left",
-                (1, 2) => "Bottom centre",
-                _ => "Bottom right",
-            }));
-            if let Some((_, first)) = buttons.first() {
-                button.set_group(Some(first));
-            }
-            grid.attach(&button, i32::from(col), i32::from(row), 1, 1);
-            buttons.push(((col, row), button));
-        }
-    }
-    buttons[4].1.set_active(true);
-    parent.append(&grid);
-    buttons
-}
-
 /// Wire up drawing, hit-testing and gestures on the overlay layer. The layer
 /// only becomes event-targetable when the Overlays tab is active and the
 /// photo actually has overlays; otherwise it draws (or idles) and pointer
@@ -1099,25 +1067,26 @@ fn build_overlays_panel(
 ) -> Rc<dyn Fn()> {
     // Overlays: pick the overlay the controls below edit.
     let overlays_section = editor_section(parent, "OVERLAYS");
-    let list = gtk::ListBox::new();
-    list.set_selection_mode(gtk::SelectionMode::Single);
-    list.add_css_class("overlay-list");
-    overlays_section.append(&list);
-    let import = gtk::Button::with_label("Add Overlay");
+    let import = gtk::Button::with_label("+ Add overlay");
     import.set_hexpand(true);
     import.set_tooltip_text(Some(
         "Add a PNG or JPG from its current location. Keep the file there to keep the overlay available.",
     ));
-    import.add_css_class("crop-apply-button");
+    import.add_css_class("editor-neutral-button");
     overlays_section.append(&import);
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::Single);
+    list.add_css_class("overlay-list");
+    overlays_section.append(&list);
     editor_section_divider(parent);
 
     let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
     selected_section.add_css_class("overlay-selected-section");
     parent.append(&selected_section);
 
+    let appearance_section = editor_section(&selected_section, "APPEARANCE");
     let (opacity_row, _opacity_value) =
-        editor_slider_column(&selected_section, "Opacity", (0.0, 1.0, 0.01), 1.0, |n| {
+        editor_slider_column(&appearance_section, "Opacity", (0.0, 1.0, 0.01), 1.0, |n| {
             format!("{:.0}%", n * 100.0)
         });
     opacity_row.set_digits(2);
@@ -1126,12 +1095,8 @@ fn build_overlays_panel(
 
     // Position: anchor grid with its offsets, then the placement shortcuts.
     let position_section = editor_section(&selected_section, "POSITION");
-    let position_offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    position_offset_row.set_hexpand(true);
-    position_offset_row.set_halign(gtk::Align::Fill);
-    let anchor_buttons = build_overlay_position_grid(&position_offset_row);
-    let (offset_x, offset_y) = editor_offset_column(&position_offset_row);
-    position_section.append(&position_offset_row);
+    let (offset_x, offset_y) = editor_offset_row(&position_section);
+    let anchor_buttons = editor_position_buttons(&position_section);
     let fit_width = gtk::Button::with_label("Fit Width");
     fit_width.set_tooltip_text(Some("Stretch this overlay across the full photo width"));
     fit_width.add_css_class("crop-reset-button");
@@ -1147,11 +1112,10 @@ fn build_overlays_panel(
     fit_row.add_css_class("edit-fit-row");
     position_section.append(&fit_row);
 
-    editor_section_divider(parent);
-    let remove = editor_destructive_button("Remove Overlay");
+    let remove = editor_destructive_button("Delete selected");
     remove.set_sensitive(false);
     remove.set_tooltip_text(Some("Delete this overlay from the photo"));
-    parent.append(&remove);
+    editor_action_row(parent, &[&remove]);
 
     // Populate the list and control states from the recipe.
     let sync: Rc<dyn Fn()> = {

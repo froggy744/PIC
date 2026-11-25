@@ -39,7 +39,7 @@ fn editor_section(parent: &gtk::Box, heading: &str) -> gtk::Box {
 }
 
 /// Flat toggle used for tool and formatting choices.
-fn editor_tool_button(icon: &gtk::Image, label: &str) -> gtk::ToggleButton {
+fn editor_tool_button(icon: &impl IsA<gtk::Widget>, label: &str) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::new();
     button.set_child(Some(icon));
     button.set_size_request(0, 34);
@@ -159,21 +159,28 @@ fn editor_slider_column(
     (scale, value)
 }
 
-/// Quiet destructive action (icon + label) aligned to the panel start.
+/// Destructive action, styled as a quiet button with error-coloured text.
 fn editor_destructive_button(label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    content.append(&gtk::Image::from_icon_name("user-trash-symbolic"));
-    content.append(&gtk::Label::new(Some(label)));
-    button.set_child(Some(&content));
-    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    let button = gtk::Button::with_label(label);
     button.add_css_class("editor-destructive-button");
-    button.set_halign(gtk::Align::Start);
     button
 }
 
-/// "Offset" column of X/Y spin buttons in photo pixels, beside a position grid.
-fn editor_offset_column(parent: &gtk::Box) -> (gtk::SpinButton, gtk::SpinButton) {
+/// Bottom row of equal-width layer actions (e.g. add + delete selected).
+fn editor_action_row(parent: &gtk::Box, buttons: &[&gtk::Button]) {
+    editor_section_divider(parent);
+    for button in buttons {
+        if !button.has_css_class("editor-destructive-button") {
+            button.add_css_class("editor-neutral-button");
+        }
+    }
+    let row = editor_button_group(buttons.len(), buttons);
+    row.add_css_class("editor-action-row");
+    parent.append(&row);
+}
+
+/// One row: "Offset" title, then X and Y spin buttons in photo pixels.
+fn editor_offset_row(parent: &gtk::Box) -> (gtk::SpinButton, gtk::SpinButton) {
     let offset_x = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
     let offset_y = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
     offset_x.set_tooltip_text(Some(
@@ -182,21 +189,52 @@ fn editor_offset_column(parent: &gtk::Box) -> (gtk::SpinButton, gtk::SpinButton)
     offset_y.set_tooltip_text(Some(
         "Vertical offset from the selected position, in photo pixels",
     ));
-    let rows = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    row.set_hexpand(true);
+    row.add_css_class("editor-offset-row");
+    let title = gtk::Label::new(Some("Offset"));
+    title.set_xalign(0.0);
+    title.add_css_class("editor-control-title");
+    row.append(&title);
     for (axis, spin) in [("X", &offset_x), ("Y", &offset_y)] {
         spin.set_hexpand(true);
         spin.set_width_chars(3);
         spin.set_max_width_chars(3);
         spin.add_css_class("edit-offset-spin");
-        let cell = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        cell.set_hexpand(true);
         let label = gtk::Label::new(Some(axis));
-        label.set_xalign(0.0);
-        label.set_width_chars(1);
-        cell.append(&label);
-        cell.append(spin);
-        rows.append(&cell);
+        label.set_margin_start(4);
+        row.append(&label);
+        row.append(spin);
     }
-    editor_control_column(parent, "Offset", None, &rows);
+    parent.append(&row);
     (offset_x, offset_y)
+}
+
+/// Placement buttons ← ↑ • ↓ →, keyed by (column, row) of the 3×3 anchor
+/// model. Corner anchors stay reachable by dragging on the canvas.
+fn editor_position_buttons(parent: &gtk::Box) -> Vec<((u8, u8), gtk::ToggleButton)> {
+    let mut buttons: Vec<((u8, u8), gtk::ToggleButton)> = Vec::with_capacity(5);
+    for (glyph, tooltip, cell) in [
+        ("←", "Centre left", (0, 1)),
+        ("↑", "Top centre", (1, 0)),
+        ("•", "Centre", (1, 1)),
+        ("↓", "Bottom centre", (1, 2)),
+        ("→", "Centre right", (2, 1)),
+    ] {
+        let button = editor_tool_button(&gtk::Label::new(Some(glyph)), tooltip);
+        if let Some((_, first)) = buttons.first() {
+            button.set_group(Some(first));
+        }
+        buttons.push((cell, button));
+    }
+    if let Some((_, centre)) = buttons.iter().find(|(cell, _)| *cell == (1, 1)) {
+        centre.set_active(true);
+    }
+    let row = editor_button_group(
+        buttons.len(),
+        &buttons.iter().map(|(_, button)| button).collect::<Vec<_>>(),
+    );
+    row.add_css_class("editor-format-group");
+    parent.append(&row);
+    buttons
 }

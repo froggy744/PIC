@@ -122,3 +122,13 @@
 
 
 .navigation-sidebar button.compact-rating-option { padding-left: 4px; padding-right: 4px; }
+
+/* The compact rail reads like the full sidebar rows: regular-weight titles
+ * and the same dimmed navigation glyphs, whatever weight a theme gives buttons. */
+.navigation-sidebar button.compact-sidebar-button label,
+.navigation-sidebar button.compact-sidebar-option label {
+    font-weight: 400;
+}
+.navigation-sidebar button.compact-sidebar-button image {
+    opacity: 0.75;
+}

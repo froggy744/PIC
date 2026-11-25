@@ -150,7 +150,7 @@
 
 ### `src/edit/` - non-destructive editor (`mod.rs` style)
 
-`mod.rs` (15) declares `auto_develop`, `export_batch`, `export_benchmark` (debug-only), `filters`, `live_gpu`, `model`, `overlays`, `render`, `text_render` and `mod editor`; exports `EditRecipe` and `build_editor`. `editor.rs` **`include!`s** `preview`, `zoom`, `crop`, `controls`, `undo`, `export`, `overlays_ui`, `draw_ui`, `text_ui` (all become items of the `editor` module).
+`mod.rs` (15) declares `auto_develop`, `export_batch`, `export_benchmark` (debug-only), `filters`, `live_gpu`, `model`, `overlays`, `render`, `text_render` and `mod editor`; exports `EditRecipe` and `build_editor`. `editor.rs` **`include!`s** `preview`, `zoom`, `crop`, `controls`, `undo`, `export`, `panel_ui`, `overlays_ui`, `draw_ui`, `text_ui` (all become items of the `editor` module).
 
 | File | Lines | What it does |
 |---|---|---|
@@ -162,8 +162,9 @@
 | `export_batch.rs` | 1865 | Batch export: `ExportFormat`, unique naming, per-file export on `std::thread`. |
 | `overlays.rs` | 1059 | Overlay asset loading/scaling cache, `PreparedOverlay`. |
 | `filters.rs` | 968 | `FilterPreset` enum + CPU filter implementations. |
-| `draw_ui.rs` | 1198 | Drawing tools panel UI. |
-| `text_ui.rs` | 1040 | Text layer panel UI (position grid, fonts). |
+| `panel_ui.rs` | 173 | Shared inspector panel components (section heading/divider, equal-width button group, colour palette, side-by-side slider columns, destructive button) used by Draw and Text; styled in `src/css/edit_mode.css` under `.pic-editor-panel`. |
+| `draw_ui.rs` | 1126 | Drawing tools panel UI. |
+| `text_ui.rs` | 952 | Text layer panel UI (position grid, fonts). |
 | `auto_develop.rs` | 668 | Auto-correct: region analysis, challenge scoring, auto plan. |
 | `controls.rs` | 622 | Sliders/filter-tile controls, filter thumbnail rendering. |
 | `export_benchmark.rs` | 658 | `PIC_EXPORT_BENCH_ALBUM` resize-method benchmark (debug builds). |
@@ -341,7 +342,7 @@ After a Folder scroll settles, a 16 ms timer prefetches ahead, capped by `Galler
 | Gallery grid / tiles / zoom | `src/grid.rs` (size defaults, `ZOOM_LEVELS` at top), `src/grid/view.rs` (`Gallery`), `src/grid/tile.rs` | grid files; virtualization in `grid/virtualization.rs`; layouts in `window/layout.rs` |
 | Selection / keyboard nav | `src/grid/selection.rs` | + `window/shortcuts.rs` |
 | Lightbox / viewer | `src/lightbox.rs` (`Lightbox`), `src/lightbox/render.rs` | `lightbox/impl.rs`, decode lanes in `source.rs` |
-| Editor UI | `src/edit/editor.rs` (`EditEditor`, `build`) | panels in `edit/controls.rs`, `draw_ui.rs`, `text_ui.rs`, `overlays_ui.rs`, `crop.rs` (all `include!`d into `editor.rs`) |
+| Editor UI | `src/edit/editor.rs` (`EditEditor`, `build`) | panels in `edit/controls.rs`, `draw_ui.rs`, `text_ui.rs` (shared pieces in `panel_ui.rs`), `overlays_ui.rs`, `crop.rs` (all `include!`d into `editor.rs`) |
 | A new edit effect / recipe field | `src/edit/model.rs` (`EditRecipe`), `src/edit/render.rs` | add to model + `render::apply_recipe`; GPU path in `edit/live_gpu.rs` |
 | Export | `src/edit/export_batch.rs`, `src/edit/export_metadata.rs` | + dialogs in `window/build.rs` (`show_photo_export_dialog`) |
 | Thumbnails / decode | `src/thumbnail.rs`, `src/thumbnail/viewer.rs` | format decoders in `thumbnail/*.rs`; display workers `thumbnail_display.rs`; CI `nef-quality-harness.yml` for NEF paths |

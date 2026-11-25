@@ -25,7 +25,6 @@ struct DrawGesture {
 }
 
 fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
-    let button = gtk::ToggleButton::new();
     let icon = gtk::Image::new();
     icon.set_pixel_size(22);
     let resource_base = icon_name.trim_end_matches("-symbolic").to_owned();
@@ -41,58 +40,7 @@ fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
             set_icon_resource(&icon, manager.is_dark());
         }
     });
-    button.set_child(Some(&icon));
-    button.set_size_request(0, 34);
-    button.set_tooltip_text(Some(label));
-    button.update_property(&[gtk::accessible::Property::Label(label)]);
-    button.add_css_class("flat");
-    button.add_css_class("draw-tool-button");
-    button
-}
-
-fn draw_slider_row(
-    parent: &gtk::Box,
-    label: &str,
-    min: f64,
-    max: f64,
-    step: f64,
-    initial: f64,
-    percent: bool,
-) -> (gtk::Scale, gtk::Label) {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    column.set_hexpand(true);
-    column.add_css_class("draw-adjustment-column");
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    let title = gtk::Label::new(Some(label));
-    title.set_xalign(0.0);
-    title.set_hexpand(true);
-    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, min, max, step);
-    scale.set_value(initial);
-    scale.set_draw_value(false);
-    scale.set_hexpand(true);
-    scale.set_tooltip_text(Some(label));
-    scale.add_css_class("edit-adjustment-scale");
-    let value = gtk::Label::new(None);
-    value.set_xalign(1.0);
-    value.add_css_class("draw-adjustment-value");
-    let format = move |n: f64| {
-        if percent {
-            format!("{n:.0}%")
-        } else {
-            format!("{n:.0}")
-        }
-    };
-    value.set_text(&format(initial));
-    {
-        let value_label = value.clone();
-        scale.connect_value_changed(move |scale| value_label.set_text(&format(scale.value())));
-    }
-    row.append(&title);
-    row.append(&value);
-    column.append(&row);
-    column.append(&scale);
-    parent.append(&column);
-    (scale, value)
+    editor_tool_button(&icon, label)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -114,14 +62,6 @@ fn build_draw_panel(
     let selected_many = Rc::new(RefCell::new(Vec::<usize>::new()));
     let gesture = Rc::new(RefCell::new(DrawGesture::default()));
     let pen_cursor_position = Rc::new(Cell::new(None::<(f64, f64)>));
-    let tool_grid = gtk::Grid::new();
-    tool_grid.set_hexpand(true);
-    tool_grid.set_halign(gtk::Align::Fill);
-    tool_grid.set_column_homogeneous(true);
-    tool_grid.set_row_homogeneous(true);
-    tool_grid.set_column_spacing(6);
-    tool_grid.set_row_spacing(6);
-    tool_grid.add_css_class("draw-tool-grid");
     let select = draw_tool_button("draw-select-symbolic", "Select");
     select.set_active(false);
     let pen = draw_tool_button("draw-pen-symbolic", "Pen");
@@ -135,26 +75,20 @@ fn build_draw_panel(
     for button in [&pen, &line, &arrow, &rect, &ellipse, &highlighter, &eraser] {
         button.set_group(Some(&select));
     }
-    for (index, button) in [
-        &select,
-        &pen,
-        &line,
-        &arrow,
-        &rect,
-        &ellipse,
-        &highlighter,
-        &eraser,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        button.set_hexpand(true);
-        tool_grid.attach(button, (index % 4) as i32, (index / 4) as i32, 1, 1);
-    }
-    let tools_heading = gtk::Label::new(Some("DRAWING TOOLS"));
-    tools_heading.set_xalign(0.0);
-    tools_heading.add_css_class("draw-section-heading");
-    parent.append(&tools_heading);
+    let tool_grid = editor_button_group(
+        4,
+        &[
+            &select,
+            &pen,
+            &line,
+            &arrow,
+            &rect,
+            &ellipse,
+            &highlighter,
+            &eraser,
+        ],
+    );
+    editor_section_heading(parent, "DRAWING TOOLS");
     parent.append(&tool_grid);
     let arrow_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let arrow_start = gtk::CheckButton::with_label("Start head");
@@ -182,83 +116,42 @@ fn build_draw_panel(
         });
     }
 
-    let tools_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
-    tools_divider.add_css_class("draw-section-divider");
-    parent.append(&tools_divider);
-    let colour_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    colour_row.set_hexpand(true);
-    colour_row.set_halign(gtk::Align::Fill);
-    let colour_heading = gtk::Label::new(Some("COLOUR"));
-    colour_heading.set_xalign(0.0);
-    colour_heading.add_css_class("draw-section-heading");
-    colour_row.append(&colour_heading);
-    let colour_swatches = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    colour_swatches.set_hexpand(true);
-    colour_swatches.set_halign(gtk::Align::Fill);
-    colour_swatches.set_homogeneous(true);
-    colour_swatches.add_css_class("text-colour-swatches");
-    let mut color_buttons = Vec::new();
-    for (name, class, rgba) in [
-        ("White", "text-swatch-white", 0xffffffff),
-        ("Black", "text-swatch-black", 0x111111ff),
-        ("Red", "text-swatch-red", 0xf21f1fff),
-        ("Orange", "text-swatch-orange", 0xff7a00ff),
-        ("Yellow", "text-swatch-yellow", 0xffe60dff),
-        ("Green", "text-swatch-green", 0x1fb848ff),
-        ("Blue", "text-swatch-blue", 0x266bffff),
-        ("Purple", "text-swatch-purple", 0xad4de0ff),
-    ] {
-        let b = gtk::Button::new();
-        b.set_size_request(0, 28);
-        b.add_css_class("text-colour-swatch");
-        b.add_css_class(class);
-        b.set_tooltip_text(Some(name));
-        colour_swatches.append(&b);
-        color_buttons.push((b, rgba));
-    }
-    let custom = gtk::Button::new();
-    custom.set_size_request(0, 28);
-    custom.add_css_class("text-colour-swatch");
-    custom.set_tooltip_text(Some("Choose custom colour"));
-    let custom_icon = gtk::Image::from_icon_name("color-select-symbolic");
-    custom_icon.set_pixel_size(16);
-    custom.set_child(Some(&custom_icon));
-    colour_swatches.append(&custom);
+    editor_section_divider(parent);
+    let colour_row = editor_section(parent, "COLOUR");
+    let (colour_swatches, color_buttons, custom) = editor_colour_palette([
+        0xffffffffu32,
+        0x111111ff,
+        0xf21f1fff,
+        0xff7a00ff,
+        0xffe60dff,
+        0x1fb848ff,
+        0x266bffff,
+        0xad4de0ff,
+    ]);
     colour_row.append(&colour_swatches);
-    parent.append(&colour_row);
 
-    let colour_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
-    colour_divider.add_css_class("draw-section-divider");
-    parent.append(&colour_divider);
-    let adjustment_columns = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    adjustment_columns.set_hexpand(true);
-    let (width, _width_value) = draw_slider_row(
+    editor_section_divider(parent);
+    let adjustment_columns = editor_control_columns(parent);
+    let (width, _width_value) = editor_slider_column(
         &adjustment_columns,
         "Thickness",
-        1.0,
-        36.0,
-        1.0,
+        (1.0, 36.0, 1.0),
         5.0,
-        false,
+        |n| format!("{n:.0}"),
     );
     {
         let layer = layer.clone();
         width.connect_value_changed(move |_| layer.queue_draw());
     }
-    let (opacity, _opacity_value) =
-        draw_slider_row(&adjustment_columns, "Opacity", 5.0, 100.0, 5.0, 100.0, true);
-    parent.append(&adjustment_columns);
-    let delete_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
-    delete_divider.add_css_class("draw-section-divider");
-    parent.append(&delete_divider);
-    let delete = gtk::Button::new();
-    let delete_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    delete_content.append(&gtk::Image::from_icon_name("user-trash-symbolic"));
-    delete_content.append(&gtk::Label::new(Some("Delete selected")));
-    delete.set_child(Some(&delete_content));
-    delete.update_property(&[gtk::accessible::Property::Label("Delete selected")]);
-    delete.add_css_class("draw-delete-button");
-    delete.set_halign(gtk::Align::Start);
+    let (opacity, _opacity_value) = editor_slider_column(
+        &adjustment_columns,
+        "Opacity",
+        (5.0, 100.0, 5.0),
+        100.0,
+        |n| format!("{n:.0}%"),
+    );
+    editor_section_divider(parent);
+    let delete = editor_destructive_button("Delete selected");
     delete.set_sensitive(false);
     parent.append(&delete);
     for (b, tool) in [

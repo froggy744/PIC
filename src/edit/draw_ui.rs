@@ -42,7 +42,7 @@ fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
         }
     });
     button.set_child(Some(&icon));
-    button.set_size_request(38, 38);
+    button.set_size_request(0, 34);
     button.set_tooltip_text(Some(label));
     button.update_property(&[gtk::accessible::Property::Label(label)]);
     button.add_css_class("flat");
@@ -59,13 +59,13 @@ fn draw_slider_row(
     initial: f64,
     percent: bool,
 ) -> (gtk::Scale, gtk::Label) {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.set_hexpand(true);
-    row.add_css_class("edit-adjustment-row");
-    row.add_css_class("draw-adjustment-row");
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    column.set_hexpand(true);
+    column.add_css_class("draw-adjustment-column");
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     let title = gtk::Label::new(Some(label));
-    title.set_width_chars(10);
     title.set_xalign(0.0);
+    title.set_hexpand(true);
     let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, min, max, step);
     scale.set_value(initial);
     scale.set_draw_value(false);
@@ -73,9 +73,7 @@ fn draw_slider_row(
     scale.set_tooltip_text(Some(label));
     scale.add_css_class("edit-adjustment-scale");
     let value = gtk::Label::new(None);
-    value.set_width_chars(5);
     value.set_xalign(1.0);
-    value.add_css_class("edit-adjustment-value");
     value.add_css_class("draw-adjustment-value");
     let format = move |n: f64| {
         if percent {
@@ -90,9 +88,10 @@ fn draw_slider_row(
         scale.connect_value_changed(move |scale| value_label.set_text(&format(scale.value())));
     }
     row.append(&title);
-    row.append(&scale);
     row.append(&value);
-    parent.append(&row);
+    column.append(&row);
+    column.append(&scale);
+    parent.append(&column);
     (scale, value)
 }
 
@@ -116,11 +115,12 @@ fn build_draw_panel(
     let gesture = Rc::new(RefCell::new(DrawGesture::default()));
     let pen_cursor_position = Rc::new(Cell::new(None::<(f64, f64)>));
     let tool_grid = gtk::Grid::new();
-    tool_grid.set_halign(gtk::Align::Center);
+    tool_grid.set_hexpand(true);
+    tool_grid.set_halign(gtk::Align::Fill);
     tool_grid.set_column_homogeneous(true);
     tool_grid.set_row_homogeneous(true);
-    tool_grid.set_column_spacing(8);
-    tool_grid.set_row_spacing(8);
+    tool_grid.set_column_spacing(6);
+    tool_grid.set_row_spacing(6);
     tool_grid.add_css_class("draw-tool-grid");
     let select = draw_tool_button("draw-select-symbolic", "Select");
     select.set_active(false);
@@ -148,8 +148,13 @@ fn build_draw_panel(
     .into_iter()
     .enumerate()
     {
+        button.set_hexpand(true);
         tool_grid.attach(button, (index % 4) as i32, (index / 4) as i32, 1, 1);
     }
+    let tools_heading = gtk::Label::new(Some("DRAWING TOOLS"));
+    tools_heading.set_xalign(0.0);
+    tools_heading.add_css_class("draw-section-heading");
+    parent.append(&tools_heading);
     parent.append(&tool_grid);
     let arrow_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let arrow_start = gtk::CheckButton::with_label("Start head");
@@ -177,10 +182,16 @@ fn build_draw_panel(
         });
     }
 
+    let tools_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
+    tools_divider.add_css_class("draw-section-divider");
+    parent.append(&tools_divider);
     let colour_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
     colour_row.set_hexpand(true);
     colour_row.set_halign(gtk::Align::Fill);
-    colour_row.set_margin_top(10);
+    let colour_heading = gtk::Label::new(Some("COLOUR"));
+    colour_heading.set_xalign(0.0);
+    colour_heading.add_css_class("draw-section-heading");
+    colour_row.append(&colour_heading);
     let colour_swatches = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     colour_swatches.set_hexpand(true);
     colour_swatches.set_halign(gtk::Align::Fill);
@@ -198,7 +209,7 @@ fn build_draw_panel(
         ("Purple", "text-swatch-purple", 0xad4de0ff),
     ] {
         let b = gtk::Button::new();
-        b.set_size_request(0, 30);
+        b.set_size_request(0, 28);
         b.add_css_class("text-colour-swatch");
         b.add_css_class(class);
         b.set_tooltip_text(Some(name));
@@ -206,7 +217,7 @@ fn build_draw_panel(
         color_buttons.push((b, rgba));
     }
     let custom = gtk::Button::new();
-    custom.set_size_request(0, 30);
+    custom.set_size_request(0, 28);
     custom.add_css_class("text-colour-swatch");
     custom.set_tooltip_text(Some("Choose custom colour"));
     let custom_icon = gtk::Image::from_icon_name("color-select-symbolic");
@@ -216,14 +227,38 @@ fn build_draw_panel(
     colour_row.append(&colour_swatches);
     parent.append(&colour_row);
 
-    let (width, _width_value) = draw_slider_row(parent, "Thickness", 1.0, 36.0, 1.0, 5.0, false);
+    let colour_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
+    colour_divider.add_css_class("draw-section-divider");
+    parent.append(&colour_divider);
+    let adjustment_columns = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    adjustment_columns.set_hexpand(true);
+    let (width, _width_value) = draw_slider_row(
+        &adjustment_columns,
+        "Thickness",
+        1.0,
+        36.0,
+        1.0,
+        5.0,
+        false,
+    );
     {
         let layer = layer.clone();
         width.connect_value_changed(move |_| layer.queue_draw());
     }
     let (opacity, _opacity_value) =
-        draw_slider_row(parent, "Opacity", 5.0, 100.0, 5.0, 100.0, true);
-    let delete = gtk::Button::with_label("Delete selected");
+        draw_slider_row(&adjustment_columns, "Opacity", 5.0, 100.0, 5.0, 100.0, true);
+    parent.append(&adjustment_columns);
+    let delete_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
+    delete_divider.add_css_class("draw-section-divider");
+    parent.append(&delete_divider);
+    let delete = gtk::Button::new();
+    let delete_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    delete_content.append(&gtk::Image::from_icon_name("user-trash-symbolic"));
+    delete_content.append(&gtk::Label::new(Some("Delete selected")));
+    delete.set_child(Some(&delete_content));
+    delete.update_property(&[gtk::accessible::Property::Label("Delete selected")]);
+    delete.add_css_class("draw-delete-button");
+    delete.set_halign(gtk::Align::Start);
     delete.set_sensitive(false);
     parent.append(&delete);
     for (b, tool) in [

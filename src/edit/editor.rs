@@ -434,8 +434,8 @@ pub fn build(
     draw_box.set_vexpand(true);
     draw_box.set_margin_top(12);
     draw_box.set_margin_bottom(16);
-    draw_box.set_margin_start(10);
-    draw_box.set_margin_end(10);
+    draw_box.set_margin_start(14);
+    draw_box.set_margin_end(14);
     let tools_scroll = gtk::ScrolledWindow::new();
     tools_scroll.set_hexpand(true);
     tools_scroll.set_halign(gtk::Align::Fill);
@@ -2045,9 +2045,22 @@ pub fn build(
     }
     {
         let panel_stack = panel_stack.clone();
+        let body = body.clone();
+        let previous_width = Rc::new(Cell::new(None::<i32>));
         draw_toggle.connect_toggled(move |button| {
             if button.is_active() {
                 panel_stack.set_visible_child_name("draw");
+                // The Draw controls are composed for a compact inspector.
+                // Keep any width the user already set below this target.
+                if body.position() > 320 {
+                    previous_width.set(Some(body.position()));
+                    body.set_position(320);
+                }
+            } else if let Some(width) = previous_width.take() {
+                // A manual drag in Draw is a new user choice; preserve it.
+                if body.position() == 320 {
+                    body.set_position(width);
+                }
             }
         });
     }

@@ -4,7 +4,11 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use anyhow::{ensure, Context, Result};
-use lcms2::{ColorSpaceSignature, Flags, Intent, PixelFormat, Profile, ThreadContext, Transform};
+use lcms2::{
+    ColorSpaceSignature, DisallowCache, Flags, Intent, PixelFormat, Profile, ThreadContext,
+    Transform,
+};
+use rayon::prelude::*;
 
 const ICC_SIGNATURE: &[u8] = b"ICC_PROFILE\0";
 const MAX_ICC_BYTES: usize = 4 * 1024 * 1024;
@@ -238,7 +242,9 @@ fn validate_lut_tag(tag: &[u8]) -> Result<()> {
     Ok(())
 }
 
-type RgbTransform = Transform<u8, u8, ThreadContext>;
+// NO_CACHE only drops LCMS's last-pixel memo (same output) and makes the
+// transform Sync, so one decode's pixels convert in parallel.
+type RgbTransform = Transform<u8, u8, ThreadContext, DisallowCache>;
 struct CachedTransform {
     // Compare exact bytes too, so hash collisions cannot select another profile.
     key: blake3::Hash,
@@ -287,7 +293,7 @@ fn convert_rgb8_to_srgb(image: &mut image::RgbImage, icc: &[u8]) -> Result<()> {
                 &target,
                 PixelFormat::RGB_8,
                 Intent::RelativeColorimetric,
-                Flags::BLACKPOINT_COMPENSATION,
+                Flags::BLACKPOINT_COMPENSATION | Flags::NO_CACHE,
             )
             .context("LittleCMS could not create RGB -> sRGB transform")?;
             CachedTransform {
@@ -297,9 +303,11 @@ fn convert_rgb8_to_srgb(image: &mut image::RgbImage, icc: &[u8]) -> Result<()> {
                 _context: context,
             }
         };
-        for chunk in image.as_mut().chunks_mut(3 * 65_536) {
-            entry.transform.transform_in_place(chunk);
-        }
+        let transform = &entry.transform;
+        image
+            .as_mut()
+            .par_chunks_mut(3 * 65_536)
+            .for_each(|chunk| transform.transform_in_place(chunk));
         if cache.len() >= TRANSFORM_CACHE_CAPACITY {
             cache.pop_front();
         }
@@ -501,6 +509,33 @@ mod tests {
                 "actual={actual} expected={expected}"
             );
         }
+    }
+
+    #[test]
+    fn parallel_conversion_matches_a_sequential_cached_transform() {
+        // Several 65,536-pixel chunks plus a ragged tail, with varied pixels.
+        let (width, height) = (701, 300);
+        let source = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([(x * 7 + y) as u8, (y * 13 + x * 3) as u8, (x ^ y) as u8])
+        });
+        let icc = prophoto_icc();
+        let mut parallel = source.clone();
+        convert_rgb8_to_srgb(&mut parallel, &icc).unwrap();
+
+        let profile = lcms2::Profile::new_icc(&icc).unwrap();
+        let reference_transform = lcms2::Transform::new_flags(
+            &profile,
+            lcms2::PixelFormat::RGB_8,
+            &lcms2::Profile::new_srgb(),
+            lcms2::PixelFormat::RGB_8,
+            lcms2::Intent::RelativeColorimetric,
+            lcms2::Flags::BLACKPOINT_COMPENSATION,
+        )
+        .unwrap();
+        let mut reference = source.clone();
+        reference_transform.transform_in_place(reference.as_mut());
+        assert_eq!(parallel.as_raw(), reference.as_raw());
+        assert_ne!(parallel.as_raw(), source.as_raw());
     }
 
     #[test]

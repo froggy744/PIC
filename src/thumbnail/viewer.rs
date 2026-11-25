@@ -1453,6 +1453,28 @@ fn resize_viewer_rgba(
     .context("viewer RGBA resizer returned an invalid buffer")
 }
 
+/// Opaque RGBA copy of `source`, converted in row bands on the rayon pool.
+/// Same bytes as `DynamicImage::ImageRgb8(..).into_rgba8()`. The buffer is
+/// allocated zeroed (lazily mapped) and every byte, alpha included, is
+/// written by the bands, so page faults are spread over the threads too.
+fn rgb_to_rgba(source: &image::RgbImage) -> image::RgbaImage {
+    use rayon::prelude::*;
+    let (width, height) = source.dimensions();
+    let row = width as usize;
+    let mut pixels = vec![0u8; row * height as usize * 4];
+    if row > 0 {
+        pixels
+            .par_chunks_mut(row * 4 * 64)
+            .zip(source.as_raw().par_chunks(row * 3 * 64))
+            .for_each(|(destination, source)| {
+                for (to, from) in destination.chunks_exact_mut(4).zip(source.chunks_exact(3)) {
+                    to.copy_from_slice(&[from[0], from[1], from[2], 255]);
+                }
+            });
+    }
+    image::RgbaImage::from_raw(width, height, pixels).expect("RGBA buffer matches dimensions")
+}
+
 fn resize_viewer_image(
     source: &DynamicImage,
     destination_width: u32,
@@ -1461,16 +1483,27 @@ fn resize_viewer_image(
     match source {
         DynamicImage::ImageRgb8(source) => {
             let started = std::time::Instant::now();
-            let rgb = resize_viewer_rgb(source, destination_width, destination_height)?;
+            // A same-size "resize" only copied the decode; convert it directly.
+            let same_size =
+                source.width() == destination_width && source.height() == destination_height;
+            let resized;
+            let rgb = if same_size {
+                source
+            } else {
+                resized = resize_viewer_rgb(source, destination_width, destination_height)?;
+                &resized
+            };
+            let rgba = rgb_to_rgba(rgb);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
-                    "PIC_DECODE stage=rgba_conversion elapsed_ms={:.3} output={}x{} source=rgb_resized",
+                    "PIC_DECODE stage=rgba_conversion elapsed_ms={:.3} output={}x{} source={}",
                     started.elapsed().as_secs_f64() * 1000.0,
                     destination_width,
                     destination_height,
+                    if same_size { "rgb_direct" } else { "rgb_resized" },
                 );
             }
-            Ok(DynamicImage::ImageRgb8(rgb).into_rgba8())
+            Ok(rgba)
         }
         DynamicImage::ImageRgba8(source) => resize_viewer_rgba(
             source,
@@ -1601,6 +1634,21 @@ pub fn apply_orientation(image: DynamicImage, orientation: u16) -> DynamicImage 
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn viewer_rgba_conversion_matches_into_rgba8_at_same_and_smaller_size() {
+        // More than one 64-row band, odd width.
+        let rgb = image::RgbImage::from_fn(97, 211, |x, y| {
+            image::Rgb([(x * 5) as u8, (y * 3) as u8, (x + y) as u8])
+        });
+        let source = DynamicImage::ImageRgb8(rgb.clone());
+        let direct = resize_viewer_image(&source, 97, 211).unwrap();
+        assert_eq!(direct, DynamicImage::ImageRgb8(rgb.clone()).into_rgba8());
+
+        let resized = resize_viewer_image(&source, 40, 87).unwrap();
+        let expected = resize_viewer_rgb(&rgb, 40, 87).unwrap();
+        assert_eq!(resized, DynamicImage::ImageRgb8(expected).into_rgba8());
+    }
 
     #[test]
     fn canceled_remote_dng_reaches_its_network_read_stage() {

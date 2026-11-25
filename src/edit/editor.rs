@@ -1467,7 +1467,9 @@ pub fn build(
                     let preview_ready = preview_ready.clone();
                     let placeholder_active = placeholder_active.clone();
                     let end_placeholder = end_placeholder.clone();
-                    glib::timeout_add_local(Duration::from_millis(25), move || {
+                    // Poll often: a 25 ms period left a finished preview
+                    // waiting up to a frame and a half before it showed.
+                    glib::timeout_add_local(Duration::from_millis(5), move || {
                         match receiver.try_recv() {
                             Ok(result) => {
                                 // A result from the previous zoom mode must

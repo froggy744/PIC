@@ -18,6 +18,22 @@ impl PreviewBase {
 
 const PREVIEW_BASE_CACHE_CAPACITY: usize = 2;
 
+/// Copy a source-resolution preview image on the rayon pool. A plain clone of
+/// a 24 MP base (96 MB) took about 50 ms on one thread, all of it before the
+/// editor's first frame. The zeroed allocation is lazily mapped, so the page
+/// faults are spread over the copying threads too.
+fn copy_preview_image(image: &image::RgbaImage) -> image::RgbaImage {
+    use rayon::prelude::*;
+    const BAND: usize = 1 << 20;
+    let mut pixels = vec![0u8; image.as_raw().len()];
+    pixels
+        .par_chunks_mut(BAND)
+        .zip(image.as_raw().par_chunks(BAND))
+        .for_each(|(to, from)| to.copy_from_slice(from));
+    image::RgbaImage::from_raw(image.width(), image.height(), pixels)
+        .expect("copied preview buffer matches its dimensions")
+}
+
 fn preview_target_dimensions(source_width: i64, source_height: i64) -> (u32, u32) {
     // These are decode bounds, so they must stay in the source's unrotated
     // coordinate system. decode_base_for_viewer applies the library rotation
@@ -49,7 +65,7 @@ fn cached_preview_base(
         .ok()?
         .iter()
         .find(|entry| entry.matches(path, rotation, target_width, target_height))
-        .map(|entry| entry.image.clone())
+        .map(|entry| copy_preview_image(&entry.image))
 }
 
 fn store_preview_base(cache: &Arc<Mutex<Vec<PreviewBase>>>, entry: PreviewBase) {
@@ -212,7 +228,7 @@ fn render_preview_job(
                     rotation: job.rotation,
                     target_width: job.target_width,
                     target_height: job.target_height,
-                    image: image.clone(),
+                    image: copy_preview_image(&image),
                 },
             );
             (image, "miss")
@@ -238,7 +254,7 @@ fn render_preview_job(
                 target_height: job.target_height,
                 crop,
                 straighten,
-                image: image.clone(),
+                image: copy_preview_image(&image),
             });
             image
         } else {
@@ -275,6 +291,15 @@ fn render_preview_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_image_copy_is_byte_identical_across_bands() {
+        // Larger than one 1 MiB band with a ragged tail.
+        let image = image::RgbaImage::from_fn(613, 509, |x, y| {
+            image::Rgba([x as u8, y as u8, (x * y) as u8, (x + y) as u8])
+        });
+        assert_eq!(copy_preview_image(&image), image);
+    }
 
     #[test]
     fn auto_brightness_changes_decoded_preview_pixels() {

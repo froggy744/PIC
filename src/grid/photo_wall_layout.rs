@@ -286,7 +286,10 @@ impl PhotoWallLayout {
                 item.x = positions[column];
                 item.y = tops[column];
                 item.width = widths[column] as f64;
-                let ideal_height = (ideal_width / self.aspect_ratios[item.photo_index]).max(1.0);
+                let ratio = super::masonry_layout::masonry_aspect_ratio(
+                    self.aspect_ratios[item.photo_index],
+                );
+                let ideal_height = (ideal_width / ratio).max(1.0);
                 item.height = (bottoms[column] + ideal_height).round() - item.y;
                 tops[column] = item.y + item.height + gap as f64;
                 bottoms[column] += ideal_height + gap as f64;

@@ -3,6 +3,29 @@ use super::photo_wall_layout::{PhotoWallItem, PhotoWallSection, PhotoWallSection
 // Shared horizontal and vertical tile spacing, in logical pixels.
 pub(super) const MASONRY_GAP: usize = 8;
 
+/// Narrowest aspect ratio (width / height) a Masonry tile is laid out at: a
+/// tile is at most twice its column width tall, which still shows 2:3
+/// portraits and 9:16 phone photos whole. Tiles use `ContentFit::Cover`,
+/// so a narrower image is cropped instead of becoming a tile tens of
+/// thousands of pixels tall that swallows the viewport.
+const MASONRY_MIN_ASPECT_RATIO: f64 = 0.5;
+
+/// Below this aspect ratio an image is not a photo but a strip (web page
+/// background slices such as a 3×107 GIF, long scroll captures). It gets a
+/// square tile instead of a tall cyan block at the 2:1 cap.
+const MASONRY_STRIP_ASPECT_RATIO: f64 = 0.25;
+
+/// The aspect ratio a photo is laid out at in Masonry. Invalid ratios and
+/// strips count as square. Both the full layout and the in-place resize use this, so a
+/// resize never reintroduces the uncapped height.
+pub(super) fn masonry_aspect_ratio(ratio: f64) -> f64 {
+    if ratio.is_finite() && ratio >= MASONRY_STRIP_ASPECT_RATIO {
+        ratio.max(MASONRY_MIN_ASPECT_RATIO)
+    } else {
+        1.0
+    }
+}
+
 #[derive(Default)]
 pub(super) struct MasonryLayout {
     pub items: Vec<PhotoWallItem>,
@@ -72,12 +95,7 @@ impl MasonryLayout {
                 let column = (0..columns)
                     .min_by(|&a, &b| bottoms[a].total_cmp(&bottoms[b]))
                     .unwrap();
-                let ratio = ratios[photo_index];
-                let ratio = if ratio.is_finite() && ratio > 0.0 {
-                    ratio
-                } else {
-                    1.0
-                };
+                let ratio = masonry_aspect_ratio(ratios[photo_index]);
                 let width = widths[column] as f64;
                 let ideal_height = (ideal_width / ratio).max(1.0);
                 let top = tops[column];
@@ -184,12 +202,64 @@ mod tests {
         let wall = super::super::photo_wall_layout::PhotoWallLayout::calculate_masonry(
             &ratios, &sections, 224, 100,
         );
-        let rows = wall.visible_row_indices(50_000.0, 50_600.0);
+        // The strip is laid out as a 100 px square; query a band inside it.
+        let rows = wall.visible_row_indices(20.0, 80.0);
         assert!(rows.len() <= 8);
         assert!(rows.iter().any(|&row| wall.items[row].photo_index == 0));
         for row in rows {
             let tile = &wall.items[row];
-            assert!(tile.y < 50_600.0 && tile.y + tile.height > 50_000.0);
+            assert!(tile.y < 80.0 && tile.y + tile.height > 20.0);
+        }
+    }
+    /// A 3×107 web page background GIF used to become a ~9,000 px tall tile
+    /// at a 250 px column width, and a 1×320 strip tens of thousands of
+    /// pixels, burying the folder under one sliver after returning from
+    /// the viewer. Strips are now square; tall photos stop at 2:1.
+    #[test]
+    fn strips_are_square_and_tall_photos_are_capped_at_twice_the_column_width() {
+        let ratios = [3.0 / 107.0, 1.0 / 320.0, 1.0, 0.5, 2.0 / 3.0, 0.3];
+        let sections = [PhotoWallSection {
+            photo_range: 0..ratios.len(),
+            header_height: 0.0,
+        }];
+        let wall = layout(&ratios, 224);
+        for tile in &wall.items {
+            assert!(tile.height <= 2.0 * tile.width + 1.0, "{tile:?}");
+        }
+        for strip in wall.items.iter().filter(|tile| tile.photo_index < 2) {
+            assert_eq!(strip.height, strip.width, "{strip:?}");
+        }
+        let capped = wall
+            .items
+            .iter()
+            .find(|tile| tile.photo_index == 5)
+            .unwrap();
+        assert_eq!(capped.height, 2.0 * capped.width);
+        // Ordinary portrait photos keep their real aspect ratio.
+        let portrait = wall
+            .items
+            .iter()
+            .find(|tile| tile.photo_index == 3)
+            .unwrap();
+        assert_eq!(portrait.height, 2.0 * portrait.width);
+        let classic = wall
+            .items
+            .iter()
+            .find(|tile| tile.photo_index == 4)
+            .unwrap();
+        assert_eq!(classic.height, 1.5 * classic.width);
+
+        let mut resized = super::super::photo_wall_layout::PhotoWallLayout::calculate_masonry(
+            &ratios, &sections, 224, 100,
+        );
+        for width in [332, 701, 224] {
+            resized.resize_masonry(width, 0.0).unwrap();
+            for tile in &resized.items {
+                assert!(
+                    tile.height <= 2.0 * (tile.width + 1.0) + 1.0,
+                    "width={width} {tile:?}"
+                );
+            }
         }
     }
     #[test]

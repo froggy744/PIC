@@ -445,7 +445,7 @@ const CLOSE_FADE_MS: u32 = 160;
 /// Duration of every fade into or out of the editor: the viewer's handoff
 /// and the editor page's crossfades. Shorter than a viewer close because
 /// the editor already shows the photo when the fade starts.
-pub const EDITOR_FADE_MS: u32 = 120;
+pub const EDITOR_FADE_MS: u32 = 80;
 
 /// Longest the viewer (or the page under it) stays on screen waiting for
 /// the editor's first frame before giving way anyway; past this the click

@@ -3014,7 +3014,7 @@ pub fn build(
     );
     sync_text_slot.replace(Some(sync_text_panel.clone()));
 
-    let update_draw_canvas = build_draw_panel(
+    let (update_draw_canvas, select_drawing) = build_draw_panel(
         &draw_box,
         &draw_layer,
         session.clone(),
@@ -3054,6 +3054,7 @@ pub fn build(
         sync_overlays_panel.clone(),
         sync_text_panel.clone(),
         update_canvas_input.clone(),
+        select_drawing,
     );
     update_canvas_input();
     redraw_overlay_canvas();

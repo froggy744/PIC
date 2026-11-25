@@ -415,6 +415,7 @@ fn configure_overlay_canvas(
     sync_overlays_panel: Rc<dyn Fn()>,
     sync_text_panel: Rc<dyn Fn()>,
     update_canvas_input: Rc<dyn Fn()>,
+    select_drawing: Rc<dyn Fn(usize)>,
 ) {
     layer.set_hexpand(true);
     layer.set_vexpand(true);
@@ -843,6 +844,33 @@ fn configure_overlay_canvas(
                     layer.queue_draw();
                 }
                 None => {
+                    // Last: a drawing under the pointer opens the Draw tab
+                    // with it selected. Only inside the photo, since
+                    // start_norm clamps margin clicks onto the edge.
+                    let (dx, dy, dw, dh) = display;
+                    let inside_photo = start_x >= dx
+                        && start_x <= dx + dw
+                        && start_y >= dy
+                        && start_y <= dy + dh;
+                    let point = (start_norm.0 as f32, start_norm.1 as f32);
+                    let drawing_hit = inside_photo
+                        .then(|| {
+                            session
+                                .borrow()
+                                .recipe
+                                .drawings
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .find(|(_, drawing)| annotation_hit(drawing, point, 0, 0))
+                                .map(|(index, _)| index)
+                        })
+                        .flatten();
+                    if let Some(index) = drawing_hit {
+                        drag_state.replace(OverlayDragState::default());
+                        select_drawing(index);
+                        return;
+                    }
                     drag_state.replace(OverlayDragState {
                         mode: OverlayDragMode::Pan,
                         start_norm: (0.0, 0.0),

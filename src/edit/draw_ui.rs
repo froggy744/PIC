@@ -55,7 +55,7 @@ fn build_draw_panel(
     draw_toggle: gtk::ToggleButton,
     update_history_buttons: Rc<dyn Fn()>,
     queue_preview: Rc<dyn Fn()>,
-) -> Rc<dyn Fn()> {
+) -> (Rc<dyn Fn()>, Rc<dyn Fn(usize)>) {
     use super::model::DrawAnnotation;
     let tools = Rc::new(Cell::new(DrawTool::Pen));
     let selected = Rc::new(Cell::new(None::<usize>));
@@ -945,13 +945,32 @@ fn build_draw_panel(
         });
         layer.add_controller(key);
     }
-    let _ = draw_toggle;
+    // Clicking a drawing from another tab (Text, Overlays) opens Draw with
+    // that drawing selected, ready to move.
+    let select_drawing: Rc<dyn Fn(usize)> = {
+        let draw_toggle = draw_toggle.clone();
+        let select = select.clone();
+        let selected = selected.clone();
+        let selected_many = selected_many.clone();
+        let drawing_list = drawing_list.clone();
+        let layer = layer.clone();
+        Rc::new(move |index| {
+            draw_toggle.set_active(true);
+            select.set_active(true);
+            selected.set(Some(index));
+            *selected_many.borrow_mut() = vec![index];
+            if let Some(row) = drawing_list.row_at_index(index as i32) {
+                drawing_list.select_row(Some(&row));
+            }
+            layer.queue_draw();
+        })
+    };
     let _ = queue_preview;
     let layer_for_update = layer.clone();
     let pen_for_update = pen.clone();
     let tools_for_update = tools.clone();
     let was_active = Rc::new(Cell::new(draw_toggle.is_active()));
-    Rc::new(move || {
+    let update: Rc<dyn Fn()> = Rc::new(move || {
         let active = draw_toggle.is_active();
         if active {
             was_active.set(true);
@@ -968,7 +987,8 @@ fn build_draw_panel(
             layer_for_update.set_cursor_from_name(None);
         }
         layer_for_update.queue_draw();
-    })
+    });
+    (update, select_drawing)
 }
 
 fn draw_kind_label(kind: super::model::DrawKind) -> &'static str {

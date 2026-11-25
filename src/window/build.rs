@@ -339,45 +339,86 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         Rc::new(RefCell::new(None));
 
     // Keep filesystem monitors alive for exactly the folders the user marked
-    // for watching. Raw monitor callbacks only mark the owning imported root
-    // dirty; they never start a scan directly.
-    let folder_watch_monitors: Rc<RefCell<Vec<gio::FileMonitor>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    // for watching and their catalogued subfolders (GIO directory monitors
+    // are not recursive). Raw monitor callbacks only mark the owning imported
+    // root dirty; they never start a scan directly. Rebuilding is
+    // incremental: monitors that are still wanted keep running, so it is safe
+    // to call after every scan, mount change or watch toggle.
+    struct FolderWatchState {
+        database: Option<std::path::PathBuf>,
+        monitors: std::collections::HashMap<String, gio::FileMonitor>,
+        watched: std::collections::HashSet<String>,
+    }
+    let watch_trace = std::env::var_os("PIC_WATCH_TRACE").is_some();
+    let folder_watch_state = Rc::new(RefCell::new(FolderWatchState {
+        database: None,
+        monitors: std::collections::HashMap::new(),
+        watched: std::collections::HashSet::new(),
+    }));
     let pending_watch_refreshes: Rc<
         RefCell<std::collections::HashMap<String, Instant>>,
     > = Rc::new(RefCell::new(std::collections::HashMap::new()));
     let rebuild_folder_watches: Rc<dyn Fn()> = {
         let connection = connection.clone();
-        let monitors = folder_watch_monitors.clone();
+        let state = folder_watch_state.clone();
         let pending = pending_watch_refreshes.clone();
         Rc::new(move || {
-            for monitor in monitors.borrow_mut().drain(..) {
-                monitor.cancel();
-            }
-            pending.borrow_mut().clear();
-
-            if !db::folder_watching_enabled(&connection.borrow()) {
-                
-                return;
-            }
-
-            let Ok(folders) = db::folders(&connection.borrow()) else {
-                eprintln!("WATCH ERROR could not read folders");
-                return;
+            let database = db::active_database_path().ok();
+            let enabled = db::folder_watching_enabled(&connection.borrow());
+            let targets = if enabled {
+                match db::folders(&connection.borrow()) {
+                    Ok(folders) => watch_targets(&folders, |folder| {
+                        #[cfg(target_os = "linux")]
+                        if crate::network_shares::private(&folder.path) {
+                            // GIO directory monitors may mount a share in the
+                            // desktop. Direct network sources use explicit
+                            // refresh, never GVfs.
+                            return false;
+                        }
+                        // The cached availability can lag a mount that just
+                        // appeared, and local directories are cheap to probe.
+                        if folder.path.contains("://") {
+                            folder.available
+                        } else {
+                            std::path::Path::new(&folder.path).is_dir()
+                        }
+                    }),
+                    Err(error) => {
+                        eprintln!("WATCH ERROR could not read folders: {error}");
+                        return;
+                    }
+                }
+            } else {
+                WatchTargets::default()
             };
-            for folder in folders.iter().filter(|folder| folder.watched && folder.available) {
-                let Some(scan_root) = watch_scan_root(&folders, folder.id) else {
-                    
-                    continue;
-                };
-                let watched_path = folder.path.clone();
-                #[cfg(target_os="linux")]
-                if crate::network_shares::private(&watched_path) {
-                    // GIO directory monitors may mount a share in the desktop.
-                    // Direct network sources use explicit refresh, never GVfs.
+
+            let mut state = state.borrow_mut();
+            if state.database != database {
+                // Another library: nothing it watches has been observed yet.
+                for (_, monitor) in state.monitors.drain() {
+                    monitor.cancel();
+                }
+                state.watched.clear();
+                state.database = database;
+                pending.borrow_mut().clear();
+            }
+            let stale = state
+                .monitors
+                .keys()
+                .filter(|path| !targets.monitored.contains_key(*path))
+                .cloned()
+                .collect::<Vec<_>>();
+            for path in &stale {
+                if let Some(monitor) = state.monitors.remove(path) {
+                    monitor.cancel();
+                }
+            }
+            let mut added = 0usize;
+            for (watched_path, scan_root) in &targets.monitored {
+                if state.monitors.contains_key(watched_path) {
                     continue;
                 }
-                let file = crate::source::file(&watched_path);
+                let file = crate::source::file(watched_path);
                 let monitor = match file.monitor_directory(
                     gio::FileMonitorFlags::NONE,
                     gio::Cancellable::NONE,
@@ -393,7 +434,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 };
                 let pending_for_event = pending.clone();
                 let scan_root_for_event = scan_root.clone();
-                monitor.connect_changed(move |_, _, _, event| {
+                monitor.connect_changed(move |_, file, _, event| {
                     // Ignore metadata-only monitor noise. Content changes are
                     // coalesced below before they can authorize any scan.
                     if matches!(
@@ -404,14 +445,45 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     ) {
                         return;
                     }
+                    if watch_trace {
+                        eprintln!(
+                            "PIC_WATCH event={event:?} file={} root={}",
+                            crate::source::reference(file),
+                            scan_root_for_event
+                        );
+                    }
                     pending_for_event
                         .borrow_mut()
                         .insert(scan_root_for_event.clone(), Instant::now());
-                    
                 });
-                monitors.borrow_mut().push(monitor);
+                state.monitors.insert(watched_path.clone(), monitor);
+                added += 1;
             }
-            
+
+            // Changes made while a watched folder was not observed produce no
+            // monitor event, so every newly observed watched folder gets one
+            // catch-up refresh through the same debounced queue.
+            let mut catch_up = Vec::new();
+            {
+                let mut pending = pending.borrow_mut();
+                pending.retain(|root, _| targets.watched.values().any(|wanted| wanted == root));
+                for (path, scan_root) in &targets.watched {
+                    if !state.watched.contains(path) && !catch_up.contains(scan_root) {
+                        pending.entry(scan_root.clone()).or_insert_with(Instant::now);
+                        catch_up.push(scan_root.clone());
+                    }
+                }
+            }
+            state.watched = targets.watched.keys().cloned().collect();
+            if watch_trace {
+                eprintln!(
+                    "PIC_WATCH rebuild enabled={enabled} watched={} monitors={} added={added} removed={} catch_up={:?}",
+                    state.watched.len(),
+                    state.monitors.len(),
+                    stale.len(),
+                    catch_up
+                );
+            }
         })
     };
     let import_folder: Rc<dyn Fn()> = {
@@ -5516,7 +5588,9 @@ fn start_photo_export_single(
                 });
             if let Some(path) = ready {
                 pending.borrow_mut().remove(&path);
-                
+                if watch_trace {
+                    eprintln!("PIC_WATCH dispatch root={path}");
+                }
                 if let Some(callback) = refresh_folder_slot.borrow().as_ref() {
                     callback(PhotoScanRequestReason::DebouncedWatchRefresh, path);
                 }
@@ -5986,6 +6060,7 @@ fn start_photo_export_single(
     let connection_for_events = connection.clone();
     let info_for_events = info.clone();
     let availability_refresh_for_events = availability_refresh.clone();
+    let rebuild_folder_watches_for_events = rebuild_folder_watches.clone();
     let filter_for_events = filter.clone();
     let search_for_events = search_text.clone();
     let sort_for_events = sort.clone();
@@ -6254,7 +6329,26 @@ fn start_photo_export_single(
                     pending_sidebar_counts = Some(*counts);
 
                     let search_active = !search_for_events.borrow().is_empty();
-                    if !search_active && db::filters::Filters::load(&connection_for_events.borrow()).is_empty() {
+                    let filters_active = !db::filters::Filters::load(&connection_for_events.borrow()).is_empty();
+                    if watch_trace {
+                        let new = photos.iter().filter(|indexed| indexed.newly_discovered).count();
+                        let matching = photos
+                            .iter()
+                            .filter(|indexed| {
+                                indexed.newly_discovered
+                                    && (matches!(filter_for_events.get(), sidebar::SidebarFilter::All)
+                                        || matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(id) if Some(id) == indexed.photo.folder_id))
+                            })
+                            .count();
+                        eprintln!(
+                            "PIC_WATCH grid indexed kind={:?} filter={:?} photos={} new={new} queued_for_append={} search_active={search_active} filters_active={filters_active}",
+                            scan_job_for_events.borrow().kind,
+                            filter_for_events.get(),
+                            photos.len(),
+                            if search_active || filters_active { 0 } else { matching },
+                        );
+                    }
+                    if !search_active && !filters_active {
                         for indexed in photos {
                             let photo = &indexed.photo;
                             if indexed.newly_discovered
@@ -6459,10 +6553,34 @@ fn start_photo_export_single(
                         continue;
                     }
 
-                    if matches!(kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh))
+                    let finish_refreshes_grid = matches!(kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh))
                         && (!matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(_))
-                            || !db::filters::Filters::load(&connection_for_events.borrow()).is_empty())
-                    {
+                            || !db::filters::Filters::load(&connection_for_events.borrow()).is_empty());
+                    // Progressive appends land at the end of the Folder stream,
+                    // so new photos would form a second, misplaced section for
+                    // their folder. Rebuild the stream in place once the
+                    // refresh added photos, keeping the visible position.
+                    let finish_rebuilds_folder_stream = !finish_refreshes_grid
+                        && matches!(kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh))
+                        && total_imported > 0
+                        && matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(_));
+                    if watch_trace {
+                        eprintln!(
+                            "PIC_WATCH grid finished kind={kind:?} imported={total_imported} filter={:?} refresh_grid={finish_refreshes_grid} folder_stream_rebuild={finish_rebuilds_folder_stream} folder_rows_redraw={}",
+                            filter_for_events.get(),
+                            kind == Some(ScanJobKind::FolderRefresh)
+                        );
+                    }
+                    if finish_rebuilds_folder_stream {
+                        refresh_grid_preserving_folder_viewport(
+                            &connection_for_events,
+                            filter_for_events.get(),
+                            &search_for_events.borrow(),
+                            sort_for_events.get(),
+                            &gallery_for_events,
+                        );
+                    }
+                    if finish_refreshes_grid {
                         refresh_grid(
                             &connection_for_events,
                             filter_for_events.get(),
@@ -6525,7 +6643,21 @@ fn start_photo_export_single(
                     scan_job_for_events.borrow_mut().kind = None;
                     if kind != Some(ScanJobKind::FolderRefresh) {
                         availability_refresh_for_events();
+                    } else {
+                        // A folder refresh skips the availability pass, which is
+                        // the normal owner of folder-row counts, so redraw the
+                        // rows from the catalog or they keep pre-scan counts.
+                        if let Ok(folders) = db::folders(&connection_for_events.borrow()) {
+                            sidebar::refresh_folder_rows(
+                                &sidebar_for_events,
+                                &folders,
+                                &availability_refresh_for_events,
+                            );
+                        }
                     }
+                    // A scan may have catalogued new subfolders of a watched
+                    // folder; give them monitors too.
+                    rebuild_folder_watches_for_events();
                     
                     refresh_status_label_for_events.set_text(&message);
                     refresh_status_box_for_events.set_visible(true);
@@ -6543,6 +6675,7 @@ fn start_photo_export_single(
                         job.kind = None;
                         kind
                     };
+                    rebuild_folder_watches_for_events();
                     stop_scan_for_events.set_visible(false);
                     refresh_status_spinner_for_events.set_spinning(false);
                     let message = match kind {
@@ -6602,6 +6735,13 @@ fn start_photo_export_single(
             run_ui_guarded("photo batch append", || {
                 gallery_for_events.append_photos(&batch)
             });
+            if watch_trace {
+                eprintln!(
+                    "PIC_WATCH grid append count={appended} remaining={} filter={:?}",
+                    pending_photos.len(),
+                    filter_for_events.get()
+                );
+            }
             if std::env::var_os("PICASA_TRACE").is_some()
                 && append_started.elapsed() >= Duration::from_millis(20)
             {

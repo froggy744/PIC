@@ -27,6 +27,7 @@ A passing display test swallows `stderr`, so add `-- --nocapture` when a trace i
 | `PIC_COLLAGE_TRACE` | `collage/editor.rs`, `collage/render.rs`, `collage/smart_mosaic.rs` | Collage. |
 | `PIC_COVERFLOW_TRACE` | `albums/coverflow.rs` | Album cover flow. |
 | `PIC_SCREENSAVER_TRACE` | `screensaver.rs`, `screensaver/gpu.rs` | Screensaver. |
+| `PIC_WATCH_TRACE` | `window/build.rs` | Folder watching: monitor rebuilds (watched folders, monitors, catch-up refreshes), raw monitor events, debounced refresh dispatch. |
 | `PIC_LIBRARY_MAINTENANCE_TRACE` | `window/build.rs`, `settings/database.rs`, `thumbnail/batch.rs` | Library maintenance. |
 | `PIC_EXPORT_BENCH_ALBUM` | `main.rs` (debug builds only, `cfg(debug_assertions)`), `edit/export_benchmark.rs` | Runs the export benchmark on an album instead of starting the app. |
 

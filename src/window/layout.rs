@@ -738,20 +738,25 @@
     let mount_refresh_pending = Rc::new(Cell::new(false));
     let schedule_mount_refresh: Rc<dyn Fn()> = {
         let availability_refresh = availability_refresh.clone();
+        let rebuild_folder_watches = rebuild_folder_watches.clone();
         let pending = mount_refresh_pending.clone();
         Rc::new(move || {
             if pending.replace(true) {
                 return;
             }
             let availability_refresh = availability_refresh.clone();
+            let rebuild_folder_watches = rebuild_folder_watches.clone();
             let pending = pending.clone();
             glib::timeout_add_local_once(Duration::from_millis(250), move || {
                 pending.set(false);
                 // Mount changes only re-evaluate folder availability for the
                 // offline badge. Cached thumbnails stay usable; do not start
                 // thumbnail recovery, scanning, or per-photo file checks.
-                
                 availability_refresh();
+                // A watched folder on a drive that just appeared needs a
+                // monitor and one catch-up refresh; one that vanished loses
+                // its monitor.
+                rebuild_folder_watches();
             });
         })
     };

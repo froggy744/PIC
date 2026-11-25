@@ -379,6 +379,52 @@ fn watch_scan_root(folders: &[db::Folder], watched_id: i64) -> Option<String> {
     None
 }
 
+/// What folder watching must observe for the current library.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WatchTargets {
+    /// Every directory that needs its own monitor, mapped to the imported
+    /// root its changes refresh. GIO directory monitors are not recursive, so
+    /// a watched folder contributes itself and all its catalogued subfolders.
+    monitored: std::collections::HashMap<String, String>,
+    /// The folders the user marked as watched that are being observed, mapped
+    /// to their imported root. A folder that newly appears here has had no
+    /// monitor until now, so it needs one catch-up refresh for changes made
+    /// while it was not observed (app closed, drive unmounted, watch off).
+    watched: std::collections::HashMap<String, String>,
+}
+
+fn watch_targets(folders: &[db::Folder], observable: impl Fn(&db::Folder) -> bool) -> WatchTargets {
+    let mut children: std::collections::HashMap<i64, Vec<&db::Folder>> =
+        std::collections::HashMap::new();
+    for folder in folders {
+        if let Some(parent) = folder.parent_id {
+            children.entry(parent).or_default().push(folder);
+        }
+    }
+    let mut targets = WatchTargets::default();
+    for folder in folders.iter().filter(|folder| folder.watched && observable(folder)) {
+        let Some(scan_root) = watch_scan_root(folders, folder.id) else {
+            continue;
+        };
+        targets.watched.insert(folder.path.clone(), scan_root.clone());
+        let mut stack = vec![folder];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current.id) || !observable(current) {
+                continue;
+            }
+            targets
+                .monitored
+                .entry(current.path.clone())
+                .or_insert_with(|| scan_root.clone());
+            if let Some(kids) = children.get(&current.id) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+    }
+    targets
+}
+
 #[derive(Debug)]
 struct ScanUiEvent {
     generation: u64,
@@ -553,7 +599,9 @@ include!("window/startup.rs");
 
 #[cfg(test)]
 mod photo_scan_authorization_tests {
-    use super::{watch_scan_root, PhotoScanRequestReason, ScanJobKind, ScanJobState};
+    use super::{
+        watch_scan_root, watch_targets, PhotoScanRequestReason, ScanJobKind, ScanJobState,
+    };
     use crate::db;
 
     fn authorized_kind(reason: PhotoScanRequestReason) -> Option<ScanJobKind> {
@@ -619,6 +667,64 @@ mod photo_scan_authorization_tests {
         ];
 
         assert_eq!(watch_scan_root(&folders, 2).as_deref(), Some("/photos"));
+    }
+
+    fn folder(id: i64, path: &str, parent_id: Option<i64>, root: bool, watched: bool) -> db::Folder {
+        db::Folder {
+            id,
+            path: path.to_string(),
+            name: path.rsplit('/').next().unwrap_or(path).to_string(),
+            parent_id,
+            imported_root: root,
+            watched,
+            photo_count: 0,
+            subfolder_count: 0,
+            available: true,
+        }
+    }
+
+    #[test]
+    fn watched_folder_monitors_its_whole_catalogued_subtree() {
+        let folders = vec![
+            folder(1, "/media", None, false, false),
+            folder(2, "/media/work", Some(1), true, true),
+            folder(3, "/media/work/jobs", Some(2), false, false),
+            folder(4, "/media/work/jobs/june", Some(3), false, false),
+            folder(5, "/media/other", Some(1), true, false),
+        ];
+
+        let targets = watch_targets(&folders, |_| true);
+
+        let mut monitored = targets.monitored.keys().cloned().collect::<Vec<_>>();
+        monitored.sort();
+        assert_eq!(
+            monitored,
+            ["/media/work", "/media/work/jobs", "/media/work/jobs/june"]
+        );
+        assert!(targets.monitored.values().all(|root| root == "/media/work"));
+        assert_eq!(targets.watched.len(), 1);
+        assert_eq!(
+            targets.watched.get("/media/work").map(String::as_str),
+            Some("/media/work")
+        );
+    }
+
+    #[test]
+    fn unobservable_watched_folders_get_no_monitor_or_catch_up() {
+        let folders = vec![
+            folder(1, "/media/work", None, true, true),
+            folder(2, "/media/work/offline", Some(1), false, false),
+            folder(3, "/media/work/offline/deep", Some(2), false, false),
+            folder(4, "/unplugged", None, true, true),
+        ];
+
+        let targets =
+            watch_targets(&folders, |folder| !folder.path.starts_with("/media/work/offline") && folder.path != "/unplugged");
+
+        assert_eq!(targets.monitored.len(), 1);
+        assert!(targets.monitored.contains_key("/media/work"));
+        assert_eq!(targets.watched.len(), 1);
+        assert!(!targets.watched.contains_key("/unplugged"));
     }
 
     #[test]

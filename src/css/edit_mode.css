@@ -174,24 +174,25 @@
   background-color: alpha(@theme_fg_color, 0.14);
 }
 
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-back,
-.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button {
+/* Close + Done pair: one rounded group, like the tab strips. */
+.edit-mode-toolbar .edit-toolbar-finish {
+  border-radius: 12px;
+  background-color: alpha(@theme_fg_color, 0.07);
+}
+
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-back {
   background-color: transparent;
 }
 
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-back:hover,
-.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button:hover {
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-back:hover {
   background-color: alpha(@theme_fg_color, 0.09);
 }
 
-.edit-mode-toolbar .edit-history-group.linked {
-  padding: 2px;
-  border-radius: 9px;
-  background-color: alpha(@theme_fg_color, 0.05);
-}
-
-.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button {
-  border-radius: 6px;
+/* Photo actions (Undo ... Copy) reuse the tab strip; icons need less side
+ * padding than the text tabs. */
+.edit-mode-toolbar .edit-panel-tabs > button.flat.edit-action-tab {
+  min-width: 0;
+  padding: 0 11px;
 }
 
 .edit-mode-toolbar .edit-toolbar-actions separator.edit-toolbar-divider {
@@ -207,7 +208,7 @@
   color: @accent_fg_color;
   background-color: @accent_bg_color;
   border: none;
-  border-radius: 999px;
+  border-radius: 12px;
   font-weight: 700;
   transition: background-color 140ms ease;
 }

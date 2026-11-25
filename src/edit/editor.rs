@@ -252,6 +252,7 @@ pub fn build(
     panel_tabs.append(&overlays_toggle);
     panel_tabs.append(&text_toggle);
     panel_tabs.append(&draw_toggle);
+
     toolbar.append(&panel_tabs);
 
     let toolbar_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -263,50 +264,40 @@ pub fn build(
     toolbar_actions.add_css_class("edit-toolbar-actions");
     toolbar.append(&toolbar_actions);
 
-    let toolbar_icon_button = |icon_name, tooltip| {
+    // The photo actions share the tab strip's look (each theme styles
+    // .edit-panel-tabs), so both ends of the bar read as one control family.
+    let action_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    action_tabs.set_valign(gtk::Align::Center);
+    action_tabs.add_css_class("linked");
+    action_tabs.add_css_class("edit-panel-tabs");
+    action_tabs.add_css_class("edit-action-tabs");
+    toolbar_actions.append(&action_tabs);
+    let action_tab = |icon_name, tooltip| {
         let button = gtk::Button::from_icon_name(icon_name);
         button.add_css_class("flat");
-        button.add_css_class("edit-toolbar-icon-button");
+        button.add_css_class("edit-action-tab");
         button.set_tooltip_text(Some(tooltip));
+        action_tabs.append(&button);
         button
     };
-    let append_action_separator = || {
-        let separator = gtk::Separator::new(gtk::Orientation::Vertical);
-        separator.set_valign(gtk::Align::Center);
-        separator.add_css_class("edit-toolbar-divider");
-        toolbar_actions.append(&separator);
-    };
-    let back = toolbar_icon_button("go-previous-symbolic", "Close editor without saving");
-    back.add_css_class("edit-toolbar-back");
-    toolbar_actions.append(&back);
-
-    let history_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    history_group.add_css_class("linked");
-    history_group.add_css_class("edit-history-group");
-    let undo = toolbar_icon_button("edit-undo-symbolic", "Undo");
-    let redo = toolbar_icon_button("edit-redo-symbolic", "Redo");
-    history_group.append(&undo);
-    history_group.append(&redo);
-    toolbar_actions.append(&history_group);
-    append_action_separator();
-
-    let reset = toolbar_icon_button(
+    let undo = action_tab("edit-undo-symbolic", "Undo");
+    let redo = action_tab("edit-redo-symbolic", "Redo");
+    let separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    separator.set_valign(gtk::Align::Center);
+    separator.add_css_class("edit-toolbar-divider");
+    action_tabs.append(&separator);
+    let reset = action_tab(
         "document-revert-symbolic",
         "Reset all edits to the original",
     );
-    toolbar_actions.append(&reset);
-
-    let export = toolbar_icon_button(
+    let export = action_tab(
         "document-save-symbolic",
         "Export the current edited photo (size and file type)",
     );
-    toolbar_actions.append(&export);
-    let copy = toolbar_icon_button(
+    let copy = action_tab(
         "edit-copy-symbolic",
         "Copy the edited photo to paste into another app",
     );
-    toolbar_actions.append(&copy);
-    append_action_separator();
 
     let done = gtk::Button::new();
     let done_content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
@@ -327,7 +318,20 @@ pub fn build(
     done.set_child(Some(&done_content));
     done.add_css_class("suggested-action");
     done.add_css_class("edit-toolbar-done");
-    toolbar_actions.append(&done);
+
+    // Close and Done finish the session, so they sit together as one pair.
+    let finish_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    finish_group.set_valign(gtk::Align::Center);
+    finish_group.set_overflow(gtk::Overflow::Hidden);
+    finish_group.add_css_class("edit-toolbar-finish");
+    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    back.add_css_class("flat");
+    back.add_css_class("edit-toolbar-icon-button");
+    back.add_css_class("edit-toolbar-back");
+    back.set_tooltip_text(Some("Close editor without saving"));
+    finish_group.append(&back);
+    finish_group.append(&done);
+    toolbar_actions.append(&finish_group);
     root.append(&toolbar);
 
     let missing_overlay_warning = gtk::Revealer::new();
@@ -3462,10 +3466,9 @@ mod panel_tests {
 
         let toolbar = editor.root.first_child().unwrap();
         let toolbar_widgets = descendants(&toolbar);
-        let body = toolbar
-            .next_sibling()
-            .unwrap()
-            .downcast::<gtk::Paned>()
+        // The missing-overlay warning Revealer sits between toolbar and body.
+        let body = std::iter::successors(toolbar.next_sibling(), |widget| widget.next_sibling())
+            .find_map(|widget| widget.downcast::<gtk::Paned>().ok())
             .unwrap();
         let sidebar = body.start_child().unwrap();
         let sidebar_widgets = descendants(&sidebar);

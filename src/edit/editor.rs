@@ -319,19 +319,20 @@ pub fn build(
     done.add_css_class("suggested-action");
     done.add_css_class("edit-toolbar-done");
 
-    // Close and Done finish the session, so they sit together as one pair.
-    let finish_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    finish_group.set_valign(gtk::Align::Center);
-    finish_group.set_overflow(gtk::Overflow::Hidden);
-    finish_group.add_css_class("edit-toolbar-finish");
+    // Close and Done finish the session: a third strip matching the other
+    // two, with Close as a strip icon and Done as the primary button in it.
+    let finish_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    finish_tabs.set_valign(gtk::Align::Center);
+    finish_tabs.add_css_class("linked");
+    finish_tabs.add_css_class("edit-panel-tabs");
+    finish_tabs.add_css_class("edit-finish-tabs");
     let back = gtk::Button::from_icon_name("go-previous-symbolic");
     back.add_css_class("flat");
-    back.add_css_class("edit-toolbar-icon-button");
-    back.add_css_class("edit-toolbar-back");
+    back.add_css_class("edit-action-tab");
     back.set_tooltip_text(Some("Close editor without saving"));
-    finish_group.append(&back);
-    finish_group.append(&done);
-    toolbar_actions.append(&finish_group);
+    finish_tabs.append(&back);
+    finish_tabs.append(&done);
+    toolbar_actions.append(&finish_tabs);
     root.append(&toolbar);
 
     let missing_overlay_warning = gtk::Revealer::new();

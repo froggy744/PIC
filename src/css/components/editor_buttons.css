@@ -4,8 +4,7 @@
  * gradients on .crop-aspect-button, .edit-fit-row and .quick-fix-row do not
  * reach the editor panels. Colours come from the active theme palette.
  * Geometry stays with base.css and corner radius with the corner-style layer.
- * The primary action (suggested-action, e.g. Apply Crop) keeps the theme.
- * Also holds the toolbar Close + Done seam rule, which must beat themes. */
+ * The primary action (suggested-action, e.g. Apply Crop) keeps the theme. */
 .pic-editor-panel button.editor-neutral-button {
   color: @theme_fg_color;
   background-color: alpha(@theme_fg_color, 0.07);
@@ -55,13 +54,4 @@
   min-height: 26px;
   padding: 2px 10px;
   font-size: 12px;
-}
-
-/* Editor toolbar Close + Done pair. The group clips to its own rounded
- * corners (edit_mode.css / corner styles); the buttons inside stay square so
- * no theme radius shows at the seam between them. */
-.edit-mode-toolbar .edit-toolbar-finish > button.edit-toolbar-back,
-.edit-mode-toolbar .edit-toolbar-finish > button.edit-toolbar-done {
-  border-radius: 0;
-  margin: 0;
 }

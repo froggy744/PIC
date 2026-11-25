@@ -55,12 +55,12 @@
 }
 
 .draw-tool-grid {
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .draw-tool-grid button.draw-tool-button {
-  min-width: 38px;
-  min-height: 38px;
+  min-width: 0;
+  min-height: 32px;
   padding: 0;
   color: @theme_fg_color;
   background-color: transparent;
@@ -93,25 +93,50 @@
   outline-offset: -2px;
 }
 
-.draw-adjustment-row {
-  min-height: 32px;
-  margin-bottom: 3px;
+.pic-editor-draw-controls .draw-section-heading {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: alpha(@theme_fg_color, 0.62);
 }
 
-.draw-adjustment-row > label:first-child {
+.pic-editor-draw-controls .draw-section-divider {
+  min-height: 1px;
+  background-color: alpha(@theme_fg_color, 0.12);
+  margin: 2px 0;
+}
+
+.draw-adjustment-column > box > label:first-child {
   font-size: 12px;
   font-weight: 600;
 }
 
-.draw-adjustment-row scale {
+.draw-adjustment-column scale {
   min-width: 0;
   margin-top: 0;
 }
 
 .draw-adjustment-value {
-  min-width: 42px;
+  min-width: 0;
   color: alpha(@theme_fg_color, 0.72);
   font-variant-numeric: tabular-nums;
+}
+
+.pic-editor-draw-controls button.draw-delete-button {
+  min-height: 32px;
+  padding: 4px 8px;
+  color: @error_color;
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+
+.pic-editor-draw-controls button.draw-delete-button:hover {
+  background: alpha(@error_color, 0.08);
+}
+
+.pic-editor-draw-controls button.draw-delete-button:disabled {
+  color: alpha(@theme_fg_color, 0.48);
 }
 
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
@@ -218,10 +243,4 @@
   outline: 2px solid @accent_bg_color;
   outline-offset: 2px;
 }
-.draw-tool-grid button.draw-tool-button {
-  min-width: 42px;
-  min-height: 42px;
-  border-radius: 11px;
-}
-.draw-adjustment-row { min-height: 38px; margin-bottom: 6px; }
 .draw-adjustment-value { font-weight: 600; }

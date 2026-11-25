@@ -106,6 +106,7 @@ include!("crop.rs");
 include!("controls.rs");
 include!("undo.rs");
 include!("export.rs");
+include!("panel_ui.rs");
 include!("overlays_ui.rs");
 include!("draw_ui.rs");
 include!("text_ui.rs");
@@ -251,6 +252,7 @@ pub fn build(
     panel_tabs.append(&overlays_toggle);
     panel_tabs.append(&text_toggle);
     panel_tabs.append(&draw_toggle);
+
     toolbar.append(&panel_tabs);
 
     let toolbar_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -262,50 +264,40 @@ pub fn build(
     toolbar_actions.add_css_class("edit-toolbar-actions");
     toolbar.append(&toolbar_actions);
 
-    let toolbar_icon_button = |icon_name, tooltip| {
+    // The photo actions share the tab strip's look (each theme styles
+    // .edit-panel-tabs), so both ends of the bar read as one control family.
+    let action_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    action_tabs.set_valign(gtk::Align::Center);
+    action_tabs.add_css_class("linked");
+    action_tabs.add_css_class("edit-panel-tabs");
+    action_tabs.add_css_class("edit-action-tabs");
+    toolbar_actions.append(&action_tabs);
+    let action_tab = |icon_name, tooltip| {
         let button = gtk::Button::from_icon_name(icon_name);
         button.add_css_class("flat");
-        button.add_css_class("edit-toolbar-icon-button");
+        button.add_css_class("edit-action-tab");
         button.set_tooltip_text(Some(tooltip));
+        action_tabs.append(&button);
         button
     };
-    let append_action_separator = || {
-        let separator = gtk::Separator::new(gtk::Orientation::Vertical);
-        separator.set_valign(gtk::Align::Center);
-        separator.add_css_class("edit-toolbar-divider");
-        toolbar_actions.append(&separator);
-    };
-    let back = toolbar_icon_button("go-previous-symbolic", "Close editor without saving");
-    back.add_css_class("edit-toolbar-back");
-    toolbar_actions.append(&back);
-
-    let history_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    history_group.add_css_class("linked");
-    history_group.add_css_class("edit-history-group");
-    let undo = toolbar_icon_button("edit-undo-symbolic", "Undo");
-    let redo = toolbar_icon_button("edit-redo-symbolic", "Redo");
-    history_group.append(&undo);
-    history_group.append(&redo);
-    toolbar_actions.append(&history_group);
-    append_action_separator();
-
-    let reset = toolbar_icon_button(
+    let undo = action_tab("edit-undo-symbolic", "Undo");
+    let redo = action_tab("edit-redo-symbolic", "Redo");
+    let separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    separator.set_valign(gtk::Align::Center);
+    separator.add_css_class("edit-toolbar-divider");
+    action_tabs.append(&separator);
+    let reset = action_tab(
         "document-revert-symbolic",
         "Reset all edits to the original",
     );
-    toolbar_actions.append(&reset);
-
-    let export = toolbar_icon_button(
+    let export = action_tab(
         "document-save-symbolic",
         "Export the current edited photo (size and file type)",
     );
-    toolbar_actions.append(&export);
-    let copy = toolbar_icon_button(
+    let copy = action_tab(
         "edit-copy-symbolic",
         "Copy the edited photo to paste into another app",
     );
-    toolbar_actions.append(&copy);
-    append_action_separator();
 
     let done = gtk::Button::new();
     let done_content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
@@ -326,7 +318,21 @@ pub fn build(
     done.set_child(Some(&done_content));
     done.add_css_class("suggested-action");
     done.add_css_class("edit-toolbar-done");
-    toolbar_actions.append(&done);
+
+    // Close and Done finish the session: a third strip matching the other
+    // two, with Close as a strip icon and Done as the primary button in it.
+    let finish_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    finish_tabs.set_valign(gtk::Align::Center);
+    finish_tabs.add_css_class("linked");
+    finish_tabs.add_css_class("edit-panel-tabs");
+    finish_tabs.add_css_class("edit-finish-tabs");
+    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    back.add_css_class("flat");
+    back.add_css_class("edit-action-tab");
+    back.set_tooltip_text(Some("Close editor without saving"));
+    finish_tabs.append(&back);
+    finish_tabs.append(&done);
+    toolbar_actions.append(&finish_tabs);
     root.append(&toolbar);
 
     let missing_overlay_warning = gtk::Revealer::new();
@@ -391,6 +397,8 @@ pub fn build(
     sidebar.set_halign(gtk::Align::Fill);
 
     let tools_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    tools_box.add_css_class("pic-editor-panel");
+    tools_box.set_valign(gtk::Align::Start);
     tools_box.set_hexpand(true);
     tools_box.set_halign(gtk::Align::Fill);
     tools_box.set_margin_top(12);
@@ -398,6 +406,8 @@ pub fn build(
     tools_box.set_margin_start(14);
     tools_box.set_margin_end(14);
     let filters_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    filters_box.add_css_class("pic-editor-panel");
+    filters_box.set_valign(gtk::Align::Start);
     filters_box.set_hexpand(true);
     filters_box.set_vexpand(true);
     filters_box.set_margin_top(12);
@@ -405,6 +415,8 @@ pub fn build(
     filters_box.set_margin_start(14);
     filters_box.set_margin_end(14);
     let crop_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    crop_box.add_css_class("pic-editor-panel");
+    crop_box.set_valign(gtk::Align::Start);
     crop_box.set_hexpand(true);
     crop_box.set_vexpand(true);
     crop_box.set_margin_top(12);
@@ -413,6 +425,8 @@ pub fn build(
     crop_box.set_margin_end(14);
     let overlays_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     overlays_box.add_css_class("pic-editor-overlay-controls");
+    overlays_box.add_css_class("pic-editor-panel");
+        overlays_box.set_valign(gtk::Align::Start);
     overlays_box.set_hexpand(true);
     overlays_box.set_vexpand(true);
     overlays_box.set_margin_top(12);
@@ -421,6 +435,8 @@ pub fn build(
     overlays_box.set_margin_end(14);
     let text_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     text_box.add_css_class("pic-editor-text-controls");
+    text_box.add_css_class("pic-editor-panel");
+        text_box.set_valign(gtk::Align::Start);
     text_box.set_hexpand(true);
     text_box.set_vexpand(true);
     text_box.set_halign(gtk::Align::Fill);
@@ -430,6 +446,8 @@ pub fn build(
     text_box.set_margin_end(14);
     let draw_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     draw_box.add_css_class("pic-editor-draw-controls");
+    draw_box.add_css_class("pic-editor-panel");
+        draw_box.set_valign(gtk::Align::Start);
     draw_box.set_hexpand(true);
     draw_box.set_vexpand(true);
     draw_box.set_margin_top(12);
@@ -868,7 +886,7 @@ pub fn build(
     }
     picture_scroll.add_controller(pan_drag);
 
-    add_section_label(&filters_box, "QUICK FIXES");
+    editor_section_heading(&filters_box, "QUICK FIXES");
     let auto_row = gtk::Grid::new();
     auto_row.add_css_class("quick-fix-row");
     auto_row.set_column_spacing(6);
@@ -885,6 +903,9 @@ pub fn build(
     auto_contrast.set_hexpand(true);
     auto_color.set_hexpand(true);
     auto_brightness.set_hexpand(true);
+    for button in [&auto_enhance, &auto_contrast, &auto_color, &auto_brightness] {
+        editor_neutral_button(button);
+    }
     auto_row.attach(&auto_enhance, 0, 0, 1, 1);
     auto_row.attach(&auto_contrast, 1, 0, 1, 1);
     auto_row.attach(&auto_color, 0, 1, 1, 1);
@@ -893,14 +914,11 @@ pub fn build(
 
     // Consistent with preset intensity controls: 100% is the existing full
     // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
-    let filter_amount = add_slider(
-        &filters_box,
-        "Opacity",
-        0.0,
-        100.0,
-        1.0,
-        0,
-    );
+    let (filter_amount, _filter_amount_value) =
+        editor_slider_column(&filters_box, "Intensity", (0.0, 100.0, 1.0), 0.0, |n| {
+            format!("{n:.0}%")
+        });
+    filter_amount.set_digits(0);
     filter_amount.set_tooltip_text(Some("Opacity of enabled filters and Quick Fixes (0–100%). Manual adjustments stay unchanged."));
 
     let mut filter_buttons = Vec::new();
@@ -914,7 +932,8 @@ pub fn build(
     let mut black_white = None;
     let mut sepia = None;
     for (section, effects) in FilterTileEffect::sections() {
-        add_section_label(&filters_box, section);
+        editor_section_divider(&filters_box);
+        editor_section_heading(&filters_box, section);
         let filter_grid = gtk::FlowBox::new();
         filter_grid.set_row_spacing(10);
         filter_grid.set_column_spacing(6);
@@ -944,13 +963,7 @@ pub fn build(
 
     // Crop has its own geometry workspace again. The tab earns its space by
     // grouping aspect ratio, orientation, straighten and crop reset controls.
-    add_section_label(&crop_box, "ASPECT RATIO");
-    let aspect_grid = gtk::Grid::new();
-    aspect_grid.set_column_spacing(6);
-    aspect_grid.set_row_spacing(6);
-    aspect_grid.set_column_homogeneous(true);
-    aspect_grid.add_css_class("crop-aspect-grid");
-
+    let aspect_section = editor_section(&crop_box, "ASPECT RATIO");
     let aspect_presets = [
         CropAspectPreset::Free,
         CropAspectPreset::Original,
@@ -961,113 +974,116 @@ pub fn build(
         CropAspectPreset::A4,
         CropAspectPreset::UsLetter,
     ];
-    let mut aspect_buttons = Vec::new();
-    let first_aspect = gtk::ToggleButton::with_label(aspect_presets[0].label());
-    first_aspect.set_active(true);
-    first_aspect.set_hexpand(true);
-    first_aspect.add_css_class("crop-aspect-button");
-    aspect_grid.attach(&first_aspect, 0, 0, 1, 1);
-    aspect_buttons.push((aspect_presets[0], first_aspect.clone()));
-    for (index, preset) in aspect_presets.iter().copied().enumerate().skip(1) {
+    let mut aspect_buttons: Vec<(CropAspectPreset, gtk::ToggleButton)> = Vec::new();
+    for preset in aspect_presets {
         let button = gtk::ToggleButton::with_label(preset.label());
-        button.set_group(Some(&first_aspect));
-        button.set_hexpand(true);
+        if let Some((_, first)) = aspect_buttons.first() {
+            button.set_group(Some(first));
+        }
         button.add_css_class("crop-aspect-button");
-        aspect_grid.attach(&button, (index % 2) as i32, (index / 2) as i32, 1, 1);
+        editor_neutral_button(&button);
         aspect_buttons.push((preset, button));
     }
-    crop_box.append(&aspect_grid);
+    let first_aspect = aspect_buttons[0].1.clone();
+    first_aspect.set_active(true);
+    let aspect_grid = editor_button_group(
+        3,
+        &aspect_buttons
+            .iter()
+            .map(|(_, button)| button)
+            .collect::<Vec<_>>(),
+    );
+    aspect_grid.add_css_class("crop-aspect-grid");
+    aspect_section.append(&aspect_grid);
+    editor_section_divider(&crop_box);
 
-    add_section_label(&crop_box, "ORIENTATION");
-    let orientation_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    orientation_row.add_css_class("linked");
-    orientation_row.add_css_class("crop-orientation-row");
+    let orientation_section = editor_section(&crop_box, "ORIENTATION");
     let landscape = gtk::ToggleButton::with_label("Landscape");
-    landscape.set_hexpand(true);
     landscape.set_active(true);
     let portrait = gtk::ToggleButton::with_label("Portrait");
     portrait.set_group(Some(&landscape));
-    portrait.set_hexpand(true);
-    orientation_row.append(&landscape);
-    orientation_row.append(&portrait);
-    crop_box.append(&orientation_row);
+    editor_neutral_button(&landscape);
+    editor_neutral_button(&portrait);
+    let orientation_row = editor_button_group(2, &[&landscape, &portrait]);
+    orientation_row.add_css_class("crop-orientation-row");
+    orientation_section.append(&orientation_row);
+    editor_section_divider(&crop_box);
 
-    add_section_label(&crop_box, "STRAIGHTEN");
-    let straighten_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    straighten_box.add_css_class("crop-straighten");
-    let straighten = add_slider(&straighten_box, "Angle", -10.0, 10.0, 0.1, 1);
+    let (straighten, _straighten_value) =
+        editor_slider_column(&crop_box, "Straighten", (-10.0, 10.0, 0.1), 0.0, |n| {
+            format!("{n:.1}°")
+        });
+    straighten.set_digits(1);
     straighten.add_css_class("crop-straighten-scale");
-    crop_box.append(&straighten_box);
 
-    let crop_action_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    crop_action_row.add_css_class("crop-action-row");
+    let reset_crop = gtk::Button::with_label("Reset Crop");
+    reset_crop.set_tooltip_text(Some("Remove the crop and return to the full photo"));
     let apply_crop_button = gtk::Button::with_label("Apply Crop");
-    apply_crop_button.set_hexpand(true);
     apply_crop_button.set_tooltip_text(Some("Commit the crop and leave selection mode"));
     apply_crop_button.add_css_class("suggested-action");
     apply_crop_button.add_css_class("crop-apply-button");
-    let reset_crop = gtk::Button::with_label("Reset Crop");
-    reset_crop.set_hexpand(true);
-    reset_crop.set_tooltip_text(Some("Remove the crop and return to the full photo"));
-    reset_crop.add_css_class("crop-reset-button");
-    crop_action_row.append(&apply_crop_button);
-    crop_action_row.append(&reset_crop);
-    crop_box.append(&crop_action_row);
+    editor_action_row(&crop_box, &[&reset_crop, &apply_crop_button]);
 
-    add_section_label(&tools_box, "LIGHT");
+    // Sliders sit two per row; a single slider spans the full width.
+    let slider_pair = |parent: &gtk::Box| {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.set_homogeneous(true);
+        parent.append(&row);
+        row
+    };
+
+    editor_section_heading(&tools_box, "LIGHT");
     let light_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    light_box.add_css_class("edit-adjustment-group");
     tools_box.append(&light_box);
 
-    let exposure = add_slider(&light_box, "Exposure", -2.0, 2.0, 0.05, 2);
-    let contrast = add_slider(&light_box, "Contrast", -1.0, 1.0, 0.02, 2);
-    let fill_light = add_slider(&light_box, "Fill Light", -1.0, 1.0, 0.02, 2);
-    let highlights = add_slider(&light_box, "Highlights", -1.0, 1.0, 0.02, 2);
-    let shadows = add_slider(&light_box, "Shadows", -1.0, 1.0, 0.02, 2);
-    let whites = add_slider(&light_box, "Whites", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&light_box);
+    let exposure = add_slider(&row, "Exposure", -2.0, 2.0, 0.05, 2);
+    let contrast = add_slider(&row, "Contrast", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&light_box);
+    let highlights = add_slider(&row, "Highlights", -1.0, 1.0, 0.02, 2);
+    let shadows = add_slider(&row, "Shadows", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&light_box);
+    let whites = add_slider(&row, "Whites", -1.0, 1.0, 0.02, 2);
     whites.set_tooltip_text(Some("Adjust the brightest tones and white point"));
-    let blacks = add_slider(&light_box, "Blacks", -1.0, 1.0, 0.02, 2);
+    let blacks = add_slider(&row, "Blacks", -1.0, 1.0, 0.02, 2);
     blacks.set_tooltip_text(Some("Adjust the darkest tones and black point"));
+    let fill_light = add_slider(&light_box, "Fill Light", -1.0, 1.0, 0.02, 2);
+    editor_section_divider(&tools_box);
 
-    add_section_label(&tools_box, "COLOUR");
+    editor_section_heading(&tools_box, "COLOUR");
     let colour_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    colour_box.add_css_class("edit-adjustment-group");
     tools_box.append(&colour_box);
 
-    let saturation = add_slider(&colour_box, "Saturation", -1.0, 1.0, 0.02, 2);
-    let vibrance = add_slider(&colour_box, "Vibrance", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&colour_box);
+    let saturation = add_slider(&row, "Saturation", -1.0, 1.0, 0.02, 2);
+    let vibrance = add_slider(&row, "Vibrance", -1.0, 1.0, 0.02, 2);
     vibrance.set_tooltip_text(Some("Adjust muted colours more than vivid colours"));
-    let temperature = add_slider(&colour_box, "Warmth", -1.0, 1.0, 0.02, 2);
-    let tint = add_slider(&colour_box, "Tint", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&colour_box);
+    let temperature = add_slider(&row, "Warmth", -1.0, 1.0, 0.02, 2);
+    let tint = add_slider(&row, "Tint", -1.0, 1.0, 0.02, 2);
     tint.set_tooltip_text(Some("Shift colour balance between green and magenta"));
+    editor_section_divider(&tools_box);
 
-    add_section_label(&tools_box, "DETAIL");
+    editor_section_heading(&tools_box, "DETAIL & EFFECTS");
     let detail_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    detail_box.add_css_class("edit-adjustment-group");
     tools_box.append(&detail_box);
 
-    let sharpen = add_slider(&detail_box, "Sharpen", 0.0, 1.0, 0.02, 2);
-    let clarity = add_slider(&detail_box, "Clarity", -1.0, 1.0, 0.02, 2);
-    let smooth = add_slider(&detail_box, "Smooth", 0.0, 1.0, 0.02, 2);
+    let row = slider_pair(&detail_box);
+    let sharpen = add_slider(&row, "Sharpen", 0.0, 1.0, 0.02, 2);
+    let clarity = add_slider(&row, "Clarity", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&detail_box);
+    let smooth = add_slider(&row, "Smooth", 0.0, 1.0, 0.02, 2);
     smooth.set_tooltip_text(Some("Soften fine texture while preserving strong edges"));
-    let grain = add_slider(&detail_box, "Grain", 0.0, 1.0, 0.02, 2);
+    let grain = add_slider(&row, "Grain", 0.0, 1.0, 0.02, 2);
     let vignette = add_slider(&detail_box, "Vignette", -1.0, 1.0, 0.02, 2);
     vignette.set_tooltip_text(Some(
         "Drag left to lighten photo edges, right to darken them; the centre is neutral",
     ));
-    // Make the existing left=light/right=dark behaviour discoverable.
-    // The CPU renderer already implements this sign convention.
-    let vignette_direction = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let lighten = gtk::Label::new(Some("← Lighter edges"));
-    lighten.set_xalign(0.0);
-    lighten.set_hexpand(true);
-    lighten.add_css_class("dim-label");
-    let darken = gtk::Label::new(Some("Darker edges →"));
-    darken.set_xalign(1.0);
-    darken.add_css_class("dim-label");
-    vignette_direction.append(&lighten);
-    vignette_direction.append(&darken);
-    detail_box.append(&vignette_direction);
+    let reset_adjustments = gtk::Button::with_label("Reset adjustments");
+    reset_adjustments.set_tooltip_text(Some(
+        "Return every Tools slider to neutral; filters, crop and layers stay",
+    ));
+    editor_action_row(&tools_box, &[&reset_adjustments]);
 
     let controls = Controls {
         straighten,
@@ -2044,23 +2060,11 @@ pub fn build(
         });
     }
     {
+        // Draw keeps the panel width like every other tab.
         let panel_stack = panel_stack.clone();
-        let body = body.clone();
-        let previous_width = Rc::new(Cell::new(None::<i32>));
         draw_toggle.connect_toggled(move |button| {
             if button.is_active() {
                 panel_stack.set_visible_child_name("draw");
-                // The Draw controls are composed for a compact inspector.
-                // Keep any width the user already set below this target.
-                if body.position() > 320 {
-                    previous_width.set(Some(body.position()));
-                    body.set_position(320);
-                }
-            } else if let Some(width) = previous_width.take() {
-                // A manual drag in Draw is a new user choice; preserve it.
-                if body.position() == 320 {
-                    body.set_position(width);
-                }
             }
         });
     }
@@ -2087,6 +2091,38 @@ pub fn build(
             draw_layer.queue_draw();
         })
     };
+
+    // Reset adjustments: one undo step that returns every Tools slider to
+    // neutral, leaving filters, crop and layers untouched.
+    {
+        let session = session.clone();
+        let sync_controls = sync_controls.clone();
+        let queue_preview = queue_preview.clone();
+        let update_history_buttons = update_history_buttons.clone();
+        reset_adjustments.connect_clicked(move |_| {
+            session.borrow_mut().mutate(|r| {
+                r.exposure = 0.0;
+                r.contrast = 0.0;
+                r.fill_light = 0.0;
+                r.highlights = 0.0;
+                r.shadows = 0.0;
+                r.whites = 0.0;
+                r.blacks = 0.0;
+                r.saturation = 0.0;
+                r.vibrance = 0.0;
+                r.temperature = 0.0;
+                r.tint = 0.0;
+                r.sharpen = 0.0;
+                r.clarity = 0.0;
+                r.smooth = 0.0;
+                r.grain = 0.0;
+                r.vignette = 0.0;
+            });
+            sync_controls();
+            update_history_buttons();
+            queue_preview();
+        });
+    }
 
     connect_history_actions(
         &undo,
@@ -2890,9 +2926,14 @@ pub fn build(
             let in_crop = crop_overlay.is_visible();
             overlay_layer.set_visible(!in_crop);
             let recipe = session.borrow();
+            // Text and Overlays take clicks whenever any layer exists, so any
+            // text, overlay or drawing can be clicked from either tab.
+            let has_layers = !recipe.recipe.overlays.is_empty()
+                || !recipe.recipe.text_layers.is_empty()
+                || !recipe.recipe.drawings.is_empty();
             let enable = !draw_toggle_for_input.is_active()
-                && (overlays_toggle.is_active() && !recipe.recipe.overlays.is_empty()
-                    || text_toggle.is_active() && !recipe.recipe.text_layers.is_empty())
+                && (overlays_toggle.is_active() || text_toggle.is_active())
+                && has_layers
                 && !in_crop;
             drop(recipe);
             overlay_layer.set_can_target(enable);
@@ -2966,7 +3007,73 @@ pub fn build(
     );
     sync_text_slot.replace(Some(sync_text_panel.clone()));
 
-    let update_draw_canvas = build_draw_panel(
+    // From Draw's Select tool: pick the topmost text, then image overlay,
+    // under a photo-normalised point and open its tab, like the overlay
+    // canvas does from Text and Overlays.
+    let select_other_layer: Rc<dyn Fn((f32, f32)) -> bool> = {
+        let session = session.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        let selected_text = selected_text.clone();
+        let selected_overlay = selected_overlay.clone();
+        let text_toggle = text_toggle.clone();
+        let overlays_toggle = overlays_toggle.clone();
+        let sync_text_panel = sync_text_panel.clone();
+        let sync_overlays_panel = sync_overlays_panel.clone();
+        let update_canvas_input = update_canvas_input.clone();
+        let redraw_overlay_canvas = redraw_overlay_canvas.clone();
+        Rc::new(move |(x, y)| {
+            let (photo_w, photo_h) = preview_dimensions.get();
+            let (photo_w, photo_h) = (photo_w.max(1) as f32, photo_h.max(1) as f32);
+            let contains = |rect: super::model::NormRect| {
+                x >= rect.left
+                    && x <= rect.left + rect.width
+                    && y >= rect.top
+                    && y <= rect.top + rect.height
+            };
+            let (text_hit, overlay_hit) = {
+                let recipe = session.borrow();
+                let text_hit = recipe
+                    .recipe
+                    .text_layers
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|(_, text)| text.visible)
+                    .find(|(_, text)| {
+                        text_norm_rect(text, photo_w, photo_h).is_some_and(contains)
+                    })
+                    .map(|(index, _)| index);
+                let overlay_hit = recipe
+                    .recipe
+                    .overlays
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|(_, overlay)| overlay.visible)
+                    .find(|(_, overlay)| {
+                        overlay_norm_rect(overlay, photo_w, photo_h).is_some_and(contains)
+                    })
+                    .map(|(index, _)| index);
+                (text_hit, overlay_hit)
+            };
+            if let Some(index) = text_hit {
+                selected_text.set(Some(index));
+                text_toggle.set_active(true);
+                sync_text_panel();
+            } else if let Some(index) = overlay_hit {
+                selected_overlay.set(Some(index));
+                overlays_toggle.set_active(true);
+                sync_overlays_panel();
+            } else {
+                return false;
+            }
+            update_canvas_input();
+            redraw_overlay_canvas();
+            true
+        })
+    };
+
+    let (update_draw_canvas, select_drawing) = build_draw_panel(
         &draw_box,
         &draw_layer,
         session.clone(),
@@ -2977,6 +3084,7 @@ pub fn build(
         draw_toggle.clone(),
         update_history_buttons.clone(),
         queue_preview.clone(),
+        select_other_layer,
     );
     {
         let update_draw_canvas = update_draw_canvas.clone();
@@ -3006,6 +3114,7 @@ pub fn build(
         sync_overlays_panel.clone(),
         sync_text_panel.clone(),
         update_canvas_input.clone(),
+        select_drawing,
     );
     update_canvas_input();
     redraw_overlay_canvas();
@@ -3359,6 +3468,28 @@ mod panel_tests {
     }
 
     #[test]
+    fn crop_selection_moves_without_resizing_and_stops_at_edges() {
+        let rect = CropRect {
+            left: 0.2,
+            top: 0.3,
+            right: 0.6,
+            bottom: 0.7,
+        };
+        assert!(crop_selection_contains(rect, (0.4, 0.5)));
+        assert!(!crop_selection_contains(rect, (0.1, 0.5)));
+        assert!(!crop_selection_contains(CropRect::default(), (0.5, 0.5)));
+
+        let moved = move_crop_selection(rect, 0.1, -0.1);
+        assert!((moved.left - 0.3).abs() < 1e-6 && (moved.top - 0.2).abs() < 1e-6);
+        assert!((moved.right - moved.left - 0.4).abs() < 1e-6);
+        assert!((moved.bottom - moved.top - 0.4).abs() < 1e-6);
+
+        let pinned = move_crop_selection(rect, 5.0, -5.0);
+        assert!((pinned.right - 1.0).abs() < 1e-6 && pinned.top.abs() < 1e-6);
+        assert!((pinned.right - pinned.left - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn editor_toolbar_has_tool_tabs_and_sidebar_keeps_crop_workspace() {
         if !gtk::is_initialized() {
@@ -3397,10 +3528,9 @@ mod panel_tests {
 
         let toolbar = editor.root.first_child().unwrap();
         let toolbar_widgets = descendants(&toolbar);
-        let body = toolbar
-            .next_sibling()
-            .unwrap()
-            .downcast::<gtk::Paned>()
+        // The missing-overlay warning Revealer sits between toolbar and body.
+        let body = std::iter::successors(toolbar.next_sibling(), |widget| widget.next_sibling())
+            .find_map(|widget| widget.downcast::<gtk::Paned>().ok())
             .unwrap();
         let sidebar = body.start_child().unwrap();
         let sidebar_widgets = descendants(&sidebar);

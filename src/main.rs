@@ -285,8 +285,9 @@ fn main() {
     application.run();
     // A second launch only asks the running instance (possibly the installed
     // Flatpak) to present its window, then exits. Say so, rather than
-    // returning silently as if nothing had started.
-    if application.is_remote() {
+    // returning silently as if nothing had started. The primary instance is
+    // unregistered once run() returns, and is_remote() asserts on that.
+    if application.is_registered() && application.is_remote() {
         eprintln!(
             "PIC is already running (another instance owns {}); activated that window instead.",
             application.application_id().unwrap_or_default()

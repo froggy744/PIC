@@ -24,39 +24,18 @@ fn build_text_panel(
     photo_dimensions: Rc<Cell<(i32, i32)>>,
 ) -> Rc<dyn Fn()> {
     use gtk::pango::prelude::*;
-
-    let action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    action_row.set_hexpand(true);
-    action_row.set_halign(gtk::Align::Fill);
-    let add_text = gtk::Button::with_label("Add Text");
-    add_text.set_hexpand(true);
+    // TEXT heading with "+ Add text" on its right. It sits outside the
+    // selected-layer section so it stays usable when there are no layers.
+    let add_text = gtk::Button::with_label("+ Add text");
     add_text.set_tooltip_text(Some("Add a text layer on top of this photo"));
-    add_text.add_css_class("crop-apply-button");
-    let remove = gtk::Button::with_label("Remove Text");
-    remove.set_hexpand(true);
-    remove.set_sensitive(false);
-    remove.set_tooltip_text(Some("Delete this text layer from the photo"));
-    remove.add_css_class("crop-reset-button");
-    action_row.append(&add_text);
-    action_row.append(&remove);
-    parent.append(&action_row);
+    editor_heading_with_action(parent, "TEXT", &add_text);
 
-    add_section_label(parent, "TEXT LAYERS");
-    let list = gtk::ListBox::new();
-    list.set_hexpand(true);
-    list.set_halign(gtk::Align::Fill);
-    list.set_selection_mode(gtk::SelectionMode::Single);
-    list.add_css_class("overlay-list");
-    list.set_margin_bottom(6);
-    parent.append(&list);
-
-    let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
     selected_section.set_hexpand(true);
     selected_section.set_halign(gtk::Align::Fill);
     selected_section.add_css_class("overlay-selected-section");
     parent.append(&selected_section);
 
-    add_section_label(&selected_section, "TEXT CONTENT");
     let text_scroll = gtk::ScrolledWindow::new();
     text_scroll.add_css_class("pic-text-editor-surface");
     text_scroll.set_hexpand(true);
@@ -83,11 +62,10 @@ fn build_text_panel(
     text_view.set_right_margin(6);
     text_scroll.set_child(Some(&text_view));
     selected_section.append(&text_scroll);
+    editor_section_divider(&selected_section);
 
-    let font_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    font_row.set_hexpand(true);
-    font_row.set_halign(gtk::Align::Fill);
-    font_row.set_margin_top(6);
+    // Typography: family, then the style and alignment toggles in one group.
+    let typography_section = editor_section(&selected_section, "TYPOGRAPHY");
     let font_map = pangocairo::FontMap::new();
     let mut families = font_map
         .list_families()
@@ -99,7 +77,8 @@ fn build_text_panel(
         .iter()
         .map(|family| font_family_display_name(family))
         .collect::<Vec<_>>();
-    let font_model = gtk::StringList::new(&font_labels.iter().map(String::as_str).collect::<Vec<_>>());
+    let font_model =
+        gtk::StringList::new(&font_labels.iter().map(String::as_str).collect::<Vec<_>>());
     let font_names = Rc::new(RefCell::new(families));
     let font_combo = gtk::DropDown::new(Some(font_model.clone()), None::<&gtk::Expression>);
     font_combo.set_hexpand(true);
@@ -107,171 +86,137 @@ fn build_text_panel(
     font_combo.add_css_class("text-font-picker");
     font_combo.set_tooltip_text(Some("Font family"));
     font_combo.set_selected(0);
-    let size_spin = gtk::SpinButton::with_range(0.5, 50.0, 0.5);
-    size_spin.set_width_chars(4);
-    size_spin.set_max_width_chars(4);
-    size_spin.set_tooltip_text(Some("Font size as a percentage of the photo height"));
-    font_row.append(&font_combo);
-    let size_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let size_label = gtk::Label::new(Some("Size"));
-    size_row.append(&size_label);
-    size_row.append(&size_spin);
-    font_row.append(&size_row);
-    selected_section.append(&font_row);
-
-    let colour_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    colour_row.set_hexpand(true);
-    colour_row.set_halign(gtk::Align::Fill);
-    colour_row.set_margin_top(10);
-    let colour_button = gtk::ColorDialogButton::new(Some(gtk::ColorDialog::new()));
-    colour_button.set_tooltip_text(Some("Choose custom colour"));
-    colour_button.set_rgba(&gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0));
-    let colour_swatches = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    colour_swatches.set_hexpand(true);
-    colour_swatches.set_halign(gtk::Align::Fill);
-    colour_swatches.set_homogeneous(true);
-    colour_swatches.add_css_class("text-colour-swatches");
-    let mut swatch_buttons = Vec::new();
-    for (name, class, color) in [
-        ("White", "text-swatch-white", (1.0, 1.0, 1.0)),
-        ("Black", "text-swatch-black", (0.05, 0.05, 0.05)),
-        ("Red", "text-swatch-red", (0.95, 0.12, 0.12)),
-        ("Orange", "text-swatch-orange", (1.0, 0.48, 0.0)),
-        ("Yellow", "text-swatch-yellow", (1.0, 0.9, 0.05)),
-        ("Green", "text-swatch-green", (0.12, 0.72, 0.28)),
-        ("Blue", "text-swatch-blue", (0.15, 0.42, 1.0)),
-        ("Purple", "text-swatch-purple", (0.68, 0.3, 0.88)),
-    ] {
-        let swatch = gtk::Button::new();
-        swatch.set_size_request(0, 30);
-        swatch.set_tooltip_text(Some(name));
-        swatch.add_css_class("text-colour-swatch");
-        swatch.add_css_class(class);
-        colour_swatches.append(&swatch);
-        swatch_buttons.push((swatch, color));
-    }
-    let custom_swatch = gtk::Button::new();
-    custom_swatch.set_size_request(0, 30);
-    custom_swatch.set_tooltip_text(Some("Choose custom colour"));
-    custom_swatch.add_css_class("text-colour-swatch");
-    let custom_icon = gtk::Image::from_icon_name("color-select-symbolic");
-    custom_icon.set_pixel_size(16);
-    custom_swatch.set_child(Some(&custom_icon));
-    colour_row.append(&colour_swatches);
-    colour_swatches.append(&custom_swatch);
-    selected_section.append(&colour_row);
-
-    let style_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    style_row.set_hexpand(true);
-    style_row.set_halign(gtk::Align::Fill);
-    style_row.set_margin_top(10);
-    let bold_button = gtk::ToggleButton::with_label("Bold");
-    bold_button.set_hexpand(true);
-    bold_button.set_tooltip_text(Some("Bold"));
-    let italic_button = gtk::ToggleButton::with_label("Italic");
-    italic_button.set_hexpand(true);
-    italic_button.set_tooltip_text(Some("Italic"));
-    let style_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    style_group.add_css_class("linked");
-    style_group.set_hexpand(true);
-    style_group.append(&bold_button);
-    style_group.append(&italic_button);
-    let align_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    align_group.add_css_class("linked");
-    align_group.add_css_class("overlay-anchor-row");
-    let left_button = gtk::ToggleButton::with_label("Left");
+    typography_section.append(&font_combo);
+    let format_icon = |name: &str| {
+        let icon = gtk::Image::from_icon_name(name);
+        icon.set_pixel_size(16);
+        icon
+    };
+    let format_letter = |markup: &str| {
+        let letter = gtk::Label::new(None);
+        letter.set_markup(markup);
+        letter
+    };
+    let bold_button = editor_tool_button(&format_letter("<b>B</b>"), "Bold");
+    let italic_button = editor_tool_button(&format_letter("<i>I</i>"), "Italic");
+    let left_button = editor_tool_button(&format_icon("format-justify-left-symbolic"), "Left");
     left_button.set_active(true);
-    left_button.set_hexpand(true);
-    let center_button = gtk::ToggleButton::with_label("Centre");
+    let center_button =
+        editor_tool_button(&format_icon("format-justify-center-symbolic"), "Centre");
     center_button.set_group(Some(&left_button));
-    center_button.set_hexpand(true);
-    let right_button = gtk::ToggleButton::with_label("Right");
+    let right_button = editor_tool_button(&format_icon("format-justify-right-symbolic"), "Right");
     right_button.set_group(Some(&left_button));
-    right_button.set_hexpand(true);
-    align_group.append(&left_button);
-    align_group.append(&center_button);
-    align_group.append(&right_button);
+    let format_group = editor_button_group(
+        5,
+        &[
+            &bold_button,
+            &italic_button,
+            &left_button,
+            &center_button,
+            &right_button,
+        ],
+    );
+    format_group.add_css_class("editor-format-group");
+    typography_section.append(&format_group);
     let align_buttons = vec![
         (TextAlign::Left, left_button.clone()),
         (TextAlign::Center, center_button),
         (TextAlign::Right, right_button),
     ];
-    style_row.append(&style_group);
-    style_row.append(&align_group);
-    selected_section.append(&style_row);
+    editor_section_divider(&selected_section);
 
-    let opacity_row = add_text_opacity_slider(&selected_section);
+    let colour_row = editor_section(&selected_section, "COLOUR");
+    let colour_button = gtk::ColorDialogButton::new(Some(gtk::ColorDialog::new()));
+    colour_button.set_tooltip_text(Some("Choose custom colour"));
+    colour_button.set_rgba(&gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0));
+    let (colour_swatches, swatch_buttons, custom_swatch) = editor_colour_palette([
+        (1.0, 1.0, 1.0),
+        (0.05, 0.05, 0.05),
+        (0.95, 0.12, 0.12),
+        (1.0, 0.48, 0.0),
+        (1.0, 0.9, 0.05),
+        (0.12, 0.72, 0.28),
+        (0.15, 0.42, 1.0),
+        (0.68, 0.3, 0.88),
+    ]);
+    colour_row.append(&colour_swatches);
+    editor_section_divider(&selected_section);
 
-    let position_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    position_column.set_hexpand(false);
-    add_section_label(&position_column, "POSITION");
-    let anchor_buttons = build_text_position_grid(&position_column);
-    let fit_column = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    fit_column.set_hexpand(true);
-    add_section_label(&fit_column, "FIT");
+    // Size and opacity side by side.
+    let appearance_columns = editor_control_columns(&selected_section);
+    let (size_slider, _size_value) =
+        editor_slider_column(&appearance_columns, "Size", (0.5, 50.0, 0.5), 4.5, |n| {
+            format!("{n:.1}%")
+        });
+    size_slider.set_tooltip_text(Some("Font size as a percentage of the photo height"));
+    let (opacity_row, _opacity_value) =
+        editor_slider_column(&appearance_columns, "Opacity", (0.0, 1.0, 0.01), 1.0, |n| {
+            format!("{:.0}%", n * 100.0)
+        });
+    opacity_row.set_digits(2);
+    add_scale_default_affordance(&opacity_row, 1.0);
+    editor_section_divider(&selected_section);
+
+    // Position: anchor grid with its offsets, then the placement shortcuts.
+    let position_section = editor_section(&selected_section, "POSITION");
+    let (offset_x, offset_y) = editor_offset_row(&position_section);
+    let anchor_buttons = editor_position_buttons(&position_section);
     let fit_width = gtk::Button::with_label("Fit Width");
-    fit_width.set_hexpand(true);
     fit_width.set_tooltip_text(Some("Scale text to span the photo width"));
     fit_width.add_css_class("crop-reset-button");
-    let fit_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    fit_row.add_css_class("edit-fit-row");
-    let reset_placement = gtk::Button::with_label("Reset");
-    reset_placement.set_hexpand(true);
-    reset_placement.set_tooltip_text(Some("Centre this text and reset its position offsets"));
-    reset_placement.add_css_class("crop-reset-button");
     let fit_screen = gtk::Button::with_label("Fit Screen");
-    fit_screen.set_hexpand(true);
     fit_screen.set_tooltip_text(Some("Scale text to fit inside the photo"));
     fit_screen.add_css_class("crop-reset-button");
-    fit_row.append(&fit_width);
-    fit_row.append(&fit_screen);
-    fit_row.append(&reset_placement);
-    fit_column.append(&fit_row);
-
-    let offset_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    add_section_label(&offset_column, "OFFSET");
-    let offset_x = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
-    let offset_y = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
-    offset_x.set_hexpand(true);
-    offset_y.set_hexpand(true);
-    for spin in [&offset_x, &offset_y] {
-        spin.set_width_chars(3);
-        spin.set_max_width_chars(3);
-        spin.add_css_class("edit-offset-spin");
+    let reset_placement = gtk::Button::with_label("Reset");
+    reset_placement.set_tooltip_text(Some("Centre this text and reset its position offsets"));
+    reset_placement.add_css_class("crop-reset-button");
+    for button in [&fit_width, &fit_screen, &reset_placement] {
+        editor_neutral_button(button);
     }
-    offset_x.set_tooltip_text(Some(
-        "Horizontal offset from the selected position, in photo pixels",
-    ));
-    offset_y.set_tooltip_text(Some(
-        "Vertical offset from the selected position, in photo pixels",
-    ));
-    let offset_row = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    let offset_cell_x = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    offset_cell_x.set_hexpand(true);
-    let offset_label_x = gtk::Label::new(Some("X"));
-    offset_label_x.set_xalign(0.0);
-    offset_label_x.set_width_chars(1);
-    offset_cell_x.append(&offset_label_x);
-    offset_cell_x.append(&offset_x);
-    offset_row.append(&offset_cell_x);
-    let offset_cell_y = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    offset_cell_y.set_hexpand(true);
-    let offset_label_y = gtk::Label::new(Some("Y"));
-    offset_label_y.set_xalign(0.0);
-    offset_label_y.set_width_chars(1);
-    offset_cell_y.append(&offset_label_y);
-    offset_cell_y.append(&offset_y);
-    offset_row.append(&offset_cell_y);
-    offset_column.append(&offset_row);
+    let fit_row = editor_button_group(3, &[&fit_width, &fit_screen, &reset_placement]);
+    fit_row.add_css_class("edit-fit-row");
+    position_section.append(&fit_row);
 
-    let position_offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    position_offset_row.set_hexpand(true);
-    position_offset_row.set_halign(gtk::Align::Fill);
-    position_offset_row.set_margin_top(10);
-    position_offset_row.append(&position_column);
-    position_offset_row.append(&offset_column);
-    selected_section.append(&position_offset_row);
-    selected_section.append(&fit_column);
+    // Layers: choose which text layer the controls above edit.
+    editor_section_divider(parent);
+    let layers_section = editor_section(parent, "TEXT LAYERS");
+    let list = gtk::ListBox::new();
+    list.set_hexpand(true);
+    list.set_halign(gtk::Align::Fill);
+    list.set_selection_mode(gtk::SelectionMode::Single);
+    list.add_css_class("overlay-list");
+    layers_section.append(&list);
+
+    // Each layer row carries its own trash button. Deleting keeps the
+    // selection on the same layer (or lets sync pick the first one).
+    let sync_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let delete_layer: Rc<dyn Fn(usize)> = {
+        let session = session.clone();
+        let selected = selected.clone();
+        let update_history_buttons = update_history_buttons.clone();
+        let sync_slot = sync_slot.clone();
+        Rc::new(move |index| {
+            session.borrow_mut().mutate(move |recipe| {
+                if index < recipe.text_layers.len() {
+                    recipe.text_layers.remove(index);
+                }
+            });
+            selected.set(match selected.get() {
+                Some(current) if current == index => None,
+                Some(current) if current > index => Some(current - 1),
+                other => other,
+            });
+            update_history_buttons();
+            // Rebuild the rows after this click handler returns, since the
+            // clicked button belongs to a row that sync removes.
+            let sync_slot = sync_slot.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(sync) = sync_slot.borrow().clone() {
+                    sync();
+                }
+            });
+        })
+    };
 
     let sync: Rc<dyn Fn()> = {
         let session = session.clone();
@@ -284,13 +229,13 @@ fn build_text_panel(
         let font_model = font_model.clone();
         let font_names = font_names.clone();
         let colour_button = colour_button.clone();
-        let size_spin = size_spin.clone();
+        let size_slider = size_slider.clone();
         let bold_button = bold_button.clone();
         let italic_button = italic_button.clone();
         let align_buttons = align_buttons.clone();
         let opacity_row = opacity_row.clone();
         let anchor_buttons = anchor_buttons.clone();
-        let remove = remove.clone();
+        let delete_layer = delete_layer.clone();
         let offset_x = offset_x.clone();
         let offset_y = offset_y.clone();
         let photo_dimensions = photo_dimensions.clone();
@@ -306,7 +251,6 @@ fn build_text_panel(
                 selected.set(Some(0));
             }
             let active = selected.get();
-            remove.set_sensitive(active.is_some());
             selected_section.set_visible(true);
             selected_section.set_sensitive(active.is_some());
             list.set_visible(true);
@@ -334,7 +278,19 @@ fn build_text_panel(
                 };
                 let visibility = if layer.visible { "" } else { " · hidden" };
                 label.set_text(&format!("{name}{visibility}"));
-                row.set_child(Some(&label));
+                let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                row_content.append(&label);
+                let trash = gtk::Button::from_icon_name("user-trash-symbolic");
+                trash.add_css_class("flat");
+                trash.add_css_class("editor-row-delete");
+                trash.set_valign(gtk::Align::Center);
+                trash.set_tooltip_text(Some("Delete this text layer from the photo"));
+                {
+                    let delete_layer = delete_layer.clone();
+                    trash.connect_clicked(move |_| delete_layer(index));
+                }
+                row_content.append(&trash);
+                row.set_child(Some(&row_content));
                 list.append(&row);
                 if Some(index) == active {
                     list.select_row(Some(&row));
@@ -349,7 +305,7 @@ fn build_text_panel(
                 if current.as_str() != layer.text {
                     buffer.set_text(&layer.text);
                 }
-                size_spin.set_value(f64::from(layer.size) * 100.0);
+                size_slider.set_value(f64::from(layer.size) * 100.0);
                 bold_button.set_active(layer.bold);
                 italic_button.set_active(layer.italic);
                 for (align, button) in &align_buttons {
@@ -438,25 +394,7 @@ fn build_text_panel(
         });
     }
 
-    {
-        let session = session.clone();
-        let selected = selected.clone();
-        let update_history_buttons = update_history_buttons.clone();
-        let sync = sync.clone();
-        remove.connect_clicked(move |_| {
-            let Some(index) = selected.get() else {
-                return;
-            };
-            session.borrow_mut().mutate(move |recipe| {
-                if index < recipe.text_layers.len() {
-                    recipe.text_layers.remove(index);
-                }
-            });
-            selected.set(None);
-            update_history_buttons();
-            sync();
-        });
-    }
+    sync_slot.replace(Some(sync.clone()));
 
     {
         let session = session.clone();
@@ -546,21 +484,62 @@ fn build_text_panel(
         let syncing = syncing.clone();
         let update_history_buttons = update_history_buttons.clone();
         let redraw_canvas = redraw_canvas.clone();
-        size_spin.connect_value_changed(move |spin| {
+        // A slider drag is one undo step, like the opacity slider.
+        let dragging = Rc::new(Cell::new(false));
+        let press = gtk::GestureClick::new();
+        press.set_button(1);
+        press.set_propagation_phase(gtk::PropagationPhase::Capture);
+        {
+            let session = session.clone();
+            let selected = selected.clone();
+            let dragging = dragging.clone();
+            press.connect_pressed(move |_, _, _, _| {
+                if selected.get().is_some() {
+                    dragging.set(true);
+                    session.borrow_mut().begin_action();
+                }
+            });
+        }
+        {
+            let session = session.clone();
+            let dragging = dragging.clone();
+            let update_history_buttons = update_history_buttons.clone();
+            let redraw_canvas = redraw_canvas.clone();
+            press.connect_released(move |_, _, _, _| {
+                if dragging.replace(false) {
+                    session.borrow_mut().end_action();
+                    update_history_buttons();
+                    redraw_canvas();
+                }
+            });
+        }
+        size_slider.add_controller(press);
+        size_slider.connect_value_changed(move |slider| {
             if syncing.get() {
                 return;
             }
             let Some(index) = selected.get() else {
                 return;
             };
-            let size = (spin.value() / 100.0) as f32;
+            let size = (slider.value() / 100.0) as f32;
             let size = size.clamp(TextLayerSpec::MIN_SIZE, TextLayerSpec::MAX_SIZE);
-            session.borrow_mut().mutate(move |recipe| {
-                if let Some(layer) = recipe.text_layers.get_mut(index) {
-                    layer.size = size;
+            let was_dragging = dragging.get();
+            {
+                let mut session = session.borrow_mut();
+                let apply = move |recipe: &mut EditRecipe| {
+                    if let Some(layer) = recipe.text_layers.get_mut(index) {
+                        layer.size = size;
+                    }
+                };
+                if was_dragging {
+                    session.mutate_active(apply);
+                } else {
+                    session.mutate(apply);
                 }
-            });
-            update_history_buttons();
+            }
+            if !was_dragging {
+                update_history_buttons();
+            }
             redraw_canvas();
         });
     }
@@ -882,40 +861,6 @@ fn build_text_panel(
     sync
 }
 
-fn build_text_position_grid(parent: &gtk::Box) -> Vec<((u8, u8), gtk::ToggleButton)> {
-    let grid = gtk::Grid::new();
-    grid.add_css_class("text-position-grid");
-    let mut buttons = Vec::with_capacity(9);
-    let glyphs = [["↖", "↑", "↗"], ["←", "•", "→"], ["↙", "↓", "↘"]];
-    for row in 0..3u8 {
-        for col in 0..3u8 {
-            let button = gtk::ToggleButton::with_label(glyphs[row as usize][col as usize]);
-            button.set_size_request(34, 34);
-            button.set_tooltip_text(Some(match (col, row) {
-                (0, 0) => "Top left",
-                (1, 0) => "Top centre",
-                (2, 0) => "Top right",
-                (0, 1) => "Centre left",
-                (1, 1) => "Centre",
-                (2, 1) => "Centre right",
-                (0, 2) => "Bottom left",
-                (1, 2) => "Bottom centre",
-                _ => "Bottom right",
-            }));
-            if let Some((_, first)) = buttons.first() {
-                button.set_group(Some(first));
-            }
-            grid.attach(&button, i32::from(col), i32::from(row), 1, 1);
-            buttons.push(((col, row), button));
-        }
-    }
-    if let Some((_, centre)) = buttons.get(4) {
-        centre.set_active(true);
-    }
-    parent.append(&grid);
-    buttons
-}
-
 fn text_grid_position(layer: &TextLayerSpec, photo_w: i32, photo_h: i32) -> (u8, u8, f64, f64) {
     let (col, row) = layer.anchor.grid_position();
     let targets = [0.0, 0.5, 1.0];
@@ -941,35 +886,6 @@ fn place_text_grid(
     layer.anchor = OverlayAnchor::from_grid(col, row);
     layer.x = targets[usize::from(col)] + (x_offset / f64::from(dims.0.max(1))) as f32;
     layer.y = targets[usize::from(row)] + (y_offset / f64::from(dims.1.max(1))) as f32;
-}
-
-fn add_text_opacity_slider(parent: &gtk::Box) -> gtk::Scale {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.add_css_class("edit-adjustment-row");
-    row.set_margin_top(10);
-    let label = gtk::Label::new(Some("Opacity"));
-    label.set_xalign(0.0);
-    label.set_width_chars(8);
-    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-    scale.set_digits(2);
-    scale.set_draw_value(false);
-    scale.set_hexpand(true);
-    scale.add_css_class("edit-adjustment-scale");
-    add_scale_default_affordance(&scale, 1.0);
-    let value = gtk::Label::new(Some("1.00"));
-    value.set_xalign(1.0);
-    value.set_width_chars(4);
-    value.add_css_class("dim-label");
-    value.add_css_class("edit-adjustment-value");
-    let value_for_update = value.clone();
-    scale.connect_value_changed(move |scale| {
-        value_for_update.set_text(&format!("{:.2}", scale.value()))
-    });
-    row.append(&label);
-    row.append(&scale);
-    row.append(&value);
-    parent.append(&row);
-    scale
 }
 
 #[cfg(test)]

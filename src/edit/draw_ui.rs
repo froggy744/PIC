@@ -22,10 +22,12 @@ struct DrawGesture {
     resizing: bool,
     selecting_box: bool,
     additive_selection: bool,
+    /// The press selected a text or overlay layer and opened its tab; the
+    /// rest of this drag must not draw, move or erase anything.
+    handed_off: bool,
 }
 
 fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
-    let button = gtk::ToggleButton::new();
     let icon = gtk::Image::new();
     icon.set_pixel_size(22);
     let resource_base = icon_name.trim_end_matches("-symbolic").to_owned();
@@ -41,58 +43,7 @@ fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
             set_icon_resource(&icon, manager.is_dark());
         }
     });
-    button.set_child(Some(&icon));
-    button.set_size_request(0, 34);
-    button.set_tooltip_text(Some(label));
-    button.update_property(&[gtk::accessible::Property::Label(label)]);
-    button.add_css_class("flat");
-    button.add_css_class("draw-tool-button");
-    button
-}
-
-fn draw_slider_row(
-    parent: &gtk::Box,
-    label: &str,
-    min: f64,
-    max: f64,
-    step: f64,
-    initial: f64,
-    percent: bool,
-) -> (gtk::Scale, gtk::Label) {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    column.set_hexpand(true);
-    column.add_css_class("draw-adjustment-column");
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    let title = gtk::Label::new(Some(label));
-    title.set_xalign(0.0);
-    title.set_hexpand(true);
-    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, min, max, step);
-    scale.set_value(initial);
-    scale.set_draw_value(false);
-    scale.set_hexpand(true);
-    scale.set_tooltip_text(Some(label));
-    scale.add_css_class("edit-adjustment-scale");
-    let value = gtk::Label::new(None);
-    value.set_xalign(1.0);
-    value.add_css_class("draw-adjustment-value");
-    let format = move |n: f64| {
-        if percent {
-            format!("{n:.0}%")
-        } else {
-            format!("{n:.0}")
-        }
-    };
-    value.set_text(&format(initial));
-    {
-        let value_label = value.clone();
-        scale.connect_value_changed(move |scale| value_label.set_text(&format(scale.value())));
-    }
-    row.append(&title);
-    row.append(&value);
-    column.append(&row);
-    column.append(&scale);
-    parent.append(&column);
-    (scale, value)
+    editor_tool_button(&icon, label)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -107,21 +58,14 @@ fn build_draw_panel(
     draw_toggle: gtk::ToggleButton,
     update_history_buttons: Rc<dyn Fn()>,
     queue_preview: Rc<dyn Fn()>,
-) -> Rc<dyn Fn()> {
+    select_other_layer: Rc<dyn Fn((f32, f32)) -> bool>,
+) -> (Rc<dyn Fn()>, Rc<dyn Fn(usize)>) {
     use super::model::DrawAnnotation;
     let tools = Rc::new(Cell::new(DrawTool::Pen));
     let selected = Rc::new(Cell::new(None::<usize>));
     let selected_many = Rc::new(RefCell::new(Vec::<usize>::new()));
     let gesture = Rc::new(RefCell::new(DrawGesture::default()));
     let pen_cursor_position = Rc::new(Cell::new(None::<(f64, f64)>));
-    let tool_grid = gtk::Grid::new();
-    tool_grid.set_hexpand(true);
-    tool_grid.set_halign(gtk::Align::Fill);
-    tool_grid.set_column_homogeneous(true);
-    tool_grid.set_row_homogeneous(true);
-    tool_grid.set_column_spacing(6);
-    tool_grid.set_row_spacing(6);
-    tool_grid.add_css_class("draw-tool-grid");
     let select = draw_tool_button("draw-select-symbolic", "Select");
     select.set_active(false);
     let pen = draw_tool_button("draw-pen-symbolic", "Pen");
@@ -135,26 +79,20 @@ fn build_draw_panel(
     for button in [&pen, &line, &arrow, &rect, &ellipse, &highlighter, &eraser] {
         button.set_group(Some(&select));
     }
-    for (index, button) in [
-        &select,
-        &pen,
-        &line,
-        &arrow,
-        &rect,
-        &ellipse,
-        &highlighter,
-        &eraser,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        button.set_hexpand(true);
-        tool_grid.attach(button, (index % 4) as i32, (index / 4) as i32, 1, 1);
-    }
-    let tools_heading = gtk::Label::new(Some("DRAWING TOOLS"));
-    tools_heading.set_xalign(0.0);
-    tools_heading.add_css_class("draw-section-heading");
-    parent.append(&tools_heading);
+    let tool_grid = editor_button_group(
+        4,
+        &[
+            &select,
+            &pen,
+            &line,
+            &arrow,
+            &rect,
+            &ellipse,
+            &highlighter,
+            &eraser,
+        ],
+    );
+    editor_section_heading(parent, "DRAWING TOOLS");
     parent.append(&tool_grid);
     let arrow_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let arrow_start = gtk::CheckButton::with_label("Start head");
@@ -182,85 +120,54 @@ fn build_draw_panel(
         });
     }
 
-    let tools_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
-    tools_divider.add_css_class("draw-section-divider");
-    parent.append(&tools_divider);
-    let colour_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    colour_row.set_hexpand(true);
-    colour_row.set_halign(gtk::Align::Fill);
-    let colour_heading = gtk::Label::new(Some("COLOUR"));
-    colour_heading.set_xalign(0.0);
-    colour_heading.add_css_class("draw-section-heading");
-    colour_row.append(&colour_heading);
-    let colour_swatches = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    colour_swatches.set_hexpand(true);
-    colour_swatches.set_halign(gtk::Align::Fill);
-    colour_swatches.set_homogeneous(true);
-    colour_swatches.add_css_class("text-colour-swatches");
-    let mut color_buttons = Vec::new();
-    for (name, class, rgba) in [
-        ("White", "text-swatch-white", 0xffffffff),
-        ("Black", "text-swatch-black", 0x111111ff),
-        ("Red", "text-swatch-red", 0xf21f1fff),
-        ("Orange", "text-swatch-orange", 0xff7a00ff),
-        ("Yellow", "text-swatch-yellow", 0xffe60dff),
-        ("Green", "text-swatch-green", 0x1fb848ff),
-        ("Blue", "text-swatch-blue", 0x266bffff),
-        ("Purple", "text-swatch-purple", 0xad4de0ff),
-    ] {
-        let b = gtk::Button::new();
-        b.set_size_request(0, 28);
-        b.add_css_class("text-colour-swatch");
-        b.add_css_class(class);
-        b.set_tooltip_text(Some(name));
-        colour_swatches.append(&b);
-        color_buttons.push((b, rgba));
-    }
-    let custom = gtk::Button::new();
-    custom.set_size_request(0, 28);
-    custom.add_css_class("text-colour-swatch");
-    custom.set_tooltip_text(Some("Choose custom colour"));
-    let custom_icon = gtk::Image::from_icon_name("color-select-symbolic");
-    custom_icon.set_pixel_size(16);
-    custom.set_child(Some(&custom_icon));
-    colour_swatches.append(&custom);
+    editor_section_divider(parent);
+    let colour_row = editor_section(parent, "COLOUR");
+    let (colour_swatches, color_buttons, custom) = editor_colour_palette([
+        0xffffffffu32,
+        0x111111ff,
+        0xf21f1fff,
+        0xff7a00ff,
+        0xffe60dff,
+        0x1fb848ff,
+        0x266bffff,
+        0xad4de0ff,
+    ]);
     colour_row.append(&colour_swatches);
-    parent.append(&colour_row);
 
-    let colour_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
-    colour_divider.add_css_class("draw-section-divider");
-    parent.append(&colour_divider);
-    let adjustment_columns = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    adjustment_columns.set_hexpand(true);
-    let (width, _width_value) = draw_slider_row(
+    editor_section_divider(parent);
+    let adjustment_columns = editor_control_columns(parent);
+    let (width, _width_value) = editor_slider_column(
         &adjustment_columns,
         "Thickness",
-        1.0,
-        36.0,
-        1.0,
+        (1.0, 36.0, 1.0),
         5.0,
-        false,
+        |n| format!("{n:.0}"),
     );
     {
         let layer = layer.clone();
         width.connect_value_changed(move |_| layer.queue_draw());
     }
-    let (opacity, _opacity_value) =
-        draw_slider_row(&adjustment_columns, "Opacity", 5.0, 100.0, 5.0, 100.0, true);
-    parent.append(&adjustment_columns);
-    let delete_divider = gtk::Separator::new(gtk::Orientation::Horizontal);
-    delete_divider.add_css_class("draw-section-divider");
-    parent.append(&delete_divider);
-    let delete = gtk::Button::new();
-    let delete_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    delete_content.append(&gtk::Image::from_icon_name("user-trash-symbolic"));
-    delete_content.append(&gtk::Label::new(Some("Delete selected")));
-    delete.set_child(Some(&delete_content));
-    delete.update_property(&[gtk::accessible::Property::Label("Delete selected")]);
-    delete.add_css_class("draw-delete-button");
-    delete.set_halign(gtk::Align::Start);
-    delete.set_sensitive(false);
-    parent.append(&delete);
+    let (opacity, _opacity_value) = editor_slider_column(
+        &adjustment_columns,
+        "Opacity",
+        (5.0, 100.0, 5.0),
+        100.0,
+        |n| format!("{n:.0}%"),
+    );
+    // Drawings list: one row per annotation with its own trash button.
+    editor_section_divider(parent);
+    let drawings_section = editor_section(parent, "DRAWINGS");
+    let drawing_list = gtk::ListBox::new();
+    drawing_list.set_hexpand(true);
+    drawing_list.set_selection_mode(gtk::SelectionMode::Single);
+    drawing_list.add_css_class("overlay-list");
+    let empty = gtk::Label::new(Some("No drawings yet"));
+    empty.add_css_class("dim-label");
+    empty.set_margin_top(8);
+    empty.set_margin_bottom(8);
+    drawing_list.set_placeholder(Some(&empty));
+    drawings_section.append(&drawing_list);
+
     for (b, tool) in [
         (&select, DrawTool::Select),
         (&pen, DrawTool::Pen),
@@ -556,7 +463,6 @@ fn build_draw_panel(
     let session_delete = session.clone();
     let selected_delete = selected.clone();
     let selected_many_delete = selected_many.clone();
-    let delete_button = delete.clone();
     let delete_selected = Rc::new(move || {
         let mut indices = selected_many_delete.borrow().clone();
         if indices.is_empty() {
@@ -576,12 +482,122 @@ fn build_draw_panel(
             selected_many_delete.borrow_mut().clear();
             update_history();
             layer_for_delete.queue_draw();
-            delete_button.set_sensitive(false);
         }
     });
+
+    // Keep the drawings list in step with the recipe. Drawings change from
+    // many places (drawing, eraser, undo/redo, reset), so the list compares
+    // a small signature each frame while visible and rebuilds only on change.
+    let list_rebuilding = Rc::new(Cell::new(false));
     {
-        let delete_selected = delete_selected.clone();
-        delete.connect_clicked(move |_| delete_selected());
+        let session = session.clone();
+        let selected = selected.clone();
+        let selected_many = selected_many.clone();
+        let update_history = update_history_buttons.clone();
+        let layer = layer.clone();
+        let list_rebuilding = list_rebuilding.clone();
+        let last_signature =
+            RefCell::new(None::<(Vec<(super::model::DrawKind, u32)>, Option<usize>)>);
+        drawing_list.add_tick_callback(move |list, _| {
+            let items = session
+                .borrow()
+                .recipe
+                .drawings
+                .iter()
+                .map(|item| (item.kind, item.color))
+                .collect::<Vec<_>>();
+            let signature = (items, selected.get());
+            if last_signature.borrow().as_ref() == Some(&signature) {
+                return glib::ControlFlow::Continue;
+            }
+            list_rebuilding.set(true);
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            for (index, (kind, rgba)) in signature.0.iter().copied().enumerate() {
+                let row = gtk::ListBoxRow::new();
+                let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                let dot = gtk::DrawingArea::new();
+                dot.set_content_width(12);
+                dot.set_content_height(12);
+                dot.set_valign(gtk::Align::Center);
+                dot.set_draw_func(move |_, cr, w, h| {
+                    let [r, g, b, _] = rgba.to_be_bytes();
+                    cr.set_source_rgb(
+                        f64::from(r) / 255.0,
+                        f64::from(g) / 255.0,
+                        f64::from(b) / 255.0,
+                    );
+                    let radius = f64::from(w.min(h)) / 2.0;
+                    cr.arc(
+                        f64::from(w) / 2.0,
+                        f64::from(h) / 2.0,
+                        radius - 0.5,
+                        0.0,
+                        std::f64::consts::TAU,
+                    );
+                    let _ = cr.fill_preserve();
+                    cr.set_source_rgba(0.5, 0.5, 0.5, 0.6);
+                    cr.set_line_width(1.0);
+                    let _ = cr.stroke();
+                });
+                content.append(&dot);
+                let label = gtk::Label::new(Some(draw_kind_label(kind)));
+                label.set_xalign(0.0);
+                label.set_hexpand(true);
+                content.append(&label);
+                let trash = gtk::Button::from_icon_name("user-trash-symbolic");
+                trash.add_css_class("flat");
+                trash.add_css_class("editor-row-delete");
+                trash.set_valign(gtk::Align::Center);
+                trash.set_tooltip_text(Some("Delete this drawing from the photo"));
+                {
+                    let session = session.clone();
+                    let selected = selected.clone();
+                    let selected_many = selected_many.clone();
+                    let update_history = update_history.clone();
+                    let layer = layer.clone();
+                    trash.connect_clicked(move |_| {
+                        session.borrow_mut().mutate(|r| {
+                            if index < r.drawings.len() {
+                                r.drawings.remove(index);
+                            }
+                        });
+                        selected.set(None);
+                        selected_many.borrow_mut().clear();
+                        update_history();
+                        layer.queue_draw();
+                    });
+                }
+                content.append(&trash);
+                row.set_child(Some(&content));
+                list.append(&row);
+                if signature.1 == Some(index) {
+                    list.select_row(Some(&row));
+                }
+            }
+            list_rebuilding.set(false);
+            last_signature.replace(Some(signature));
+            glib::ControlFlow::Continue
+        });
+    }
+    {
+        let selected = selected.clone();
+        let selected_many = selected_many.clone();
+        let select = select.clone();
+        let layer = layer.clone();
+        drawing_list.connect_row_selected(move |_, row| {
+            if list_rebuilding.get() {
+                return;
+            }
+            let Some(row) = row else { return };
+            let index = row.index() as usize;
+            // Selecting a row selects that drawing on the photo, ready to move.
+            select.set_active(true);
+            selected.set(Some(index));
+            *selected_many.borrow_mut() = vec![index];
+            layer.queue_draw();
+        });
     }
 
     let drag = gtk::GestureDrag::new();
@@ -595,12 +611,12 @@ fn build_draw_panel(
         let layer = layer.clone();
         let display = display.clone();
         let preview_dimensions = preview_dimensions.clone();
-        let delete = delete.clone();
         let style_sync = style_sync.clone();
         let width = width.clone();
         let opacity = opacity.clone();
         let color = color.clone();
         let selected_many = selected_many.clone();
+        let select_other_layer = select_other_layer.clone();
         drag.connect_drag_begin(move |g, x, y| {
             let d = display(layer.width() as f64, layer.height() as f64);
             let (pw, ph) = preview_dimensions.get();
@@ -661,7 +677,6 @@ fn build_draw_panel(
                     }
                     let only_one = indices.len() == 1;
                     drop(indices);
-                    delete.set_sensitive(!selected_many.borrow().is_empty());
                     if state.selected.is_some() {
                         let item = session.borrow().recipe.drawings.get(i).cloned();
                         if let Some(item) = item {
@@ -680,18 +695,28 @@ fn build_draw_panel(
                         session.borrow_mut().begin_action();
                     }
                 } else {
+                    // No drawing here: a text or overlay layer under the
+                    // pointer opens its own tab, as clicks do from there.
+                    let (dx, dy, dw, dh) = d;
+                    let inside_photo = x >= dx && x <= dx + dw && y >= dy && y <= dy + dh;
+                    if !state.additive_selection && inside_photo && select_other_layer(p) {
+                        gesture.replace(DrawGesture {
+                            handed_off: true,
+                            ..Default::default()
+                        });
+                        layer.queue_draw();
+                        return;
+                    }
                     if !state.additive_selection {
                         selected_many.borrow_mut().clear();
                         selected.set(None);
                     }
                     state.selecting_box = true;
-                    delete.set_sensitive(!selected_many.borrow().is_empty());
                 }
             } else if tool == DrawTool::Eraser {
                 selected.set(None);
                 let old_selection = selected_many.borrow().clone();
                 selected_many.borrow_mut().clear();
-                delete.set_sensitive(false);
                 let recipe = session.borrow();
                 let hit = recipe
                     .recipe
@@ -735,6 +760,9 @@ fn build_draw_panel(
         let preview_dimensions = preview_dimensions.clone();
         let session = session.clone();
         drag.connect_drag_update(move |_, dx, dy| {
+            if gesture.borrow().handed_off {
+                return;
+            }
             let d = display(layer.width() as f64, layer.height() as f64);
             let (pw, ph) = preview_dimensions.get();
             let (nx, ny) = screen_to_normalized(
@@ -827,8 +855,11 @@ fn build_draw_panel(
         let opacity = opacity.clone();
         let color = color.clone();
         let arrowheads = arrowheads.clone();
-        let delete = delete.clone();
         drag.connect_drag_end(move |_, _, _| {
+            if gesture.borrow().handed_off {
+                gesture.replace(DrawGesture::default());
+                return;
+            }
             let s = gesture.borrow().clone();
             let tool = tools.get();
             if is_drawing_tool(tool) {
@@ -862,7 +893,6 @@ fn build_draw_panel(
                     selected_many
                         .borrow_mut()
                         .push(session.borrow().recipe.drawings.len() - 1);
-                    delete.set_sensitive(true);
                     update();
                 }
             } else if tool == DrawTool::Select && s.selecting_box {
@@ -888,7 +918,6 @@ fn build_draw_panel(
                     }
                 }
                 selected.set(indices.last().copied());
-                delete.set_sensitive(!indices.is_empty());
                 update();
             } else if session.borrow().action_active() {
                 session.borrow_mut().end_action();
@@ -940,19 +969,39 @@ fn build_draw_panel(
         });
         layer.add_controller(key);
     }
-    let _ = draw_toggle;
+    // Clicking a drawing from another tab (Text, Overlays) opens Draw with
+    // that drawing selected, ready to move.
+    let select_drawing: Rc<dyn Fn(usize)> = {
+        let draw_toggle = draw_toggle.clone();
+        let select = select.clone();
+        let selected = selected.clone();
+        let selected_many = selected_many.clone();
+        let drawing_list = drawing_list.clone();
+        let layer = layer.clone();
+        Rc::new(move |index| {
+            draw_toggle.set_active(true);
+            select.set_active(true);
+            selected.set(Some(index));
+            *selected_many.borrow_mut() = vec![index];
+            if let Some(row) = drawing_list.row_at_index(index as i32) {
+                drawing_list.select_row(Some(&row));
+            }
+            layer.queue_draw();
+        })
+    };
     let _ = queue_preview;
     let layer_for_update = layer.clone();
-    let select_for_update = select.clone();
+    let pen_for_update = pen.clone();
     let tools_for_update = tools.clone();
     let was_active = Rc::new(Cell::new(draw_toggle.is_active()));
-    Rc::new(move || {
+    let update: Rc<dyn Fn()> = Rc::new(move || {
         let active = draw_toggle.is_active();
         if active {
             was_active.set(true);
         } else if was_active.replace(false) {
-            tools_for_update.set(DrawTool::Select);
-            select_for_update.set_active(true);
+            // Reopening Draw starts with the pen, ready to draw.
+            tools_for_update.set(DrawTool::Pen);
+            pen_for_update.set_active(true);
         }
         layer_for_update.set_visible(true);
         layer_for_update.set_can_target(active);
@@ -962,7 +1011,20 @@ fn build_draw_panel(
             layer_for_update.set_cursor_from_name(None);
         }
         layer_for_update.queue_draw();
-    })
+    });
+    (update, select_drawing)
+}
+
+fn draw_kind_label(kind: super::model::DrawKind) -> &'static str {
+    use super::model::DrawKind;
+    match kind {
+        DrawKind::Pen => "Pen",
+        DrawKind::Line => "Line",
+        DrawKind::Arrow => "Arrow",
+        DrawKind::Rectangle => "Rectangle",
+        DrawKind::Ellipse => "Ellipse",
+        DrawKind::Highlighter => "Highlighter",
+    }
 }
 
 fn tool_kind(tool: DrawTool) -> super::model::DrawKind {

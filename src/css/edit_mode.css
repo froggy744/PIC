@@ -54,11 +54,7 @@
   opacity: 0.42;
 }
 
-.draw-tool-grid {
-  margin-bottom: 0;
-}
-
-.draw-tool-grid button.draw-tool-button {
+.editor-tool-group button.editor-tool-button {
   min-width: 0;
   min-height: 32px;
   padding: 0;
@@ -71,72 +67,90 @@
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 
-.draw-tool-grid button.draw-tool-button image {
+.editor-tool-group button.editor-tool-button image {
   color: @theme_fg_color;
   opacity: 1;
 }
 
-.draw-tool-grid button.draw-tool-button:hover {
+.editor-tool-group button.editor-tool-button:hover {
   background-color: alpha(@theme_fg_color, 0.08);
   border-color: alpha(@theme_fg_color, 0.1);
 }
 
-.draw-tool-grid button.draw-tool-button:checked,
-.draw-tool-grid button.draw-tool-button:checked:hover {
+.editor-tool-group button.editor-tool-button:checked,
+.editor-tool-group button.editor-tool-button:checked:hover {
   background-color: alpha(@accent_bg_color, 0.19);
   border-color: alpha(@accent_bg_color, 0.38);
   box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.16);
 }
 
-.draw-tool-grid button.draw-tool-button:focus-visible {
+.editor-tool-group button.editor-tool-button:focus-visible {
   outline: 2px solid @accent_bg_color;
   outline-offset: -2px;
 }
 
-.pic-editor-draw-controls .draw-section-heading {
+/* Shared inspector panel components (src/edit/panel_ui.rs). */
+.pic-editor-panel .editor-section-heading {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: alpha(@theme_fg_color, 0.62);
 }
 
-.pic-editor-draw-controls .draw-section-divider {
+.pic-editor-panel .editor-section-divider {
   min-height: 1px;
   background-color: alpha(@theme_fg_color, 0.12);
   margin: 2px 0;
 }
 
-.draw-adjustment-column > box > label:first-child {
+.editor-slider-column > box > label:first-child,
+.pic-editor-panel label.editor-control-title {
   font-size: 12px;
   font-weight: 600;
 }
 
-.draw-adjustment-column scale {
+.editor-slider-column scale {
   min-width: 0;
   margin-top: 0;
 }
 
-.draw-adjustment-value {
+.editor-slider-value {
   min-width: 0;
   color: alpha(@theme_fg_color, 0.72);
   font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
-.pic-editor-draw-controls button.draw-delete-button {
-  min-height: 32px;
-  padding: 4px 8px;
+/* Neutral panel buttons live in components/editor_buttons.css (above themes). */
+
+/* Per-row trash in layer lists. */
+.pic-editor-panel button.editor-row-delete {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+.pic-editor-panel button.editor-row-delete:hover {
   color: @error_color;
-  background: transparent;
-  border: 1px solid transparent;
-  box-shadow: none;
+  background: alpha(@error_color, 0.1);
 }
 
-.pic-editor-draw-controls button.draw-delete-button:hover {
-  background: alpha(@error_color, 0.08);
+/* Text style and alignment toggles read as one bordered button row. */
+.editor-tool-group.editor-format-group button.editor-tool-button {
+  min-height: 30px;
+  background-color: alpha(@theme_fg_color, 0.06);
+  border-color: alpha(@theme_fg_color, 0.1);
 }
 
-.pic-editor-draw-controls button.draw-delete-button:disabled {
-  color: alpha(@theme_fg_color, 0.48);
+.editor-tool-group.editor-format-group button.editor-tool-button:checked,
+.editor-tool-group.editor-format-group button.editor-tool-button:checked:hover {
+  background-color: alpha(@accent_bg_color, 0.19);
+  border-color: alpha(@accent_bg_color, 0.38);
+}
+
+.editor-tool-group.editor-format-group button.editor-tool-button label {
+  font-size: 15px;
 }
 
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
@@ -160,24 +174,11 @@
   background-color: alpha(@theme_fg_color, 0.14);
 }
 
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-back,
-.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button {
-  background-color: transparent;
-}
-
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-back:hover,
-.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button:hover {
-  background-color: alpha(@theme_fg_color, 0.09);
-}
-
-.edit-mode-toolbar .edit-history-group.linked {
-  padding: 2px;
-  border-radius: 9px;
-  background-color: alpha(@theme_fg_color, 0.05);
-}
-
-.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button {
-  border-radius: 6px;
+/* Photo actions (Undo ... Copy) reuse the tab strip; icons need less side
+ * padding than the text tabs. */
+.edit-mode-toolbar .edit-panel-tabs > button.flat.edit-action-tab {
+  min-width: 0;
+  padding: 0 11px;
 }
 
 .edit-mode-toolbar .edit-toolbar-actions separator.edit-toolbar-divider {
@@ -193,7 +194,7 @@
   color: @accent_fg_color;
   background-color: @accent_bg_color;
   border: none;
-  border-radius: 999px;
+  border-radius: 8px; /* sits inside its strip, like the tabs */
   font-weight: 700;
   transition: background-color 140ms ease;
 }
@@ -243,4 +244,3 @@
   outline: 2px solid @accent_bg_color;
   outline-offset: 2px;
 }
-.draw-adjustment-value { font-weight: 600; }

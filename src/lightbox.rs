@@ -440,11 +440,14 @@ pub struct Lightbox {
 }
 
 /// Duration of the viewer's close fade (user close and editor handoff).
-const CLOSE_FADE_SECONDS: f64 = 0.16;
+/// The editor's page crossfades use the same length.
+pub const CLOSE_FADE_MS: u32 = 160;
+const CLOSE_FADE_SECONDS: f64 = CLOSE_FADE_MS as f64 / 1000.0;
 
-/// Longest the viewer waits on top for the editor's first frame before it
-/// fades anyway; past this the click would feel ignored.
-const HANDOFF_WAIT_LIMIT: Duration = Duration::from_millis(350);
+/// Longest the viewer (or the page under it) stays on screen waiting for
+/// the editor's first frame before giving way anyway; past this the click
+/// would feel ignored.
+pub const HANDOFF_WAIT_LIMIT: Duration = Duration::from_millis(350);
 
 /// Smoothstep close fade: the opacity after `elapsed`, and whether it ended.
 fn close_fade_opacity(elapsed: Duration) -> (f64, bool) {

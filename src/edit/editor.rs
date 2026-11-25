@@ -34,6 +34,7 @@ pub struct EditEditor {
     escape_action: Rc<dyn Fn()>,
     copy_saved: Rc<RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
     first_frame_shown: Rc<Cell<bool>>,
+    preview_ready: Rc<Cell<bool>>,
 }
 
 impl EditEditor {
@@ -113,6 +114,13 @@ impl EditEditor {
     /// before fading out over the editor.
     pub fn first_frame_shown(&self) -> bool {
         self.first_frame_shown.get()
+    }
+
+    /// Whether the first preview has been decoded and handed to the canvas
+    /// (or failed). Unlike `first_frame_shown` it needs no mapped page, so
+    /// the window can wait on it before showing the editor page.
+    pub fn preview_ready(&self) -> bool {
+        self.preview_ready.get()
     }
 }
 
@@ -694,6 +702,7 @@ pub fn build(
     // the final image, else the first GPU frame (before it, the CPU picture
     // holds only the unadjusted base).
     let first_frame_shown = Rc::new(Cell::new(false));
+    let preview_ready = Rc::new(Cell::new(false));
     let preview_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     // Keep source-resolution edit bases across adjustments so slider changes
     // reuse the decoded pixels instead of rereading the original.
@@ -1285,6 +1294,7 @@ pub fn build(
         let gpu_failed = gpu_failed.clone();
         let sync_gpu_view = sync_gpu_view.clone();
         let first_frame_shown = first_frame_shown.clone();
+        let preview_ready = preview_ready.clone();
         Rc::new(move || {
             // Throttle, not debounce: the old code reset the timer on every
             // slider tick, so a continuous drag skipped every intermediate
@@ -1316,6 +1326,7 @@ pub fn build(
             let sync_gpu_view = sync_gpu_view.clone();
             let active_rotation = active_rotation_for_queue.clone();
             let first_frame_shown = first_frame_shown.clone();
+            let preview_ready = preview_ready.clone();
             let source = glib::timeout_add_local_once(
                 Duration::from_millis(PREVIEW_THROTTLE_MS),
                 move || {
@@ -1412,6 +1423,7 @@ pub fn build(
                     let cpu_fallback = cpu_fallback;
                     let cpu_preview_started = cpu_preview_started;
                     let first_frame_shown = first_frame_shown.clone();
+                    let preview_ready = preview_ready.clone();
                     glib::timeout_add_local(Duration::from_millis(25), move || {
                         match receiver.try_recv() {
                             Ok(result) => {
@@ -1540,12 +1552,14 @@ pub fn build(
                                         crop_overlay.queue_draw();
                                         overlay_layer.queue_draw();
                                         draw_layer.queue_draw();
+                                        preview_ready.set(true);
                                         if !gpu_base_requested {
                                             first_frame_shown.set(true);
                                         }
                                     }
                                     Err(error) => {
                                         status.set_text(&format!("Preview failed: {error}"));
+                                        preview_ready.set(true);
                                         first_frame_shown.set(true);
                                     }
                                 }
@@ -3234,6 +3248,7 @@ pub fn build(
         escape_action,
         copy_saved,
         first_frame_shown,
+        preview_ready,
     }
 }
 

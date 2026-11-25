@@ -3930,6 +3930,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let collage_editing = collage_editing.clone();
         let collage_editor = collage_editor.clone();
         let lightbox_properties_panel = lightbox_properties_panel.clone();
+        // Bumped by every editor open and close, so a page switch still
+        // waiting for an earlier editor's preview gives up.
+        let edit_open_serial = Rc::new(Cell::new(0_u64));
         // Keep the shared slider synchronization handle available to the rest
         // of build.rs. The editor-open move closure owns only this cheap clone.
         // Edit-mode Export uses the exact same dialog → destination → progress
@@ -3965,6 +3968,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             };
             edit_space_slot.borrow_mut().take();
             edit_escape_slot.borrow_mut().take();
+            let open_serial = edit_open_serial.get().wrapping_add(1);
+            edit_open_serial.set(open_serial);
             // Only a photo opened from the Library index returns to that
             // index. Photos, Folders and Albums keep their existing route.
             let opened_from_library =
@@ -4009,8 +4014,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let lightbox = lightbox.clone();
                 let outside_viewer = outside_viewer.clone();
                 let saved_copy = saved_copy.clone();
+                let edit_open_serial = edit_open_serial.clone();
                 Rc::new(move || {
                     crate::thumbnail_trace::event(&trace_uri, "editor", "closed");
+                    edit_open_serial.set(edit_open_serial.get().wrapping_add(1));
                     edit_space_slot.borrow_mut().take();
                     edit_escape_slot.borrow_mut().take();
                     one_to_one.set_active(false);
@@ -4114,7 +4121,45 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     true
                 }) as Rc<dyn Fn() -> bool>));
             }
-            main_stack.set_visible_child_name("edit");
+            if lightbox.is_handing_off()
+                || !main_stack.is_mapped()
+                || !main_stack.settings().is_gtk_enable_animations()
+            {
+                // The fading viewer covers the editor while it loads.
+                main_stack.set_visible_child_name("edit");
+                return;
+            }
+            // From a page: keep it on screen while the editor decodes its
+            // preview (up to the viewer handoff's limit), then crossfade
+            // with the viewer's close-fade length, instead of cutting to an
+            // empty canvas.
+            let edit_editor = edit_editor.clone();
+            let edit_open_serial = edit_open_serial.clone();
+            let requested = std::time::Instant::now();
+            main_stack.add_tick_callback(move |stack, _| {
+                if edit_open_serial.get() != open_serial {
+                    return glib::ControlFlow::Break;
+                }
+                let ready = edit_editor.try_borrow().is_ok_and(|editor| {
+                    editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.photo_id() == id && editor.preview_ready())
+                });
+                let waited = requested.elapsed();
+                if !ready && waited < crate::lightbox::HANDOFF_WAIT_LIMIT {
+                    return glib::ControlFlow::Continue;
+                }
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_EDIT_OPEN stage=crossfade waited_ms={:.1} preview_ready={}",
+                        waited.as_secs_f64() * 1000.0,
+                        ready
+                    );
+                }
+                stack.set_transition_duration(crate::lightbox::CLOSE_FADE_MS);
+                stack.set_visible_child_full("edit", gtk::StackTransitionType::Crossfade);
+                glib::ControlFlow::Break
+            });
         })));
     }
 

@@ -551,16 +551,24 @@ fn reconcile_deleted_root(
 
 // Remember directory devices so an unmounted drive's empty mount point (or
 // a vanished nested mount) cannot be mistaken for deleted catalogue content.
+//
+// A library carried to another machine or disk layout records storage that
+// no longer exists, which looks exactly like an unmounted drive. The two
+// differ in one way: an empty mount point holds none of the library's
+// photos. So storage that changed is accepted, and recorded afresh, when a
+// photo the library already has under it is still on disk.
 fn verify_scan_devices(connection: &Connection, folder_id: i64) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if let Some(saved) = db::setting(connection, &format!("scan-devices:{folder_id}"))? {
-            let devices: HashMap<String, ScanStorageIdentity> = serde_json::from_str(&saved)?;
+        let key = format!("scan-devices:{folder_id}");
+        if let Some(saved) = db::setting(connection, &key)? {
+            let mut devices: HashMap<String, ScanStorageIdentity> = serde_json::from_str(&saved)?;
             #[cfg(target_os = "linux")]
             let mounts = read_mounts()?;
-            for (path, identity) in devices {
-                let mut ancestor = Path::new(&path);
+            let mut changed: Vec<String> = Vec::new();
+            for (path, identity) in &devices {
+                let mut ancestor = Path::new(path);
                 let metadata = loop {
                     match fs::metadata(ancestor) {
                         Ok(metadata) => break metadata,
@@ -573,23 +581,94 @@ fn verify_scan_devices(connection: &Connection, folder_id: i64) -> Result<()> {
                 #[cfg(target_os = "linux")]
                 let matches = match identity {
                     ScanStorageIdentity::Mount { mount, .. } => {
-                        mount_identity(ancestor, &mounts).is_some_and(|current| current == mount)
+                        mount_identity(ancestor, &mounts).is_some_and(|current| &current == mount)
                     }
-                    ScanStorageIdentity::Device(device) => metadata.dev() == device,
+                    ScanStorageIdentity::Device(device) => metadata.dev() == *device,
                 };
                 #[cfg(not(target_os = "linux"))]
                 let matches = match identity {
                     ScanStorageIdentity::Mount { device, .. }
-                    | ScanStorageIdentity::Device(device) => metadata.dev() == device,
+                    | ScanStorageIdentity::Device(device) => metadata.dev() == *device,
                 };
                 if !matches {
-                    anyhow::bail!("scan storage changed or was unmounted: {path}");
+                    changed.push(path.clone());
                 }
             }
+            if changed.is_empty() {
+                return Ok(());
+            }
+            // Judge each recorded storage as a whole: every path that was on
+            // it moves together, or none does.
+            let mut accepted: Vec<String> = Vec::new();
+            for path in &changed {
+                if accepted.contains(path) {
+                    continue;
+                }
+                let group: Vec<String> = devices
+                    .iter()
+                    .filter(|(_, identity)| *identity == &devices[path])
+                    .map(|(other, _)| other.clone())
+                    .collect();
+                if !group.iter().any(|root| known_photo_present(connection, root)) {
+                    anyhow::bail!(
+                        "scan storage changed or was unmounted: {path} (none of the library's photos there are present; is the drive mounted?)"
+                    );
+                }
+                accepted.extend(group);
+            }
+            #[cfg(target_os = "linux")]
+            let current = |path: &str| -> Result<ScanStorageIdentity> {
+                Ok(ScanStorageIdentity::Mount {
+                    device: fs::metadata(path)?.dev(),
+                    mount: mount_identity(Path::new(path), &mounts)
+                        .context("scan storage mount is unavailable")?,
+                })
+            };
+            #[cfg(not(target_os = "linux"))]
+            let current = |path: &str| -> Result<ScanStorageIdentity> {
+                Ok(ScanStorageIdentity::Device(fs::metadata(path)?.dev()))
+            };
+            for path in &accepted {
+                match current(path) {
+                    Ok(identity) => {
+                        devices.insert(path.clone(), identity);
+                    }
+                    // A subfolder that is gone now is reconciled by the scan.
+                    Err(_) => {
+                        devices.remove(path);
+                    }
+                }
+            }
+            eprintln!(
+                "SCAN: storage for {} folder(s) changed and still holds the library's photos; recorded the new storage",
+                accepted.len()
+            );
+            db::set_setting(connection, &key, &serde_json::to_string(&devices)?)?;
         }
     }
     let _ = (connection, folder_id);
     Ok(())
+}
+
+/// Whether a photo the library already has in `root` (or below it) is on
+/// disk. Proves `root` is real storage rather than an empty mount point.
+#[cfg(unix)]
+fn known_photo_present(connection: &Connection, root: &str) -> bool {
+    const SAMPLE: i64 = 64;
+    let Ok(mut statement) = connection.prepare(
+        "SELECT p.path FROM photos p JOIN folders f ON f.id = p.folder_id
+         WHERE f.path = ?1 OR substr(f.path, 1, length(?1) + 1) = ?1 || '/'
+         ORDER BY p.id LIMIT ?2",
+    ) else {
+        return false;
+    };
+    let Ok(rows) = statement.query_map(rusqlite::params![root, SAMPLE], |row| row.get::<_, String>(0)) else {
+        return false;
+    };
+    let present = rows
+        .flatten()
+        .any(|path| !path.contains("://") && Path::new(&path).is_file());
+    present
 }
 
 fn remember_scan_devices(
@@ -628,7 +707,7 @@ fn remember_scan_devices(
 }
 
 #[cfg(unix)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(untagged)]
 enum ScanStorageIdentity {
     Device(u64),
@@ -1709,6 +1788,70 @@ mod tests {
         )
         .unwrap();
         assert!(verify_scan_devices(&connection, folder_id).is_err());
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn changed_storage_is_accepted_only_while_the_library_photos_are_there() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!(
+            "pic-moved-library-{}-{unique}",
+            std::process::id()
+        ));
+        let subfolder = workspace.join("sub");
+        fs::create_dir_all(&subfolder).unwrap();
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let root = workspace.to_str().unwrap().to_string();
+        let sub = subfolder.to_str().unwrap().to_string();
+        let folder_id = db::insert_folder(&connection, &root).unwrap();
+        let sub_id = db::insert_folder(&connection, &sub).unwrap();
+        let photo = subfolder.join("known.jpg");
+        connection
+            .execute(
+                "INSERT INTO photos (path, folder_id) VALUES (?1, ?2)",
+                rusqlite::params![photo.to_str().unwrap(), sub_id],
+            )
+            .unwrap();
+        // Recorded on another machine: a /home partition that is not here.
+        let elsewhere = ScanStorageIdentity::Mount {
+            device: 56,
+            mount: "btrfs|uuid:elsewhere|/home01|/home".to_owned(),
+        };
+        let key = format!("scan-devices:{folder_id}");
+        let record_elsewhere = || {
+            let devices = HashMap::from([
+                (root.clone(), elsewhere.clone()),
+                (sub.clone(), elsewhere.clone()),
+            ]);
+            db::set_setting(&connection, &key, &serde_json::to_string(&devices).unwrap())
+                .unwrap();
+        };
+
+        // An empty mount point: none of the library's photos are there.
+        record_elsewhere();
+        let error = verify_scan_devices(&connection, folder_id).unwrap_err();
+        assert!(error.to_string().contains("is the drive mounted"), "{error:#}");
+        let saved = db::setting(&connection, &key).unwrap().unwrap();
+        let unchanged: HashMap<String, ScanStorageIdentity> = serde_json::from_str(&saved).unwrap();
+        assert!(unchanged.values().all(|identity| identity == &elsewhere));
+
+        // The library's photo is present: the new storage is recorded for
+        // every path on the old one, and later checks pass without photos.
+        fs::write(&photo, b"jpeg").unwrap();
+        verify_scan_devices(&connection, folder_id).unwrap();
+        let saved = db::setting(&connection, &key).unwrap().unwrap();
+        let recorded: HashMap<String, ScanStorageIdentity> = serde_json::from_str(&saved).unwrap();
+        assert_eq!(recorded.len(), 2);
+        assert!(recorded.values().all(|identity| identity != &elsewhere));
+        fs::remove_file(&photo).unwrap();
+        verify_scan_devices(&connection, folder_id).unwrap();
+
         drop(connection);
         fs::remove_dir_all(workspace).unwrap();
     }

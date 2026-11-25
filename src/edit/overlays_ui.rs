@@ -424,35 +424,6 @@ fn build_overlay_position_grid(parent: &gtk::Box) -> Vec<((u8, u8), gtk::ToggleB
     buttons
 }
 
-fn add_overlay_opacity_slider(parent: &gtk::Box) -> gtk::Scale {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.add_css_class("edit-adjustment-row");
-    row.set_margin_top(6);
-    let label = gtk::Label::new(Some("Opacity"));
-    label.set_xalign(0.0);
-    label.set_width_chars(8);
-    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-    scale.set_digits(2);
-    scale.set_draw_value(false);
-    scale.set_hexpand(true);
-    scale.add_css_class("edit-adjustment-scale");
-    add_scale_default_affordance(&scale, 1.0);
-    let value = gtk::Label::new(Some("1.00"));
-    value.set_xalign(1.0);
-    value.set_width_chars(4);
-    value.add_css_class("dim-label");
-    value.add_css_class("edit-adjustment-value");
-    let value_for_update = value.clone();
-    scale.connect_value_changed(move |scale| {
-        value_for_update.set_text(&format!("{:.2}", scale.value()));
-    });
-    row.append(&label);
-    row.append(&scale);
-    row.append(&value);
-    parent.append(&row);
-    scale
-}
-
 /// Wire up drawing, hit-testing and gestures on the overlay layer. The layer
 /// only becomes event-targetable when the Overlays tab is active and the
 /// photo actually has overlays; otherwise it draws (or idles) and pointer
@@ -1126,105 +1097,61 @@ fn build_overlays_panel(
     overlays_toggle: gtk::ToggleButton,
     refresh_missing_overlay_warning: Rc<dyn Fn()>,
 ) -> Rc<dyn Fn()> {
-    let action_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    // Overlays: pick the overlay the controls below edit.
+    let overlays_section = editor_section(parent, "OVERLAYS");
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::Single);
+    list.add_css_class("overlay-list");
+    overlays_section.append(&list);
     let import = gtk::Button::with_label("Add Overlay");
     import.set_hexpand(true);
     import.set_tooltip_text(Some(
         "Add a PNG or JPG from its current location. Keep the file there to keep the overlay available.",
     ));
     import.add_css_class("crop-apply-button");
-    let remove = gtk::Button::with_label("Remove Overlay");
-    remove.set_hexpand(true);
-    remove.set_sensitive(false);
-    remove.set_tooltip_text(Some("Delete this overlay from the photo"));
-    remove.add_css_class("crop-reset-button");
-    action_row.append(&import);
-    action_row.append(&remove);
-    parent.append(&action_row);
+    overlays_section.append(&import);
+    editor_section_divider(parent);
 
-    add_section_label(parent, "OVERLAYS");
-    let list = gtk::ListBox::new();
-    list.set_selection_mode(gtk::SelectionMode::Single);
-    list.add_css_class("overlay-list");
-    list.set_margin_bottom(6);
-    parent.append(&list);
-
-    let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
     selected_section.add_css_class("overlay-selected-section");
     parent.append(&selected_section);
 
-    add_section_label(&selected_section, "SELECTED OVERLAY");
-    let opacity_row = add_overlay_opacity_slider(&selected_section);
+    let (opacity_row, _opacity_value) =
+        editor_slider_column(&selected_section, "Opacity", (0.0, 1.0, 0.01), 1.0, |n| {
+            format!("{:.0}%", n * 100.0)
+        });
+    opacity_row.set_digits(2);
+    add_scale_default_affordance(&opacity_row, 1.0);
+    editor_section_divider(&selected_section);
 
-    let position_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    add_section_label(&position_column, "POSITION");
-    let anchor_buttons = build_overlay_position_grid(&position_column);
-    let fit_column = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    fit_column.set_hexpand(true);
-    add_section_label(&fit_column, "FIT");
-    let fit_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    fit_row.add_css_class("edit-fit-row");
+    // Position: anchor grid with its offsets, then the placement shortcuts.
+    let position_section = editor_section(&selected_section, "POSITION");
+    let position_offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    position_offset_row.set_hexpand(true);
+    position_offset_row.set_halign(gtk::Align::Fill);
+    let anchor_buttons = build_overlay_position_grid(&position_offset_row);
+    let (offset_x, offset_y) = editor_offset_column(&position_offset_row);
+    position_section.append(&position_offset_row);
     let fit_width = gtk::Button::with_label("Fit Width");
-    fit_width.set_hexpand(true);
     fit_width.set_tooltip_text(Some("Stretch this overlay across the full photo width"));
     fit_width.add_css_class("crop-reset-button");
     let fit_screen = gtk::Button::with_label("Fit Screen");
-    fit_screen.set_hexpand(true);
     fit_screen.set_tooltip_text(Some(
         "Scale this overlay down until it fits entirely inside the photo",
     ));
     fit_screen.add_css_class("crop-reset-button");
-    fit_row.append(&fit_width);
-    fit_row.append(&fit_screen);
     let reset_placement = gtk::Button::with_label("Reset");
-    reset_placement.set_hexpand(true);
     reset_placement.set_tooltip_text(Some("Centre this overlay and reset its position offsets"));
     reset_placement.add_css_class("crop-reset-button");
-    fit_row.append(&reset_placement);
-    fit_column.append(&fit_row);
+    let fit_row = editor_button_group(3, &[&fit_width, &fit_screen, &reset_placement]);
+    fit_row.add_css_class("edit-fit-row");
+    position_section.append(&fit_row);
 
-    let offset_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    add_section_label(&offset_column, "OFFSET");
-    let offset_x = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
-    let offset_y = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
-    offset_x.set_hexpand(true);
-    offset_y.set_hexpand(true);
-    for spin in [&offset_x, &offset_y] {
-        spin.set_width_chars(3);
-        spin.set_max_width_chars(3);
-        spin.add_css_class("edit-offset-spin");
-    }
-    offset_x.set_tooltip_text(Some(
-        "Horizontal offset from the selected position, in photo pixels",
-    ));
-    offset_y.set_tooltip_text(Some(
-        "Vertical offset from the selected position, in photo pixels",
-    ));
-    let offset_row = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    let offset_cell_x = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    offset_cell_x.set_hexpand(true);
-    let offset_label_x = gtk::Label::new(Some("X"));
-    offset_label_x.set_xalign(0.0);
-    offset_label_x.set_width_chars(1);
-    offset_cell_x.append(&offset_label_x);
-    offset_cell_x.append(&offset_x);
-    offset_row.append(&offset_cell_x);
-    let offset_cell_y = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    offset_cell_y.set_hexpand(true);
-    let offset_label_y = gtk::Label::new(Some("Y"));
-    offset_label_y.set_xalign(0.0);
-    offset_label_y.set_width_chars(1);
-    offset_cell_y.append(&offset_label_y);
-    offset_cell_y.append(&offset_y);
-    offset_row.append(&offset_cell_y);
-    offset_column.append(&offset_row);
-
-    let position_offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    position_offset_row.set_margin_top(10);
-    position_offset_row.append(&position_column);
-    position_offset_row.append(&offset_column);
-    selected_section.append(&position_offset_row);
-    selected_section.append(&fit_column);
+    editor_section_divider(parent);
+    let remove = editor_destructive_button("Remove Overlay");
+    remove.set_sensitive(false);
+    remove.set_tooltip_text(Some("Delete this overlay from the photo"));
+    parent.append(&remove);
 
     // Populate the list and control states from the recipe.
     let sync: Rc<dyn Fn()> = {

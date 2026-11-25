@@ -167,33 +167,7 @@ fn build_text_panel(
     position_offset_row.set_hexpand(true);
     position_offset_row.set_halign(gtk::Align::Fill);
     let anchor_buttons = build_text_position_grid(&position_offset_row);
-    let offset_x = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
-    let offset_y = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
-    offset_x.set_hexpand(true);
-    offset_y.set_hexpand(true);
-    for spin in [&offset_x, &offset_y] {
-        spin.set_width_chars(3);
-        spin.set_max_width_chars(3);
-        spin.add_css_class("edit-offset-spin");
-    }
-    offset_x.set_tooltip_text(Some(
-        "Horizontal offset from the selected position, in photo pixels",
-    ));
-    offset_y.set_tooltip_text(Some(
-        "Vertical offset from the selected position, in photo pixels",
-    ));
-    let offset_rows = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    for (axis, spin) in [("X", &offset_x), ("Y", &offset_y)] {
-        let cell = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        cell.set_hexpand(true);
-        let label = gtk::Label::new(Some(axis));
-        label.set_xalign(0.0);
-        label.set_width_chars(1);
-        cell.append(&label);
-        cell.append(spin);
-        offset_rows.append(&cell);
-    }
-    editor_control_column(&position_offset_row, "Offset", None, &offset_rows);
+    let (offset_x, offset_y) = editor_offset_column(&position_offset_row);
     position_section.append(&position_offset_row);
     let fit_width = gtk::Button::with_label("Fit Width");
     fit_width.set_tooltip_text(Some("Scale text to span the photo width"));

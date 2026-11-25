@@ -171,3 +171,32 @@ fn editor_destructive_button(label: &str) -> gtk::Button {
     button.set_halign(gtk::Align::Start);
     button
 }
+
+/// "Offset" column of X/Y spin buttons in photo pixels, beside a position grid.
+fn editor_offset_column(parent: &gtk::Box) -> (gtk::SpinButton, gtk::SpinButton) {
+    let offset_x = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
+    let offset_y = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
+    offset_x.set_tooltip_text(Some(
+        "Horizontal offset from the selected position, in photo pixels",
+    ));
+    offset_y.set_tooltip_text(Some(
+        "Vertical offset from the selected position, in photo pixels",
+    ));
+    let rows = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    for (axis, spin) in [("X", &offset_x), ("Y", &offset_y)] {
+        spin.set_hexpand(true);
+        spin.set_width_chars(3);
+        spin.set_max_width_chars(3);
+        spin.add_css_class("edit-offset-spin");
+        let cell = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        cell.set_hexpand(true);
+        let label = gtk::Label::new(Some(axis));
+        label.set_xalign(0.0);
+        label.set_width_chars(1);
+        cell.append(&label);
+        cell.append(spin);
+        rows.append(&cell);
+    }
+    editor_control_column(parent, "Offset", None, &rows);
+    (offset_x, offset_y)
+}

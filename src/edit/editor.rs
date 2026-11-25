@@ -414,6 +414,7 @@ pub fn build(
     crop_box.set_margin_end(14);
     let overlays_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     overlays_box.add_css_class("pic-editor-overlay-controls");
+    overlays_box.add_css_class("pic-editor-panel");
     overlays_box.set_hexpand(true);
     overlays_box.set_vexpand(true);
     overlays_box.set_margin_top(12);

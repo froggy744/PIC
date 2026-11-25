@@ -2060,23 +2060,11 @@ pub fn build(
         });
     }
     {
+        // Draw keeps the panel width like every other tab.
         let panel_stack = panel_stack.clone();
-        let body = body.clone();
-        let previous_width = Rc::new(Cell::new(None::<i32>));
         draw_toggle.connect_toggled(move |button| {
             if button.is_active() {
                 panel_stack.set_visible_child_name("draw");
-                // The Draw controls are composed for a compact inspector.
-                // Keep any width the user already set below this target.
-                if body.position() > 320 {
-                    previous_width.set(Some(body.position()));
-                    body.set_position(320);
-                }
-            } else if let Some(width) = previous_width.take() {
-                // A manual drag in Draw is a new user choice; preserve it.
-                if body.position() == 320 {
-                    body.set_position(width);
-                }
             }
         });
     }

@@ -159,6 +159,22 @@ fn editor_slider_column(
     (scale, value)
 }
 
+/// Section heading with a small action button on its right.
+fn editor_heading_with_action(parent: &gtk::Box, text: &str, action: &gtk::Button) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    row.set_hexpand(true);
+    let heading = gtk::Label::new(Some(text));
+    heading.set_xalign(0.0);
+    heading.set_hexpand(true);
+    heading.add_css_class("editor-section-heading");
+    row.append(&heading);
+    action.set_valign(gtk::Align::Center);
+    action.add_css_class("editor-neutral-button");
+    action.add_css_class("editor-heading-action");
+    row.append(action);
+    parent.append(&row);
+}
+
 /// Destructive action, styled as a quiet button with error-coloured text.
 fn editor_destructive_button(label: &str) -> gtk::Button {
     let button = gtk::Button::with_label(label);

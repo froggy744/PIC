@@ -13,3 +13,14 @@
   padding-left: 7px;
   padding-right: 7px;
 }
+
+/* Compact −/+ steppers on the Text/Overlays offset fields. */
+.pic-editor-panel spinbutton.edit-offset-spin > button {
+  min-width: 18px;
+  min-height: 0;
+  padding: 0 3px;
+}
+
+.pic-editor-panel spinbutton.edit-offset-spin > button image {
+  -gtk-icon-size: 12px;
+}

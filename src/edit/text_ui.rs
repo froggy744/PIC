@@ -24,13 +24,18 @@ fn build_text_panel(
     photo_dimensions: Rc<Cell<(i32, i32)>>,
 ) -> Rc<dyn Fn()> {
     use gtk::pango::prelude::*;
+    // TEXT heading with "+ Add text" on its right. It sits outside the
+    // selected-layer section so it stays usable when there are no layers.
+    let add_text = gtk::Button::with_label("+ Add text");
+    add_text.set_tooltip_text(Some("Add a text layer on top of this photo"));
+    editor_heading_with_action(parent, "TEXT", &add_text);
+
     let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
     selected_section.set_hexpand(true);
     selected_section.set_halign(gtk::Align::Fill);
     selected_section.add_css_class("overlay-selected-section");
     parent.append(&selected_section);
 
-    let content_section = editor_section(&selected_section, "TEXT");
     let text_scroll = gtk::ScrolledWindow::new();
     text_scroll.add_css_class("pic-text-editor-surface");
     text_scroll.set_hexpand(true);
@@ -56,7 +61,7 @@ fn build_text_panel(
     text_view.set_left_margin(6);
     text_view.set_right_margin(6);
     text_scroll.set_child(Some(&text_view));
-    content_section.append(&text_scroll);
+    selected_section.append(&text_scroll);
     editor_section_divider(&selected_section);
 
     // Typography: family, then the style and alignment toggles in one group.
@@ -179,12 +184,36 @@ fn build_text_panel(
     list.add_css_class("overlay-list");
     layers_section.append(&list);
 
-    let add_text = gtk::Button::with_label("+ Add text");
-    add_text.set_tooltip_text(Some("Add a text layer on top of this photo"));
-    let remove = editor_destructive_button("Delete selected");
-    remove.set_sensitive(false);
-    remove.set_tooltip_text(Some("Delete this text layer from the photo"));
-    editor_action_row(parent, &[&add_text, &remove]);
+    // Each layer row carries its own trash button. Deleting keeps the
+    // selection on the same layer (or lets sync pick the first one).
+    let sync_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let delete_layer: Rc<dyn Fn(usize)> = {
+        let session = session.clone();
+        let selected = selected.clone();
+        let update_history_buttons = update_history_buttons.clone();
+        let sync_slot = sync_slot.clone();
+        Rc::new(move |index| {
+            session.borrow_mut().mutate(move |recipe| {
+                if index < recipe.text_layers.len() {
+                    recipe.text_layers.remove(index);
+                }
+            });
+            selected.set(match selected.get() {
+                Some(current) if current == index => None,
+                Some(current) if current > index => Some(current - 1),
+                other => other,
+            });
+            update_history_buttons();
+            // Rebuild the rows after this click handler returns, since the
+            // clicked button belongs to a row that sync removes.
+            let sync_slot = sync_slot.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(sync) = sync_slot.borrow().clone() {
+                    sync();
+                }
+            });
+        })
+    };
 
     let sync: Rc<dyn Fn()> = {
         let session = session.clone();
@@ -203,7 +232,7 @@ fn build_text_panel(
         let align_buttons = align_buttons.clone();
         let opacity_row = opacity_row.clone();
         let anchor_buttons = anchor_buttons.clone();
-        let remove = remove.clone();
+        let delete_layer = delete_layer.clone();
         let offset_x = offset_x.clone();
         let offset_y = offset_y.clone();
         let photo_dimensions = photo_dimensions.clone();
@@ -219,7 +248,6 @@ fn build_text_panel(
                 selected.set(Some(0));
             }
             let active = selected.get();
-            remove.set_sensitive(active.is_some());
             selected_section.set_visible(true);
             selected_section.set_sensitive(active.is_some());
             list.set_visible(true);
@@ -247,7 +275,19 @@ fn build_text_panel(
                 };
                 let visibility = if layer.visible { "" } else { " · hidden" };
                 label.set_text(&format!("{name}{visibility}"));
-                row.set_child(Some(&label));
+                let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                row_content.append(&label);
+                let trash = gtk::Button::from_icon_name("user-trash-symbolic");
+                trash.add_css_class("flat");
+                trash.add_css_class("editor-row-delete");
+                trash.set_valign(gtk::Align::Center);
+                trash.set_tooltip_text(Some("Delete this text layer from the photo"));
+                {
+                    let delete_layer = delete_layer.clone();
+                    trash.connect_clicked(move |_| delete_layer(index));
+                }
+                row_content.append(&trash);
+                row.set_child(Some(&row_content));
                 list.append(&row);
                 if Some(index) == active {
                     list.select_row(Some(&row));
@@ -351,25 +391,7 @@ fn build_text_panel(
         });
     }
 
-    {
-        let session = session.clone();
-        let selected = selected.clone();
-        let update_history_buttons = update_history_buttons.clone();
-        let sync = sync.clone();
-        remove.connect_clicked(move |_| {
-            let Some(index) = selected.get() else {
-                return;
-            };
-            session.borrow_mut().mutate(move |recipe| {
-                if index < recipe.text_layers.len() {
-                    recipe.text_layers.remove(index);
-                }
-            });
-            selected.set(None);
-            update_history_buttons();
-            sync();
-        });
-    }
+    sync_slot.replace(Some(sync.clone()));
 
     {
         let session = session.clone();

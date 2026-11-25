@@ -153,6 +153,26 @@
   margin-top: 0;
 }
 
+/* Small action beside a section heading (e.g. "+ Add text"). */
+.pic-editor-panel button.editor-neutral-button.editor-heading-action {
+  min-height: 26px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+/* Per-row trash in layer lists. */
+.pic-editor-panel button.editor-row-delete {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  color: alpha(@theme_fg_color, 0.6);
+}
+
+.pic-editor-panel button.editor-row-delete:hover {
+  color: @error_color;
+  background: alpha(@error_color, 0.1);
+}
+
 /* Text style and alignment toggles read as one bordered button row. */
 .editor-tool-group.editor-format-group button.editor-tool-button {
   min-height: 30px;

@@ -1066,18 +1066,15 @@ fn build_overlays_panel(
     refresh_missing_overlay_warning: Rc<dyn Fn()>,
 ) -> Rc<dyn Fn()> {
     // Overlays: pick the overlay the controls below edit.
-    let overlays_section = editor_section(parent, "OVERLAYS");
     let import = gtk::Button::with_label("+ Add overlay");
-    import.set_hexpand(true);
     import.set_tooltip_text(Some(
         "Add a PNG or JPG from its current location. Keep the file there to keep the overlay available.",
     ));
-    import.add_css_class("editor-neutral-button");
-    overlays_section.append(&import);
+    editor_heading_with_action(parent, "OVERLAYS", &import);
     let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.add_css_class("overlay-list");
-    overlays_section.append(&list);
+    parent.append(&list);
     editor_section_divider(parent);
 
     let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -1112,10 +1109,36 @@ fn build_overlays_panel(
     fit_row.add_css_class("edit-fit-row");
     position_section.append(&fit_row);
 
-    let remove = editor_destructive_button("Delete selected");
-    remove.set_sensitive(false);
-    remove.set_tooltip_text(Some("Delete this overlay from the photo"));
-    editor_action_row(parent, &[&remove]);
+    // Each overlay row carries its own trash button. Deleting keeps the
+    // selection on the same overlay (or lets sync pick the first one).
+    let sync_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let delete_overlay: Rc<dyn Fn(usize)> = {
+        let session = session.clone();
+        let selected = selected.clone();
+        let update_history_buttons = update_history_buttons.clone();
+        let sync_slot = sync_slot.clone();
+        Rc::new(move |index| {
+            session.borrow_mut().mutate(move |recipe| {
+                if index < recipe.overlays.len() {
+                    recipe.overlays.remove(index);
+                }
+            });
+            selected.set(match selected.get() {
+                Some(current) if current == index => None,
+                Some(current) if current > index => Some(current - 1),
+                other => other,
+            });
+            update_history_buttons();
+            // Rebuild the rows after this click handler returns, since the
+            // clicked button belongs to a row that sync removes.
+            let sync_slot = sync_slot.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(sync) = sync_slot.borrow().clone() {
+                    sync();
+                }
+            });
+        })
+    };
 
     // Populate the list and control states from the recipe.
     let sync: Rc<dyn Fn()> = {
@@ -1126,7 +1149,7 @@ fn build_overlays_panel(
         let list = list.clone();
         let selected_section = selected_section.clone();
         let opacity_row = opacity_row.clone();
-        let remove = remove.clone();
+        let delete_overlay = delete_overlay.clone();
         let anchor_buttons = anchor_buttons.clone();
         let offset_x = offset_x.clone();
         let offset_y = offset_y.clone();
@@ -1144,7 +1167,6 @@ fn build_overlays_panel(
                 selected.set(Some(0));
             }
             let active = selected.get();
-            remove.set_sensitive(active.is_some());
             selected_section.set_sensitive(active.is_some());
 
             while let Some(child) = list.first_child() {
@@ -1183,6 +1205,16 @@ fn build_overlays_panel(
                     ));
                     row_content.append(&warning);
                 }
+                let trash = gtk::Button::from_icon_name("user-trash-symbolic");
+                trash.add_css_class("flat");
+                trash.add_css_class("editor-row-delete");
+                trash.set_valign(gtk::Align::Center);
+                trash.set_tooltip_text(Some("Delete this overlay from the photo"));
+                {
+                    let delete_overlay = delete_overlay.clone();
+                    trash.connect_clicked(move |_| delete_overlay(index));
+                }
+                row_content.append(&trash);
                 row.set_child(Some(&row_content));
                 list.append(&row);
                 if Some(index) == active {
@@ -1436,25 +1468,7 @@ fn build_overlays_panel(
             sync();
         });
     }
-    {
-        let session = session.clone();
-        let selected = selected.clone();
-        let update_history_buttons = update_history_buttons.clone();
-        let sync = sync.clone();
-        remove.connect_clicked(move |_| {
-            let Some(index) = selected.get() else {
-                return;
-            };
-            session.borrow_mut().mutate(move |recipe| {
-                if index < recipe.overlays.len() {
-                    recipe.overlays.remove(index);
-                }
-            });
-            selected.set(None);
-            update_history_buttons();
-            sync();
-        });
-    }
+    sync_slot.replace(Some(sync.clone()));
 
     // Import: validate and decode off-thread, then reference the selected
     // source URI from the edit recipe on the main thread.

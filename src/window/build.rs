@@ -4656,13 +4656,10 @@ thread_local! {
 }
 
 /// Leave the photo editor for `page`, crossfading over the viewer's close
-/// fade length like the editor's open does. Without animations, or when the
-/// editor is not the page on screen, the switch is immediate.
+/// fade length like the editor's open does. Without animations the switch
+/// is immediate; switching to the page already shown does nothing.
 fn leave_photo_editor(stack: &gtk::Stack, page: &str) {
-    if stack.is_mapped()
-        && stack.settings().is_gtk_enable_animations()
-        && stack.visible_child_name().as_deref() == Some("edit")
-    {
+    if stack.is_mapped() && stack.settings().is_gtk_enable_animations() {
         stack.set_transition_duration(crate::lightbox::CLOSE_FADE_MS);
         LEAVING_EDITOR_WITH_FADE.with(|leaving| leaving.set(true));
         stack.set_visible_child_full(page, gtk::StackTransitionType::Crossfade);

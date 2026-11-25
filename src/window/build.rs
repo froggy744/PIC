@@ -3907,10 +3907,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 edit_escape_slot.borrow_mut().take();
                 // Any exit from the photo editor ends the collage detour.
                 collage_editing.set(false);
-                while let Some(child) = edit_page.first_child() {
-                    edit_page.remove(&child);
-                }
-                edit_editor.replace(None);
+                detach_photo_editor(stack, &edit_page, &edit_editor);
             }
         });
     }
@@ -4041,20 +4038,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                                 }
                             }
                         }
-                        main_stack.set_visible_child_name("collage");
+                        leave_photo_editor(&main_stack, "collage");
                     } else if opened_from_library {
-                        main_stack.set_visible_child_name("library");
+                        leave_photo_editor(&main_stack, "library");
                     } else {
-                        main_stack.set_visible_child_name("photos");
+                        leave_photo_editor(&main_stack, "photos");
                         gallery.restore_view(id, library_scroll_y);
                     }
                     // Detach the editor so it stops contributing to the
                     // stack's size request and its preview memory is
                     // released; the editor is rebuilt on the next open.
-                    while let Some(child) = edit_page.first_child() {
-                        edit_page.remove(&child);
-                    }
-                    edit_editor.replace(None);
+                    detach_photo_editor(&main_stack, &edit_page, &edit_editor);
                 }) as Rc<dyn Fn()>
             };
             let saved = {
@@ -4653,6 +4647,76 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         rotate_photo_for_right_click(true);
     });
     info.rotate.add_controller(rotate_right_click);
+
+thread_local! {
+    // True while `leave_photo_editor` starts its crossfade. GtkStack reports
+    // the new page before the transition counts as running, so the page
+    // handlers that detach the editor read this instead.
+    static LEAVING_EDITOR_WITH_FADE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Leave the photo editor for `page`, crossfading over the viewer's close
+/// fade length like the editor's open does. Without animations, or when the
+/// editor is not the page on screen, the switch is immediate.
+fn leave_photo_editor(stack: &gtk::Stack, page: &str) {
+    if stack.is_mapped()
+        && stack.settings().is_gtk_enable_animations()
+        && stack.visible_child_name().as_deref() == Some("edit")
+    {
+        stack.set_transition_duration(crate::lightbox::CLOSE_FADE_MS);
+        LEAVING_EDITOR_WITH_FADE.with(|leaving| leaving.set(true));
+        stack.set_visible_child_full(page, gtk::StackTransitionType::Crossfade);
+        LEAVING_EDITOR_WITH_FADE.with(|leaving| leaving.set(false));
+    } else {
+        stack.set_visible_child_name(page);
+    }
+}
+
+/// Detach the photo editor from its page and drop it, so it stops adding to
+/// the stack's size request and releases its preview memory. While the stack
+/// still crossfades away from the editor, wait for the fade to finish so the
+/// editor fades out instead of vanishing; an editor opened meanwhile has
+/// already replaced it and is kept.
+fn detach_photo_editor(
+    stack: &gtk::Stack,
+    edit_page: &gtk::Box,
+    edit_editor: &Rc<RefCell<Option<crate::edit::EditEditor>>>,
+) {
+    let fading =
+        LEAVING_EDITOR_WITH_FADE.with(Cell::get) || stack.is_transition_running();
+    let Some(old_root) = edit_page.first_child().filter(|_| fading) else {
+        while let Some(child) = edit_page.first_child() {
+            edit_page.remove(&child);
+        }
+        edit_editor.replace(None);
+        return;
+    };
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!("PIC_EDIT_CLOSE detach=after_fade");
+    }
+    let edit_page = edit_page.clone();
+    let edit_editor = edit_editor.clone();
+    glib::timeout_add_local_once(
+        Duration::from_millis(u64::from(crate::lightbox::CLOSE_FADE_MS) + 60),
+        move || {
+            if old_root.parent().as_ref() != Some(edit_page.upcast_ref::<gtk::Widget>()) {
+                return;
+            }
+            edit_page.remove(&old_root);
+            let same_editor = edit_editor.try_borrow().is_ok_and(|editor| {
+                editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.root.clone().upcast::<gtk::Widget>() == old_root)
+            });
+            if same_editor {
+                edit_editor.replace(None);
+            }
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_EDIT_CLOSE detached dropped={same_editor}");
+            }
+        },
+    );
+}
 
 fn show_photo_export_dialog(
     window: &gtk::Window,

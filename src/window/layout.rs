@@ -2454,9 +2454,9 @@
                             }
                         }
                     }
-                    main_stack.set_visible_child_name("collage");
+                    leave_photo_editor(&main_stack, "collage");
                 } else {
-                    main_stack.set_visible_child_name("photos");
+                    leave_photo_editor(&main_stack, "photos");
                 }
                 return;
             }

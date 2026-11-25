@@ -179,9 +179,8 @@ const SIDEBAR_HEADER_MARGIN_BOTTOM: i32 = 4;
 const SIDEBAR_ROOT_MARGIN_TOP: i32 = 4;
 // Keep the existing slot size and shrink only the navigation glyph.
 const SIDEBAR_ICON_SIZE: i32 = 18;
-const SIDEBAR_NAVIGATION_GLYPH_SIZE: i32 = 16;
+pub(crate) const SIDEBAR_NAVIGATION_GLYPH_SIZE: i32 = 16;
 pub(crate) const SHARED_ICON_NAME: &str = "folder-publicshare-symbolic";
-pub(crate) const SHARED_ICON_SIZE: i32 = SIDEBAR_ICON_SIZE;
 const SIDEBAR_DISCLOSURE_SLOT: i32 = 12;
 const SIDEBAR_CONTROL_SIZE: i32 = 28;
 const SIDEBAR_ACTION_ICON_SIZE: i32 = 14;

@@ -1001,7 +1001,7 @@
         contents.set_halign(gtk::Align::Center);
         contents.set_valign(gtk::Align::Center);
         let image = gtk::Image::from_icon_name(icon);
-        image.set_pixel_size(18);
+        image.set_pixel_size(sidebar::SIDEBAR_NAVIGATION_GLYPH_SIZE);
         contents.append(&image);
         let title = gtk::Label::new(Some(label));
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -1027,7 +1027,7 @@
     folder_contents.set_halign(gtk::Align::Center);
     folder_contents.set_valign(gtk::Align::Center);
     let folder_icon = gtk::Image::from_icon_name("folder-symbolic");
-    folder_icon.set_pixel_size(18);
+    folder_icon.set_pixel_size(sidebar::SIDEBAR_NAVIGATION_GLYPH_SIZE);
     folder_contents.append(&folder_icon);
     let folder_label = gtk::Label::new(Some("Folders"));
     compact_labels.borrow_mut().push(folder_label.clone());
@@ -1043,7 +1043,7 @@
     shared_contents.set_halign(gtk::Align::Center);
     shared_contents.set_valign(gtk::Align::Center);
     let shared_icon = gtk::Image::from_icon_name(sidebar::SHARED_ICON_NAME);
-    shared_icon.set_pixel_size(sidebar::SHARED_ICON_SIZE);
+    shared_icon.set_pixel_size(sidebar::SIDEBAR_NAVIGATION_GLYPH_SIZE);
     shared_contents.append(&shared_icon);
     let shared_label = gtk::Label::new(Some("Shared"));
     compact_labels.borrow_mut().push(shared_label.clone());

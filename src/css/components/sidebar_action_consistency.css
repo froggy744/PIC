@@ -129,6 +129,10 @@
 .navigation-sidebar button.compact-sidebar-option label {
     font-weight: 400;
 }
+/* Rail titles are captions under the glyph, sized like the section headings. */
+.navigation-sidebar button.compact-sidebar-button label {
+    font-size: 12px;
+}
 .navigation-sidebar button.compact-sidebar-button image {
     opacity: 0.75;
 }

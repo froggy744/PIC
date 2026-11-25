@@ -3356,6 +3356,28 @@ mod panel_tests {
     }
 
     #[test]
+    fn crop_selection_moves_without_resizing_and_stops_at_edges() {
+        let rect = CropRect {
+            left: 0.2,
+            top: 0.3,
+            right: 0.6,
+            bottom: 0.7,
+        };
+        assert!(crop_selection_contains(rect, (0.4, 0.5)));
+        assert!(!crop_selection_contains(rect, (0.1, 0.5)));
+        assert!(!crop_selection_contains(CropRect::default(), (0.5, 0.5)));
+
+        let moved = move_crop_selection(rect, 0.1, -0.1);
+        assert!((moved.left - 0.3).abs() < 1e-6 && (moved.top - 0.2).abs() < 1e-6);
+        assert!((moved.right - moved.left - 0.4).abs() < 1e-6);
+        assert!((moved.bottom - moved.top - 0.4).abs() < 1e-6);
+
+        let pinned = move_crop_selection(rect, 5.0, -5.0);
+        assert!((pinned.right - 1.0).abs() < 1e-6 && pinned.top.abs() < 1e-6);
+        assert!((pinned.right - pinned.left - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn editor_toolbar_has_tool_tabs_and_sidebar_keeps_crop_workspace() {
         if !gtk::is_initialized() {

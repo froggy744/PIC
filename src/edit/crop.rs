@@ -122,12 +122,25 @@ fn configure_crop_overlay(
         let _ = context.stroke();
     });
 
+    // A drag that starts inside the current selection moves it; any other
+    // drag draws a new selection.
     let drag = gtk::GestureDrag::new();
     drag.set_button(1);
     let origin = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let moving_from = Rc::new(Cell::new(None::<CropRect>));
     {
+        let overlay = overlay.clone();
+        let pending = pending.clone();
+        let preview_dimensions = preview_dimensions.clone();
         let origin = origin.clone();
-        drag.connect_drag_begin(move |_, x, y| origin.set((x, y)));
+        let moving_from = moving_from.clone();
+        drag.connect_drag_begin(move |_, x, y| {
+            origin.set((x, y));
+            let current = pending.borrow().normalized();
+            let inside = point_to_normalized(&overlay, preview_dimensions.get(), x, y)
+                .is_some_and(|point| crop_selection_contains(current, point));
+            moving_from.set(inside.then_some(current));
+        });
     }
     {
         let overlay = overlay.clone();
@@ -136,6 +149,19 @@ fn configure_crop_overlay(
         let origin = origin.clone();
         drag.connect_drag_update(move |_, dx, dy| {
             let (ox, oy) = origin.get();
+            if let Some(start_rect) = moving_from.get() {
+                let (_, _, width, height) = contained_rect(
+                    overlay.width() as f64,
+                    overlay.height() as f64,
+                    preview_dimensions.get().0 as f64,
+                    preview_dimensions.get().1 as f64,
+                );
+                if width > 0.0 && height > 0.0 {
+                    pending.replace(move_crop_selection(start_rect, dx / width, dy / height));
+                    overlay.queue_draw();
+                }
+                return;
+            }
             let start = point_to_normalized(&overlay, preview_dimensions.get(), ox, oy);
             let current = point_to_normalized(&overlay, preview_dimensions.get(), ox + dx, oy + dy);
             let (Some((sx, sy)), Some((cx, cy))) = (start, current) else {
@@ -176,6 +202,43 @@ fn configure_crop_overlay(
         });
     }
     overlay.add_controller(drag);
+
+    // Show a move cursor over a selection that can be dragged.
+    let motion = gtk::EventControllerMotion::new();
+    {
+        let overlay = overlay.clone();
+        motion.connect_motion(move |_, x, y| {
+            let current = pending.borrow().normalized();
+            let inside = point_to_normalized(&overlay, preview_dimensions.get(), x, y)
+                .is_some_and(|point| crop_selection_contains(current, point));
+            overlay.set_cursor_from_name(Some(if inside { "move" } else { "crosshair" }));
+        });
+    }
+    overlay.add_controller(motion);
+}
+
+/// Whether a normalized point lies inside a real (not full-photo) selection.
+fn crop_selection_contains(rect: CropRect, (x, y): (f64, f64)) -> bool {
+    !rect.is_full()
+        && x >= f64::from(rect.left)
+        && x <= f64::from(rect.right)
+        && y >= f64::from(rect.top)
+        && y <= f64::from(rect.bottom)
+}
+
+/// Shift a selection by a normalized delta, keeping its size and stopping
+/// at the photo edges.
+fn move_crop_selection(rect: CropRect, dx: f64, dy: f64) -> CropRect {
+    let width = f64::from(rect.right - rect.left);
+    let height = f64::from(rect.bottom - rect.top);
+    let left = (f64::from(rect.left) + dx).clamp(0.0, (1.0 - width).max(0.0));
+    let top = (f64::from(rect.top) + dy).clamp(0.0, (1.0 - height).max(0.0));
+    CropRect {
+        left: left as f32,
+        top: top as f32,
+        right: (left + width) as f32,
+        bottom: (top + height) as f32,
+    }
 }
 
 fn point_to_normalized(

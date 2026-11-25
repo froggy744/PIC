@@ -43,6 +43,46 @@ pub fn browse_albums(connection: &Connection) -> Result<Vec<Album>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// Albums whose name contains `query` (case-insensitive), for the search
+/// suggestions. Counts use the browsing filters like `browse_albums`.
+/// Exact names rank first, then prefix matches, then the rest by name.
+pub fn search_albums(connection: &Connection, query: &str, limit: usize) -> Result<Vec<Album>> {
+    let query = query.trim();
+    if query.chars().count() < 2 || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let filters = filters::Filters::for_browsing(connection);
+    let (predicate, args) = filters.predicate(3);
+    let mut statement = connection.prepare(&format!(
+        "SELECT a.id,a.name,a.created_at,COUNT(p.id),a.cover_frame,a.cover_photo_id
+         FROM albums a LEFT JOIN album_photos ap ON ap.album_id=a.id
+         LEFT JOIN photos p ON p.id=ap.photo_id AND p.trashed=0 AND ({predicate})
+         WHERE instr(lower(a.name), lower(?1)) > 0
+         GROUP BY a.id
+         ORDER BY
+           CASE
+             WHEN lower(a.name) = lower(?1) THEN 0
+             WHEN instr(lower(a.name), lower(?1)) = 1 THEN 1
+             ELSE 2
+           END,
+           a.name COLLATE NOCASE, a.id
+         LIMIT ?2"
+    ))?;
+    let mut values: Vec<rusqlite::types::Value> = vec![query.to_owned().into(), (limit as i64).into()];
+    values.extend(args);
+    let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
+        Ok(Album {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            created_at: row.get(2)?,
+            photo_count: row.get(3)?,
+            cover_frame: row.get(4)?,
+            cover_photo_id: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 pub fn create_album(connection: &Connection, name: &str) -> Result<Album> {
     let name = name.trim();
     if name.is_empty() {

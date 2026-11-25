@@ -795,6 +795,116 @@ pub fn browse_photos_limited(
         &filters::Filters::for_browsing(connection),
     )
 }
+/// `LIKE` pattern for a free-text photo search. Backslash is the escape
+/// character, so the user's own backslash, `%` and `_` match literally.
+fn search_like_pattern(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+/// SQL condition for the free-text search bound at `?{param}` (NULL = no
+/// search). A photo matches on its path, its capture date (the date part
+/// only, so `2023-05` finds May 2023 without hitting clock times), or the
+/// name of any album it belongs to. `?{date_param}` carries the query read
+/// as a written date (`search_date_pattern`), or NULL when it is not one.
+fn search_text_predicate(param: usize, date_param: usize) -> String {
+    format!(
+        "(?{param} IS NULL
+          OR p.path LIKE ?{param} ESCAPE '\\'
+          OR substr(p.taken_at, 1, 10) LIKE ?{param} ESCAPE '\\'
+          OR substr(p.taken_at, 1, 10) LIKE ?{date_param}
+          OR EXISTS (
+            SELECT 1 FROM album_photos search_ap
+            JOIN albums search_album ON search_album.id = search_ap.album_id
+            WHERE search_ap.photo_id = p.id
+              AND search_album.name LIKE ?{param} ESCAPE '\\'
+          ))"
+    )
+}
+/// Reads a search query written as a calendar date and returns a `LIKE`
+/// pattern for the stored `YYYY-MM-DD` date part, or `None` when the query
+/// is not a date. Accepted shapes (case-insensitive, English month names or
+/// three-letter abbreviations, `/ - . ,` or spaces as separators, `st/nd/rd/th`
+/// day suffixes):
+/// - `May 2023`, `2023 May`, `05/2023`, `2023/05` -> that month
+/// - `14 May 2023` (the InfoBar format), `May 14, 2023`, `2023 May 14`,
+///   `14/05/2023` (day first), `2023/05/14` -> that day
+/// A month name alone is not a date: it would hijack every partial word
+/// (`mar` while typing `marianne`).
+fn search_date_pattern(query: &str) -> Option<String> {
+    enum Part {
+        Number(u32, usize),
+        Month(u32),
+    }
+    fn month(word: &str) -> Option<u32> {
+        const MONTHS: [&str; 12] = [
+            "january", "february", "march", "april", "may", "june", "july", "august",
+            "september", "october", "november", "december",
+        ];
+        let word = word.to_ascii_lowercase();
+        if word == "sept" {
+            return Some(9);
+        }
+        MONTHS
+            .iter()
+            .position(|name| word == *name || (word.len() == 3 && name.starts_with(&word)))
+            .map(|index| index as u32 + 1)
+    }
+    let mut parts = Vec::new();
+    for token in query
+        .split(|c: char| c.is_whitespace() || matches!(c, '/' | '-' | '.' | ','))
+        .filter(|token| !token.is_empty())
+    {
+        let digits = token.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+        let suffix = &token[digits.len()..];
+        if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+            let day_suffix = matches!(suffix.to_ascii_lowercase().as_str(), "" | "st" | "nd" | "rd" | "th");
+            if !day_suffix || digits.len() > 4 {
+                return None;
+            }
+            parts.push(Part::Number(digits.parse().ok()?, digits.len()));
+        } else {
+            parts.push(Part::Month(month(token)?));
+        }
+    }
+    let year = |value: u32, len: usize| (len == 4).then_some(value as i32);
+    let small = |value: u32, len: usize| (len <= 2).then_some(value);
+    let (year, month, day) = match parts.as_slice() {
+        [Part::Month(m), Part::Number(y, yl)] | [Part::Number(y, yl), Part::Month(m)] => {
+            (year(*y, *yl)?, *m, None)
+        }
+        [Part::Number(m, ml), Part::Number(y, yl)] if *yl == 4 => (*y as i32, small(*m, *ml)?, None),
+        [Part::Number(y, yl), Part::Number(m, ml)] if *yl == 4 => (*y as i32, small(*m, *ml)?, None),
+        // `14 May 2023` or `2023 May 14`: the four-digit side is the year.
+        [Part::Number(a, al), Part::Month(m), Part::Number(b, bl)] => {
+            if *bl == 4 {
+                (*b as i32, *m, Some(small(*a, *al)?))
+            } else {
+                (year(*a, *al)?, *m, Some(small(*b, *bl)?))
+            }
+        }
+        [Part::Month(m), Part::Number(d, dl), Part::Number(y, yl)] => {
+            (year(*y, *yl)?, *m, Some(small(*d, *dl)?))
+        }
+        [Part::Number(y, yl), Part::Number(m, ml), Part::Number(d, dl)] if *yl == 4 => {
+            (*y as i32, small(*m, *ml)?, Some(small(*d, *dl)?))
+        }
+        [Part::Number(d, dl), Part::Number(m, ml), Part::Number(y, yl)] if *yl == 4 => {
+            (*y as i32, small(*m, *ml)?, Some(small(*d, *dl)?))
+        }
+        _ => return None,
+    };
+    match day {
+        Some(day) => chrono::NaiveDate::from_ymd_opt(year, month, day)
+            .map(|date| date.format("%Y-%m-%d").to_string()),
+        None => chrono::NaiveDate::from_ymd_opt(year, month, 1)
+            .map(|date| date.format("%Y-%m-%%").to_string()),
+    }
+}
+
 pub fn photos_limited_filtered(
     connection: &Connection,
     folder_id: Option<i64>,
@@ -803,8 +913,10 @@ pub fn photos_limited_filtered(
     limit: i64,
     filters: &filters::Filters,
 ) -> Result<Vec<Photo>> {
-    let (predicate, args) = filters.predicate(5);
-    let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
+    let (predicate, args) = filters.predicate(6);
+    let date = search.and_then(search_date_pattern);
+    let search = search.map(search_like_pattern);
+    let text = search_text_predicate(3, 5);
     let mut statement = connection.prepare(&format!(
         "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
          FROM photos p LEFT JOIN folders f ON f.id = p.folder_id
@@ -814,7 +926,7 @@ pub fn photos_limited_filtered(
                 UNION ALL
                 SELECT child.id FROM folders child JOIN descendants ON child.parent_id = descendants.id
               ) SELECT id FROM descendants))
-           AND (?2 = 0 OR p.favorite = 1) AND (?3 IS NULL OR p.path LIKE ?3 ESCAPE '\\')
+           AND (?2 = 0 OR p.favorite = 1) AND {text}
            AND ({predicate})
          ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE LIMIT ?4",
     ))?;
@@ -823,6 +935,7 @@ pub fn photos_limited_filtered(
         (favorites_only as i64).into(),
         search.into(),
         limit.into(),
+        date.into(),
     ];
     values.extend(args);
     let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
@@ -858,19 +971,21 @@ pub fn browse_photos_in_album(connection:&Connection,album_id:i64,search:Option<
     photos_in_album_filtered(connection,album_id,search,&filters::Filters::for_browsing(connection))
 }
 pub fn photos_in_album_filtered(connection:&Connection,album_id:i64,search:Option<&str>,filters:&filters::Filters)->Result<Vec<Photo>> {
-    let (predicate,args)=filters.predicate(3);
-    let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
+    let (predicate,args)=filters.predicate(4);
+    let date = search.and_then(search_date_pattern);
+    let search = search.map(search_like_pattern);
+    let text = search_text_predicate(2, 3);
     let mut statement = connection.prepare(&format!(
         "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
          FROM album_photos ap
          JOIN photos p ON p.id = ap.photo_id
          LEFT JOIN folders f ON f.id = p.folder_id
          WHERE ap.album_id = ?1 AND p.trashed = 0
-           AND (?2 IS NULL OR p.path LIKE ?2 ESCAPE '\\')
+           AND {text}
            AND ({predicate})
          ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE",
     ))?;
-    let mut values:Vec<rusqlite::types::Value>=vec![album_id.into(),search.into()];
+    let mut values:Vec<rusqlite::types::Value>=vec![album_id.into(),search.into(),date.into()];
     values.extend(args);
     let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

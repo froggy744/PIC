@@ -2687,9 +2687,15 @@
             }
             
             if front_for_search.current() == Front::Lightbox && !query.is_empty() {
+                // Searching over the viewer stays inside the viewed photo's
+                // folder (and its subfolders), not the global result stream.
+                let scope_folder = lightbox_for_search
+                    .current_photo()
+                    .map(|photo| photo.folder_id())
+                    .filter(|folder_id| *folder_id != 0);
                 let mut photos = db::browse_photos_limited(
                     &connection_for_search.borrow(),
-                    None,
+                    scope_folder,
                     false,
                     Some(&query),
                     24,
@@ -2708,7 +2714,12 @@
                         let query = query.clone();
                         move |photo_id| {
                             let mut photos =
-                                db::browse_photos(&connection.borrow(), None, false, Some(&query))
+                                db::browse_photos(
+                                    &connection.borrow(),
+                                    scope_folder,
+                                    false,
+                                    Some(&query),
+                                )
                                     .unwrap_or_default();
                             retain_enabled_formats(&connection.borrow(), &mut photos);
                             sort_photos(&mut photos, sort.get());
@@ -2724,11 +2735,21 @@
                     }),
                 );
             } else {
+                let albums_for_search =
+                    db::search_albums(&connection_for_search.borrow(), &query, 8)
+                        .unwrap_or_default();
                 update_folder_suggestions(
                     &suggestion_popover_for_search,
                     &suggestion_list_for_search,
+                    &albums_for_search,
                     &folders_for_search,
                     &query,
+                    Rc::new({
+                        let destination_click = destination_click_for_search.clone();
+                        move |album_id| {
+                            destination_click(sidebar::SidebarFilter::Album(album_id));
+                        }
+                    }),
                     Rc::new({
                         let destination_click = destination_click_for_search.clone();
                         let sidebar_selection = sidebar_selection_for_search.clone();

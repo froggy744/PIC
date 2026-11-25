@@ -436,6 +436,132 @@ mod tests {
     }
 
     #[test]
+    fn photo_search_matches_path_capture_date_and_album_name() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO folders(id, path, name) VALUES (1, '/photos', 'photos');
+                 INSERT INTO photos(id, path, folder_id, taken_at, trashed) VALUES
+                   (1, '/photos/beach.jpg', 1, '2023-05-14 10-20-23', 0),
+                   (2, '/photos/city.jpg', 1, '2021-08-01T09:15:00+02:00', 0),
+                   (3, '/photos/forest.jpg', 1, NULL, 0),
+                   (4, '/photos/trashed holiday.jpg', 1, '2023-05-20 08-00-00', 1);
+                 INSERT INTO albums(id, name) VALUES (1, 'Summer Holiday');
+                 INSERT INTO album_photos(album_id, photo_id) VALUES (1, 3), (1, 4);",
+            )
+            .unwrap();
+        let ids = |query: &str| {
+            let mut ids = photos(&connection, None, false, Some(query))
+                .unwrap()
+                .iter()
+                .map(|photo| photo.id)
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        };
+
+        assert_eq!(ids("beach"), vec![1]);
+        assert_eq!(ids("2023-05"), vec![1]);
+        assert_eq!(ids("2021"), vec![2]);
+        assert_eq!(ids("holiday"), vec![3]);
+        // Clock times are not part of the date match.
+        assert!(ids("20-23").is_empty());
+        // LIKE wildcards in the query are matched literally.
+        assert!(ids("_").is_empty());
+
+        let in_album = photos_in_album(&connection, 1, Some("forest"))
+            .unwrap()
+            .iter()
+            .map(|photo| photo.id)
+            .collect::<Vec<_>>();
+        assert_eq!(in_album, vec![3]);
+    }
+
+    #[test]
+    fn search_date_pattern_reads_written_dates() {
+        let cases = [
+            ("May 2023", Some("2023-05-%")),
+            ("2023 may", Some("2023-05-%")),
+            ("Sept 2021", Some("2021-09-%")),
+            ("05/2023", Some("2023-05-%")),
+            ("2023/05", Some("2023-05-%")),
+            ("14 May 2023", Some("2023-05-14")),
+            ("14th May, 2023", Some("2023-05-14")),
+            ("May 14, 2023", Some("2023-05-14")),
+            ("2023 May 14", Some("2023-05-14")),
+            ("14/05/2023", Some("2023-05-14")),
+            ("14.05.2023", Some("2023-05-14")),
+            ("2023/05/14", Some("2023-05-14")),
+            ("2023-05-14", Some("2023-05-14")),
+            // Not dates: a lone month, words, impossible days, no year.
+            ("may", None),
+            ("mar", None),
+            ("marianne 2023", None),
+            ("31 Feb 2023", None),
+            ("13/2023", None),
+            ("14/05", None),
+            ("2023", None),
+            ("holiday", None),
+        ];
+        for (query, expected) in cases {
+            assert_eq!(search_date_pattern(query).as_deref(), expected, "{query}");
+        }
+    }
+
+    #[test]
+    fn photo_search_finds_written_dates_in_both_stored_formats() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO photos(id, path, taken_at, trashed) VALUES
+                   (1, '/p/a.jpg', '2023-05-14 10-20-23', 0),
+                   (2, '/p/b.jpg', '2023-05-02T09:15:00+02:00', 0),
+                   (3, '/p/c.jpg', '2023-06-14 08-00-00', 0);
+                 INSERT INTO albums(id, name) VALUES (1, 'All');
+                 INSERT INTO album_photos(album_id, photo_id) VALUES (1, 1), (1, 2), (1, 3);",
+            )
+            .unwrap();
+        let ids = |photos: Vec<Photo>| {
+            let mut ids = photos.iter().map(|photo| photo.id).collect::<Vec<_>>();
+            ids.sort();
+            ids
+        };
+
+        assert_eq!(ids(photos(&connection, None, false, Some("May 2023")).unwrap()), vec![1, 2]);
+        assert_eq!(ids(photos(&connection, None, false, Some("14 May 2023")).unwrap()), vec![1]);
+        assert_eq!(ids(photos(&connection, None, false, Some("02/05/2023")).unwrap()), vec![2]);
+        assert_eq!(ids(photos_in_album(&connection, 1, Some("June 2023")).unwrap()), vec![3]);
+    }
+
+    #[test]
+    fn album_search_ranks_exact_then_prefix_and_counts_visible_photos() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO photos(id, path, trashed) VALUES
+                   (1, '/p/a.jpg', 0), (2, '/p/b.jpg', 0), (3, '/p/c.jpg', 1);
+                 INSERT INTO albums(id, name) VALUES
+                   (1, 'Best of Holiday'), (2, 'Holiday 2023'), (3, 'holiday'), (4, 'Work');
+                 INSERT INTO album_photos(album_id, photo_id) VALUES
+                   (2, 1), (2, 2), (2, 3), (3, 1);",
+            )
+            .unwrap();
+
+        let results = search_albums(&connection, "HOLIDAY", 10).unwrap();
+        let ids = results.iter().map(|album| album.id).collect::<Vec<_>>();
+        assert_eq!(ids, vec![3, 2, 1]);
+        // Trashed photos are not counted.
+        assert_eq!(results[1].photo_count, 2);
+
+        assert_eq!(search_albums(&connection, "holiday", 1).unwrap().len(), 1);
+        assert!(search_albums(&connection, "h", 10).unwrap().is_empty());
+        assert!(search_albums(&connection, "beach", 10).unwrap().is_empty());
+    }
+
+    #[test]
     fn folder_path_lookup_returns_exact_registered_folder() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(SCHEMA).unwrap();

@@ -221,11 +221,49 @@ fn connect_search_popup_dismissal(
     });
 }
 
+/// One flat suggestion row: icon, title and a dimmed second line.
+fn suggestion_button(icon: &str, title: &str, detail: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.set_halign(gtk::Align::Fill);
+    button.set_focusable(false);
+    button.add_css_class("flat");
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_margin_start(8);
+    row.set_margin_end(8);
+    row.set_margin_top(5);
+    row.set_margin_bottom(5);
+    row.append(&gtk::Image::from_icon_name(icon));
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let name = gtk::Label::new(Some(title));
+    name.set_xalign(0.0);
+    let detail = gtk::Label::new(Some(detail));
+    detail.set_xalign(0.0);
+    detail.add_css_class("dim-label");
+    detail.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    labels.append(&name);
+    labels.append(&detail);
+    labels.set_hexpand(true);
+    row.append(&labels);
+    button.set_child(Some(&row));
+    button
+}
+
+fn album_suggestion_detail(photo_count: i64) -> String {
+    match photo_count {
+        1 => "Album · 1 photo".to_owned(),
+        count => format!("Album · {count} photos"),
+    }
+}
+
+/// Destination suggestions for the gallery search: matching albums first,
+/// then matching folders. Activating a row navigates to that destination.
 fn update_folder_suggestions(
     popover: &gtk::Popover,
     list: &gtk::ListBox,
+    albums: &[db::Album],
     folders: &[db::FolderSearchResult],
     query: &str,
+    on_album: Rc<dyn Fn(i64)>,
     on_folder: Rc<dyn Fn(i64)>,
 ) {
     list.set_sensitive(true);
@@ -251,49 +289,44 @@ fn update_folder_suggestions(
         })
         .collect::<Vec<_>>();
 
+    let mut append = |button: gtk::Button| {
+        list.append(&button);
+        if let Some(row) = button.parent().and_downcast::<gtk::ListBoxRow>() {
+            row.set_can_focus(false);
+        }
+    };
+    for album in albums {
+        let button = suggestion_button(
+            "folder-pictures-symbolic",
+            &album.name,
+            &album_suggestion_detail(album.photo_count),
+        );
+        let album_id = album.id;
+        let popover = popover.clone();
+        let on_album = on_album.clone();
+        button.connect_clicked(move |_| {
+            popover.popdown();
+            on_album(album_id);
+        });
+        append(button);
+    }
     for folder in &matches {
-        let button = gtk::Button::new();
-        button.set_halign(gtk::Align::Fill);
-        button.set_focusable(false);
-        button.add_css_class("flat");
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        row.set_margin_start(8);
-        row.set_margin_end(8);
-        row.set_margin_top(5);
-        row.set_margin_bottom(5);
-        row.append(&gtk::Image::from_icon_name("folder-symbolic"));
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 1);
-        let name = gtk::Label::new(Some(&folder.name));
-        name.set_xalign(0.0);
-        let path = gtk::Label::new(Some(&folder.path));
-        path.set_xalign(0.0);
-        path.add_css_class("dim-label");
-        path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        labels.append(&name);
-        labels.append(&path);
-        labels.set_hexpand(true);
-        row.append(&labels);
-        button.set_child(Some(&row));
-
+        let button = suggestion_button("folder-symbolic", &folder.name, &folder.path);
         let folder_id = folder.id;
         let popover = popover.clone();
         let on_folder = on_folder.clone();
         button.connect_clicked(move |_| {
             popover.popdown();
-            
             on_folder(folder_id);
         });
-        list.append(&button);
-        if let Some(row) = button.parent().and_downcast::<gtk::ListBoxRow>() {
-            row.set_can_focus(false);
-        }
+        append(button);
     }
 
-    if matches.is_empty() || query.chars().count() < 2 {
+    if matches.is_empty() && albums.is_empty() {
         popover.popdown();
     } else {
-        // Enter should activate the best folder match immediately after
-        // typing, without requiring an extra Down key first.
+        // Enter should activate the best match immediately after typing,
+        // without requiring an extra Down key first.
         if let Some(first) = list.row_at_index(0) {
             list.select_row(Some(&first));
         }

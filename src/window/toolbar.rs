@@ -777,6 +777,136 @@
     help.update_property(&[gtk::accessible::Property::Label("Help")]);
     help.add_css_class("flat");
     info.append_menu_action(&help, "Help");
+    // Libraries: one click lists every registered library and switches to
+    // the chosen one through the same switcher as Settings → Database.
+    let libraries = gtk::Button::from_icon_name("x-office-address-book-symbolic");
+    libraries.set_tooltip_text(Some("Switch library"));
+    libraries.update_property(&[gtk::accessible::Property::Label("Libraries")]);
+    libraries.add_css_class("flat");
+    info.append_bar_action(&libraries, "Libraries");
+    {
+        let info = info.clone();
+        let window = window.downgrade();
+        let switch_library_slot = switch_library_slot.clone();
+        let present_settings = present_settings.clone();
+        libraries.connect_clicked(move |button| {
+            let button = button.clone();
+            let info = info.clone();
+            let window = window.clone();
+            let switch_library_slot = switch_library_slot.clone();
+            let present_settings = present_settings.clone();
+            // Let the drawer finish closing before anchoring to it.
+            glib::idle_add_local_once(move || {
+                let anchor = info.action_anchor(&button);
+                let popover = gtk::Popover::new();
+                popover.add_css_class("library-switcher-popover");
+                popover.set_position(gtk::PositionType::Top);
+                let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                list.set_margin_top(6);
+                list.set_margin_bottom(6);
+                list.set_margin_start(6);
+                list.set_margin_end(6);
+                let heading = gtk::Label::new(Some("Libraries"));
+                heading.set_xalign(0.0);
+                heading.set_margin_start(6);
+                heading.set_margin_bottom(4);
+                heading.add_css_class("heading");
+                list.append(&heading);
+                let active_id = db::active_library().ok().map(|library| library.id);
+                match db::known_libraries() {
+                    Ok(known) => {
+                        for library in known {
+                            let current = active_id.as_deref() == Some(library.id.as_str());
+                            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                            let check = gtk::Image::from_icon_name("object-select-symbolic");
+                            check.set_opacity(if current { 1.0 } else { 0.0 });
+                            row.append(&check);
+                            let labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                            let name = gtk::Label::new(Some(&library.name));
+                            name.set_xalign(0.0);
+                            name.set_max_width_chars(36);
+                            name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                            labels.append(&name);
+                            if !library.description.is_empty() {
+                                let description = gtk::Label::new(Some(&library.description));
+                                description.set_xalign(0.0);
+                                description.set_max_width_chars(36);
+                                description.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                                description.add_css_class("dim-label");
+                                description.add_css_class("caption");
+                                labels.append(&description);
+                            }
+                            row.append(&labels);
+                            let entry = gtk::Button::new();
+                            entry.set_has_frame(false);
+                            entry.set_child(Some(&row));
+                            entry.set_tooltip_text(Some(&library.path.display().to_string()));
+                            if current {
+                                entry.update_property(&[gtk::accessible::Property::Label(
+                                    &format!("{} (current library)", library.name),
+                                )]);
+                            } else {
+                                let id = library.id.clone();
+                                let popover = popover.downgrade();
+                                let window = window.clone();
+                                let switch_library_slot = switch_library_slot.clone();
+                                entry.connect_clicked(move |_| {
+                                    if let Some(popover) = popover.upgrade() {
+                                        popover.popdown();
+                                    }
+                                    let switch = switch_library_slot.borrow().clone();
+                                    let result = match switch {
+                                        Some(switch) => switch(&id),
+                                        None => Err("library switcher is not ready".to_owned()),
+                                    };
+                                    if let Err(error) = result {
+                                        if let Some(window) = window.upgrade() {
+                                            show_error(
+                                                window.upcast_ref(),
+                                                "Could not switch library",
+                                                &error,
+                                            );
+                                        }
+                                    }
+                                });
+                            }
+                            list.append(&entry);
+                        }
+                    }
+                    Err(error) => {
+                        let label = gtk::Label::new(Some(&format!("Could not list libraries: {error:#}")));
+                        label.set_wrap(true);
+                        label.add_css_class("dim-label");
+                        list.append(&label);
+                    }
+                }
+                list.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+                let manage = gtk::Button::with_label("Manage Libraries…");
+                manage.set_has_frame(false);
+                if let Some(label) = manage.child().and_downcast::<gtk::Label>() {
+                    label.set_xalign(0.0);
+                }
+                {
+                    let popover = popover.downgrade();
+                    let present_settings = present_settings.clone();
+                    manage.connect_clicked(move |_| {
+                        if let Some(popover) = popover.upgrade() {
+                            popover.popdown();
+                        }
+                        present_settings(Some("database"));
+                    });
+                }
+                list.append(&manage);
+                popover.set_child(Some(&list));
+                popover.set_parent(&anchor);
+                popover.connect_closed(|popover| {
+                    let popover = popover.clone();
+                    glib::idle_add_local_once(move || popover.unparent());
+                });
+                popover.popup();
+            });
+        });
+    }
     for (id, title, widget) in [
         ("sort", "Sort photos", sort_button.clone().upcast::<gtk::Widget>()),
         ("metadata_filter", "Photo filters", metadata_panel.button.clone().upcast()),
@@ -801,6 +931,7 @@
         ("appearance", "Appearance", settings.clone().upcast()),
         ("refresh", "Refresh library", refresh.clone().upcast()),
         ("help", "Help", help.clone().upcast()),
+        ("libraries", "Libraries", libraries.clone().upcast()),
     ] {
         menu_controls.register(&connection.borrow(), "Info card", id, title, &widget);
     }

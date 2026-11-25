@@ -672,3 +672,31 @@ fn show_in_infobar_moves_a_button_along_the_bar() {
         "the list shows the new order"
     );
 }
+
+#[test]
+#[ignore = "requires a GTK display; run individually"]
+fn bar_actions_start_in_the_bar_and_anchor_their_popovers() {
+    libadwaita::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let bar = InfoBar::new();
+    bar.clear_photo();
+    let libraries = gtk::Button::from_icon_name("x-office-address-book-symbolic");
+    bar.append_bar_action(&libraries, "Libraries");
+    let help = gtk::Button::from_icon_name("help-about-symbolic");
+    bar.append_menu_action(&help, "Help");
+    let window = gtk::Window::builder()
+        .default_width(1600)
+        .default_height(100)
+        .child(&bar.root)
+        .build();
+    window.present();
+    wait_for_mapped(&[libraries.clone().upcast()]);
+    settle();
+    // A bar action with no saved choice sits in the bar and anchors to itself.
+    assert_eq!(libraries.parent().as_ref(), Some(bar.actions.upcast_ref()));
+    assert_eq!(bar.action_anchor(&libraries), libraries.clone().upcast::<gtk::Widget>());
+    // A menu action stays in the drawer and anchors to the drawer button.
+    assert_ne!(help.parent().as_ref(), Some(bar.actions.upcast_ref()));
+    assert_eq!(bar.action_anchor(&help), bar.overflow.clone().upcast::<gtk::Widget>());
+    window.close();
+}

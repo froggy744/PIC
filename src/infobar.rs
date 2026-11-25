@@ -122,6 +122,26 @@ impl InfoBar {
     }
 
     pub fn append_menu_action(&self, button: &gtk::Button, title: &str) {
+        self.append_menu_action_with_default(button, title, false);
+    }
+
+    /// Like `append_menu_action`, but the action sits in the bar until the
+    /// user unticks it in "Show in InfoBar".
+    pub fn append_bar_action(&self, button: &gtk::Button, title: &str) {
+        self.append_menu_action_with_default(button, title, true);
+    }
+
+    /// Where a popover for a bar or drawer action should point: the action
+    /// itself while it sits in the bar, otherwise the drawer button.
+    pub fn action_anchor(&self, button: &gtk::Button) -> gtk::Widget {
+        if button.parent().as_ref() == Some(self.actions.upcast_ref()) && button.is_mapped() {
+            button.clone().upcast()
+        } else {
+            self.overflow.clone().upcast()
+        }
+    }
+
+    fn append_menu_action_with_default(&self, button: &gtk::Button, title: &str, shown_by_default: bool) {
         configure_action_button(button);
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.add_css_class("photo-actions-menu-row");
@@ -138,7 +158,11 @@ impl InfoBar {
             .unwrap();
         menu.append(&row);
         let key = format!("infobar_show_{}", title.to_ascii_lowercase().replace(' ', "_"));
-        let selected = self.visibility_connection.as_ref().and_then(|db| crate::db::setting(&db.borrow(), &key).ok().flatten()).as_deref() == Some("1");
+        let selected = match self.visibility_connection.as_ref().and_then(|db| crate::db::setting(&db.borrow(), &key).ok().flatten()).as_deref() {
+            Some("1") => true,
+            Some("0") => false,
+            _ => shown_by_default,
+        };
         let check = gtk::CheckButton::with_label(title);
         check.set_active(selected);
         self.visibility_choices.append(&check);

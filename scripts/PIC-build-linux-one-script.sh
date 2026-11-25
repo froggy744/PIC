@@ -117,6 +117,8 @@ Options:
   -h, --help          show this help
 
 Interactive builds ask whether to keep the current package version or update it.
+Versions such as 1.0.4.1 and 1.0.5alpha are accepted. Cargo stores these as
+1.0.4+1 and 1.0.5-alpha; package filenames keep the version you entered.
 Non-interactive builds use the version already in Cargo.toml.
 
 Useful environment overrides:
@@ -125,6 +127,7 @@ Useful environment overrides:
   PIC_FDO_RUST_RUNTIME=25.08   Flatpak Rust SDK-extension branch
   PIC_APP_ID=...               application/Flatpak ID
   PIC_BUILD_CACHE=...          build cache location
+  PIC_FLATPAK_STATE_DIR=...   Flatpak state and SDK Cargo cache (default: .flatpak-builder/)
   PIC_BUILD_LOG_DIR=...        build log folder
   PIC_BUILD_TARGET=...         both, appimage, or flatpak
   PIC_GNOME_INTEGRATE=0         skip host XDG desktop integration after AppImage build
@@ -809,14 +812,22 @@ project_version() {
 }
 
 prompt_project_version() {
-    local current answer
+    local current answer cargo_version base fourth suffix
     current="$(awk -F'"' '/^[[:space:]]*version[[:space:]]*=/ {print $2; exit}' "$SOURCE_DIR/Cargo.toml")"
     [[ -n "$current" ]] || die "Could not determine the current package version."
     read -r -p "Package version [$current] (Enter to keep): " answer || die "Could not read package version."
     [[ -n "$answer" && "$answer" != "$current" ]] || return 0
-    [[ "$answer" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
-        die "Version must be three numbers, for example 1.0.2."
-    python3 - "$SOURCE_DIR" "$current" "$answer" <<'EOF_VERSION'
+    if [[ "$answer" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.((0|[1-9][0-9]*)))?([[:alpha:]][[:alnum:]-]*(\.[[:alnum:]-]+)*)?$ ]]; then
+        base="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+        fourth="${BASH_REMATCH[5]}"
+        suffix="${BASH_REMATCH[7]}"
+        cargo_version="$base${suffix:+-$suffix}${fourth:++$fourth}"
+    elif [[ "$answer" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[[:alnum:]-]+(\.[[:alnum:]-]+)*)?(\+[[:alnum:]-]+(\.[[:alnum:]-]+)*)?$ ]]; then
+        cargo_version="$answer"
+    else
+        die "Version must be Cargo-compatible or like 1.0.4.1 or 1.0.5alpha."
+    fi
+    python3 - "$SOURCE_DIR" "$current" "$cargo_version" <<'EOF_VERSION'
 from pathlib import Path
 import re
 import sys
@@ -842,7 +853,8 @@ lock_new = update(lock_parts, '[[package]]')
 manifest.write_text(manifest_new)
 lock.write_text(lock_new)
 EOF_VERSION
-    printf 'Package version updated to %s in Cargo.toml and Cargo.lock.\n' "$answer"
+    REQUESTED_VERSION_LABEL="$answer"
+    printf 'Package version updated to %s in Cargo.toml and Cargo.lock.\n' "$cargo_version"
 }
 
 project_revision() {
@@ -1056,6 +1068,7 @@ copy_source_tree() {
         --exclude='./target' \
         --exclude='./dist' \
         --exclude='./build-logs' \
+        --exclude='./reports' \
         --exclude='./.flatpak-builder' \
         --exclude='./.deleteme' \
         --exclude='./*.log' \
@@ -1402,7 +1415,7 @@ run_flatpak_tests() {
 }
 
 build_flatpak() {
-    local fp_work fp_src fp_build fp_repo manifest desktop_rel icon_rel bundle_name vendor_dir launcher_rel metainfo_rel
+    local fp_work fp_src fp_build fp_repo manifest desktop_rel icon_rel bundle_name vendor_dir launcher_rel metainfo_rel cargo_target_dir
     ensure_flatpak_runtime || return 1
 
     # flatpak-builder hardlinks files between its state and build directories.
@@ -1413,6 +1426,11 @@ build_flatpak() {
     fp_build="$fp_work/build-dir"
     fp_repo="$fp_work/repo"
     manifest="$fp_work/$APP_ID.json"
+    # Flatpak gives a changed pic-rs module a new numbered build directory.
+    # Keep Cargo artifacts outside it so later versions reuse compiled crates.
+    cargo_target_dir="$FLATPAK_STATE_DIR/cargo-target/$GNOME_RUNTIME-$FDO_RUST_RUNTIME-$(uname -m)"
+    mkdir -p "$cargo_target_dir"
+    cargo_target_dir="$(realpath "$cargo_target_dir")"
     rm -rf "$fp_work"
     mkdir -p "$fp_work"
     ensure_flatpak_module_sources || return 1
@@ -1553,14 +1571,16 @@ EOF_TEST_INSTALLER
       "name": "pic-rs",
       "buildsystem": "simple",
       "build-options": {
+        "build-args": ["--bind-mount=/run/pic-cargo-target=$cargo_target_dir"],
         "env": {
-          "PIC_BUILD_REVISION": "$REVISION"
+          "PIC_BUILD_REVISION": "$REVISION",
+          "CARGO_TARGET_DIR": "/run/pic-cargo-target"
         }
       },
       "build-commands": [
         "$flatpak_test_build_command",
         "cargo build --release --locked --offline",
-        "install -Dm755 target/release/$BIN_NAME /app/libexec/$BIN_NAME",
+        "install -Dm755 /run/pic-cargo-target/release/$BIN_NAME /app/libexec/$BIN_NAME",
         "install -Dm755 $launcher_rel /app/bin/$BIN_NAME",
         "install -d /app/share/$BIN_NAME",
         "cp -a images /app/share/$BIN_NAME/",
@@ -1656,7 +1676,7 @@ validate_packaging_resources
 VERSION="$(project_version)"
 VERSION="${VERSION:-0.0.0}"
 REVISION="$(project_revision)"
-BUILD_LABEL="$VERSION${REVISION:+-$REVISION}"
+BUILD_LABEL="${REQUESTED_VERSION_LABEL:-$VERSION}${REVISION:+-$REVISION}"
 
 case "$(uname -m)" in
     x86_64|amd64) ARCH_NAME=x86_64; APPIMAGE_ARCH=x86_64 ;;

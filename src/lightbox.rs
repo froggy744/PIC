@@ -433,6 +433,24 @@ pub struct Lightbox {
     close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,
     close_generation: Rc<Cell<u64>>,
     close_in_progress: Rc<Cell<bool>>,
+    // Set while the viewer fades out over the editor (`fade_out_to`).
+    handoff_in_progress: Rc<Cell<bool>>,
+    // Overlays above the viewer that fade with it during a handoff.
+    handoff_companions: Rc<RefCell<Vec<gtk::Widget>>>,
+}
+
+/// Duration of the viewer's close fade (user close and editor handoff).
+const CLOSE_FADE_SECONDS: f64 = 0.16;
+
+/// Longest the viewer waits on top for the editor's first frame before it
+/// fades anyway; past this the click would feel ignored.
+const HANDOFF_WAIT_LIMIT: Duration = Duration::from_millis(350);
+
+/// Smoothstep close fade: the opacity after `elapsed`, and whether it ended.
+fn close_fade_opacity(elapsed: Duration) -> (f64, bool) {
+    let progress = (elapsed.as_secs_f64() / CLOSE_FADE_SECONDS).clamp(0.0, 1.0);
+    let eased = progress * progress * (3.0 - 2.0 * progress);
+    (1.0 - eased, progress >= 1.0)
 }
 
 fn set_raw_loading_spinner(root: &gtk::Overlay, spinning: bool) {

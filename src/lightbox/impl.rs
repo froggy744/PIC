@@ -260,6 +260,8 @@ impl Lightbox {
         let close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>> = Rc::new(RefCell::new(None));
         let close_generation = Rc::new(Cell::new(0_u64));
         let close_in_progress = Rc::new(Cell::new(false));
+        let handoff_in_progress = Rc::new(Cell::new(false));
+        let handoff_companions: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
         let close_requested: Rc<dyn Fn()> = {
             let weak_root = root.downgrade();
             let started = close_started.clone();
@@ -322,11 +324,9 @@ impl Lightbox {
                         started.set(Some(now));
                         now
                     });
-                    const CLOSE_SECONDS: f64 = 0.16;
-                    let progress = (start.elapsed().as_secs_f64() / CLOSE_SECONDS).clamp(0.0, 1.0);
-                    let eased = progress * progress * (3.0 - 2.0 * progress);
-                    root.set_opacity(1.0 - eased);
-                    if progress >= 1.0 {
+                    let (opacity, done) = close_fade_opacity(start.elapsed());
+                    root.set_opacity(opacity);
+                    if done {
                         root.set_visible(false);
                         glib::ControlFlow::Break
                     } else {
@@ -1338,6 +1338,8 @@ impl Lightbox {
             close_ready,
             close_generation,
             close_in_progress,
+            handoff_in_progress,
+            handoff_companions,
         }
     }
 
@@ -1609,6 +1611,10 @@ impl Lightbox {
     /// Toggle native-pixel presentation while remembering the previous zoom.
     /// A negative zoom is reserved for this temporary 1:1 mode.
     pub fn set_one_to_one(&self, enabled: bool) {
+        // A viewer handing off to the editor holds its last frame.
+        if self.handoff_in_progress.get() {
+            return;
+        }
         if self.one_to_one_active.get() == enabled {
             return;
         }
@@ -1826,6 +1832,7 @@ impl Lightbox {
         self.close_generation
             .set(self.close_generation.get().wrapping_add(1));
         self.close_in_progress.set(false);
+        self.end_handoff();
         self.root.set_opacity(1.0);
         self.photos.replace(photos);
 
@@ -2577,6 +2584,127 @@ impl Lightbox {
         self.set_zoom(0.0);
         reset_viewport(&self.picture_viewport);
         self.root.set_visible(false);
+        // After hiding: the hidden-viewer listeners have already hidden the
+        // companions, so restoring their opacity cannot show a half frame.
+        self.end_handoff();
+    }
+
+    /// Hands the screen to a page opened underneath the viewer (the editor).
+    ///
+    /// The viewer stops its own work at once and ignores input, but keeps
+    /// its last frame on top until `ready` reports that the page has drawn
+    /// (or `HANDOFF_WAIT_LIMIT` passes), then fades out like a user close.
+    /// `companions` (overlays drawn above the viewer, such as its Properties
+    /// panel) fade with it. Unlike `request_close`, the gallery-return hooks
+    /// do not run: the user is not going back to the gallery. Without
+    /// animations, or while the viewer is not on screen, this is `close()`.
+    pub fn fade_out_to(
+        self: &Rc<Self>,
+        companions: &[gtk::Widget],
+        ready: impl Fn() -> bool + 'static,
+    ) {
+        if !self.root.is_visible()
+            || !self.root.is_mapped()
+            || !self.root.settings().is_gtk_enable_animations()
+        {
+            self.close();
+            return;
+        }
+        let serial = self.close_generation.get().wrapping_add(1);
+        self.close_generation.set(serial);
+        // Escape and double click must not start a second close meanwhile.
+        self.close_in_progress.set(true);
+        self.handoff_in_progress.set(true);
+        cancel_lightbox_prefetch();
+        // A late decode must not change the frame that is being handed off.
+        self.load_generation
+            .set(self.load_generation.get().wrapping_add(1));
+        if let Some(active) = self.decode_cancel.borrow_mut().take() {
+            active.cancel();
+        }
+        if let Some(active) = self.zoom_render_lease.borrow_mut().take() {
+            active.cancel();
+        }
+        self.wheel_navigation.borrow_mut().cancel();
+        // Input belongs to the page underneath from now on.
+        self.root.set_can_target(false);
+        if let Some(window) = self.root.root() {
+            if window
+                .focus()
+                .is_some_and(|focus| focus == self.root.clone().upcast::<gtk::Widget>() || focus.is_ancestor(&self.root))
+            {
+                window.set_focus(None::<&gtk::Widget>);
+            }
+        }
+        for companion in companions {
+            companion.set_can_target(false);
+        }
+        self.handoff_companions.replace(companions.to_vec());
+
+        let weak = Rc::downgrade(self);
+        let requested = Instant::now();
+        let fade_started = Cell::new(None::<Instant>);
+        self.root.add_tick_callback(move |root, _| {
+            let Some(lightbox) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            // open() or close() took over and already ended the handoff.
+            if !root.is_visible() || lightbox.close_generation.get() != serial {
+                return glib::ControlFlow::Break;
+            }
+            let start = match fade_started.get() {
+                Some(start) => start,
+                None => {
+                    let page_ready = ready();
+                    let waited = requested.elapsed();
+                    if !page_ready && waited < HANDOFF_WAIT_LIMIT {
+                        return glib::ControlFlow::Continue;
+                    }
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_VIEWER_HANDOFF stage=fade_start waited_ms={:.1} page_ready={}",
+                            waited.as_secs_f64() * 1000.0,
+                            page_ready
+                        );
+                    }
+                    let now = Instant::now();
+                    fade_started.set(Some(now));
+                    now
+                }
+            };
+            let (opacity, done) = close_fade_opacity(start.elapsed());
+            root.set_opacity(opacity);
+            for companion in lightbox.handoff_companions.borrow().iter() {
+                companion.set_opacity(opacity);
+            }
+            if !done {
+                return glib::ControlFlow::Continue;
+            }
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_VIEWER_HANDOFF stage=hidden total_ms={:.1}",
+                    requested.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            lightbox.close();
+            glib::ControlFlow::Break
+        });
+    }
+
+    /// Whether the viewer is fading out over a page opened underneath it.
+    pub fn is_handing_off(&self) -> bool {
+        self.handoff_in_progress.get()
+    }
+
+    fn end_handoff(&self) {
+        if !self.handoff_in_progress.replace(false) {
+            return;
+        }
+        self.root.set_can_target(true);
+        for companion in self.handoff_companions.take() {
+            companion.set_opacity(1.0);
+            companion.set_can_target(true);
+        }
     }
 
     /// Apply a freshly written edit recipe to this lightbox's own photo

@@ -33,6 +33,7 @@ pub struct EditEditor {
     draw_toggle: gtk::ToggleButton,
     escape_action: Rc<dyn Fn()>,
     copy_saved: Rc<RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
+    first_frame_shown: Rc<Cell<bool>>,
 }
 
 impl EditEditor {
@@ -105,6 +106,13 @@ impl EditEditor {
 
     pub fn escape_action_handle(&self) -> Rc<dyn Fn()> {
         self.escape_action.clone()
+    }
+
+    /// Whether the canvas has shown the photo with its edits (or reported a
+    /// preview failure) since the editor opened. The viewer waits on it
+    /// before fading out over the editor.
+    pub fn first_frame_shown(&self) -> bool {
+        self.first_frame_shown.get()
     }
 }
 
@@ -682,6 +690,10 @@ pub fn build(
     let one_to_one_sync: Rc<RefCell<Option<Box<dyn Fn(bool)>>>> = Rc::new(RefCell::new(None));
     let zoom_sync: Rc<RefCell<Option<Box<dyn Fn(f64, f64)>>>> = Rc::new(RefCell::new(None));
     let generation = Rc::new(Cell::new(0u64));
+    // Set once the canvas shows the edited photo: the CPU preview when it is
+    // the final image, else the first GPU frame (before it, the CPU picture
+    // holds only the unadjusted base).
+    let first_frame_shown = Rc::new(Cell::new(false));
     let preview_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     // Keep source-resolution edit bases across adjustments so slider changes
     // reuse the decoded pixels instead of rereading the original.
@@ -1272,6 +1284,7 @@ pub fn build(
         let gpu_canvas = gpu_canvas.clone();
         let gpu_failed = gpu_failed.clone();
         let sync_gpu_view = sync_gpu_view.clone();
+        let first_frame_shown = first_frame_shown.clone();
         Rc::new(move || {
             // Throttle, not debounce: the old code reset the timer on every
             // slider tick, so a continuous drag skipped every intermediate
@@ -1302,6 +1315,7 @@ pub fn build(
             let gpu_failed = gpu_failed.clone();
             let sync_gpu_view = sync_gpu_view.clone();
             let active_rotation = active_rotation_for_queue.clone();
+            let first_frame_shown = first_frame_shown.clone();
             let source = glib::timeout_add_local_once(
                 Duration::from_millis(PREVIEW_THROTTLE_MS),
                 move || {
@@ -1397,6 +1411,7 @@ pub fn build(
                     let gpu_base_requested = gpu_base_requested;
                     let cpu_fallback = cpu_fallback;
                     let cpu_preview_started = cpu_preview_started;
+                    let first_frame_shown = first_frame_shown.clone();
                     glib::timeout_add_local(Duration::from_millis(25), move || {
                         match receiver.try_recv() {
                             Ok(result) => {
@@ -1525,9 +1540,13 @@ pub fn build(
                                         crop_overlay.queue_draw();
                                         overlay_layer.queue_draw();
                                         draw_layer.queue_draw();
+                                        if !gpu_base_requested {
+                                            first_frame_shown.set(true);
+                                        }
                                     }
                                     Err(error) => {
                                         status.set_text(&format!("Preview failed: {error}"));
+                                        first_frame_shown.set(true);
                                     }
                                 }
                                 glib::ControlFlow::Break
@@ -1631,7 +1650,11 @@ pub fn build(
     };
     if let Some(gpu_canvas) = &gpu_canvas {
         let picture = picture.clone();
-        gpu_canvas.set_frame_presented_handler(move || picture.set_opacity(0.0));
+        let first_frame_shown = first_frame_shown.clone();
+        gpu_canvas.set_frame_presented_handler(move || {
+            picture.set_opacity(0.0);
+            first_frame_shown.set(true);
+        });
         let gpu_failed = gpu_failed.clone();
         let schedule_preview = schedule_preview.clone();
         gpu_canvas.set_failure_handler(move || {
@@ -3210,6 +3233,7 @@ pub fn build(
         draw_toggle,
         escape_action,
         copy_saved,
+        first_frame_shown,
     }
 }
 

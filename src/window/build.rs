@@ -3704,7 +3704,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let collage_add_mode = collage_add_mode.clone();
         let lightbox = lightbox.clone();
         main_stack.connect_visible_child_notify(move |stack| {
-            if !matches!(stack.visible_child_name().as_deref(), Some("photos" | "library")) {
+            // A viewer handing off to the editor fades out over it on its own.
+            if !matches!(stack.visible_child_name().as_deref(), Some("photos" | "library"))
+                && !lightbox.is_handing_off()
+            {
                 lightbox.close();
             }
             if filter.get() == sidebar::SidebarFilter::Library
@@ -3926,6 +3929,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let edit_escape_slot = edit_escape_slot.clone();
         let collage_editing = collage_editing.clone();
         let collage_editor = collage_editor.clone();
+        let lightbox_properties_panel = lightbox_properties_panel.clone();
         // Keep the shared slider synchronization handle available to the rest
         // of build.rs. The editor-open move closure owns only this cheap clone.
         // Edit-mode Export uses the exact same dialog → destination → progress
@@ -3965,7 +3969,22 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // index. Photos, Folders and Albums keep their existing route.
             let opened_from_library =
                 main_stack.visible_child_name().as_deref() == Some("library");
-            lightbox.close();
+            // Opened from the viewer: its last frame stays over the editor
+            // until the editor has drawn the photo, then fades out, instead
+            // of cutting to an empty canvas. Elsewhere this closes at once.
+            {
+                let edit_editor = edit_editor.clone();
+                lightbox.fade_out_to(
+                    &[lightbox_properties_panel.clone().upcast()],
+                    move || {
+                        edit_editor.try_borrow().is_ok_and(|editor| {
+                            editor
+                                .as_ref()
+                                .is_some_and(|editor| editor.photo_id() == id && editor.first_frame_shown())
+                        })
+                    },
+                );
+            }
             let library_scroll_y = gallery.scroll_position();
             while let Some(child) = edit_page.first_child() {
                 edit_page.remove(&child);

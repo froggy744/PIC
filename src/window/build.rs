@@ -7058,6 +7058,7 @@ fn start_photo_export_single(
         let refresh_status_spinner = refresh_status_spinner.clone();
         let stop_scan = stop_scan.clone();
         let settings_window = settings_window_for_switch.clone();
+        let metadata_panel_for_switch = Rc::downgrade(&metadata_panel);
         let start_next_scan = start_next_scan.clone();
         let albums_home = albums_home.clone();
         let gallery_surface: gtk::Widget = gallery_scroll_stack.clone().upcast();
@@ -7164,6 +7165,17 @@ fn start_photo_export_single(
                 sort_photos(&mut photos, new_sort);
             }
 
+            // The rating filter is session-only (see startup), but it is stored
+            // per library, so the new library may still hold one from earlier.
+            // Reset it as startup does, or the grid stays filtered while the
+            // rating picker already shows Clear and Clear can no longer fire.
+            if let Err(error) = db::set_setting(
+                &new_connection,
+                RATING_FILTER_SETTING_KEY,
+                RatingFilter::All.key(),
+            ) {
+                eprintln!("Could not clear photo rating filter for library switch: {error}");
+            }
             exit_date_browser();
             connection.replace(new_connection);
             settings_window.menu_controls.reload(&connection.borrow());
@@ -7179,6 +7191,11 @@ fn start_photo_export_single(
             search_text.replace(String::new());
             if let Some(entry) = search_entry.borrow().as_ref() {
                 entry.set_text("");
+            }
+            // Bring the session's rating picker back to Clear too (it only
+            // fires when another choice was active).
+            if let Some(panel) = metadata_panel_for_switch.upgrade() {
+                panel.clear_rating_filter();
             }
             let display_mode = sidebar::FolderDisplayMode::from_setting(
                 db::setting(&connection.borrow(), sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)

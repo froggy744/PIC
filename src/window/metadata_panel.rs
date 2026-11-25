@@ -657,6 +657,10 @@ impl MetadataPanel {
     }
     /// Temporarily hide the filter interface behind the fullscreen viewer.
     /// The header toggle and ALL choice stay unchanged and restore on return.
+    /// Select Clear in the shared rating filter picker.
+    pub fn clear_rating_filter(&self) {
+        (self.rating)("all");
+    }
     pub fn set_lightbox_open(&self, open: bool) {
         self.lightbox_open.set(open);
         self.sync_view();

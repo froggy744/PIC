@@ -708,6 +708,26 @@ pub fn build(
     const PREVIEW_THROTTLE_MS: u64 = 40;
     let native_one_to_one = Rc::new(Cell::new(false));
     let active_rotation = Rc::new(Cell::new(photo.rotation().rem_euclid(360)));
+    // The opening stand-in (`show_placeholder`) sits above the GPU canvas and
+    // fades out over it, so the canvas itself is never drawn translucent. It
+    // is drawn at the canvas's exact Fit rectangle (see StandinView).
+    let standin = {
+        let (mut width, mut height) = (photo.width().max(1) as f64, photo.height().max(1) as f64);
+        if matches!(active_rotation.get(), 90 | 270) {
+            std::mem::swap(&mut width, &mut height);
+        }
+        let crop = session.borrow().recipe.crop.normalized();
+        if !crop.is_full() {
+            width *= f64::from((crop.right - crop.left).max(0.01));
+            height *= f64::from((crop.bottom - crop.top).max(0.01));
+        }
+        StandinView::new(preview_dimensions.clone(), (width, height))
+    };
+    standin.set_hexpand(true);
+    standin.set_vexpand(true);
+    standin.set_can_target(false);
+    standin.set_visible(false);
+    canvas_layer.add_overlay(&standin);
     let pending_one_to_one_anchor: Rc<RefCell<Option<OneToOneAnchor>>> =
         Rc::new(RefCell::new(None));
     let one_to_one_sync: Rc<RefCell<Option<Box<dyn Fn(bool)>>>> = Rc::new(RefCell::new(None));
@@ -722,15 +742,70 @@ pub fn build(
     // recipe's overlays and drawings baked in, so their layers stay hidden
     // until the editor's own frame replaces it.
     let placeholder_active = Rc::new(Cell::new(false));
-    let end_placeholder: Rc<dyn Fn()> = {
+    // Open fade timing for `large_photo` results (see the preview poll).
+    let opened_at = std::time::Instant::now();
+    let large_photo = photo.width().saturating_mul(photo.height()) > 6_000_000;
+    const OPEN_FADE_HOLD: Duration =
+        Duration::from_millis(crate::lightbox::EDITOR_FADE_MS as u64 + 40);
+    // Remove the stand-in once the editor's own photo is on screen: faded
+    // out over EDITOR_FADE_MS when `animate`, else at once.
+    let end_placeholder: Rc<dyn Fn(bool)> = {
         let placeholder_active = placeholder_active.clone();
         let overlay_layer = overlay_layer.clone();
         let draw_layer = draw_layer.clone();
-        Rc::new(move || {
-            if placeholder_active.replace(false) {
-                overlay_layer.set_opacity(1.0);
-                draw_layer.set_opacity(1.0);
+        let standin = standin.clone();
+        let fading = Rc::new(Cell::new(false));
+        Rc::new(move |animate| {
+            let finish = {
+                let placeholder_active = placeholder_active.clone();
+                let overlay_layer = overlay_layer.clone();
+                let draw_layer = draw_layer.clone();
+                let standin = standin.clone();
+                move || {
+                    if placeholder_active.replace(false) {
+                        standin.set_visible(false);
+                        standin.set_paintable(gtk::gdk::Paintable::NONE);
+                        standin.set_opacity(1.0);
+                        overlay_layer.set_opacity(1.0);
+                        draw_layer.set_opacity(1.0);
+                    }
+                }
+            };
+            if !placeholder_active.get() {
+                return;
             }
+            if !animate || !standin.is_mapped() || !standin.settings().is_gtk_enable_animations() {
+                finish();
+                return;
+            }
+            if fading.replace(true) {
+                return;
+            }
+            // Redraw at the preview's own dimensions, now known, so the
+            // stand-in sits exactly on the canvas while both are visible.
+            standin.queue_draw();
+            let fading = fading.clone();
+            let active = placeholder_active.clone();
+            let started = Cell::new(None::<i64>);
+            standin.add_tick_callback(move |standin, clock| {
+                if !active.get() {
+                    fading.set(false);
+                    return glib::ControlFlow::Break;
+                }
+                let now = clock.frame_time();
+                let start = started.get().unwrap_or(now);
+                started.set(Some(start));
+                let progress = ((now - start) as f64
+                    / (f64::from(crate::lightbox::EDITOR_FADE_MS) * 1000.0))
+                    .clamp(0.0, 1.0);
+                standin.set_opacity(1.0 - progress * progress * (3.0 - 2.0 * progress));
+                if progress < 1.0 {
+                    return glib::ControlFlow::Continue;
+                }
+                fading.set(false);
+                finish();
+                glib::ControlFlow::Break
+            });
         })
     };
     let preview_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
@@ -1325,8 +1400,8 @@ pub fn build(
         let sync_gpu_view = sync_gpu_view.clone();
         let first_frame_shown = first_frame_shown.clone();
         let preview_ready = preview_ready.clone();
-        let placeholder_active = placeholder_active.clone();
         let end_placeholder = end_placeholder.clone();
+        let placeholder_active = placeholder_active.clone();
         Rc::new(move || {
             // Throttle, not debounce: the old code reset the timer on every
             // slider tick, so a continuous drag skipped every intermediate
@@ -1359,8 +1434,8 @@ pub fn build(
             let active_rotation = active_rotation_for_queue.clone();
             let first_frame_shown = first_frame_shown.clone();
             let preview_ready = preview_ready.clone();
-            let placeholder_active = placeholder_active.clone();
             let end_placeholder = end_placeholder.clone();
+            let placeholder_active = placeholder_active.clone();
             // The editor's first preview starts at once; only later requests
             // are throttled.
             let request_throttle_ms = if generation.get() == 0 {
@@ -1465,11 +1540,21 @@ pub fn build(
                     let cpu_preview_started = cpu_preview_started;
                     let first_frame_shown = first_frame_shown.clone();
                     let preview_ready = preview_ready.clone();
-                    let placeholder_active = placeholder_active.clone();
                     let end_placeholder = end_placeholder.clone();
+                    let placeholder_active = placeholder_active.clone();
                     // Poll often: a 25 ms period left a finished preview
                     // waiting up to a frame and a half before it showed.
                     glib::timeout_add_local(Duration::from_millis(5), move || {
+                        // Taking in a large photo (GPU setup and a big texture
+                        // upload) stalls one frame for ~45 ms. While the stand-in
+                        // shows, wait until the open fade has finished so the
+                        // stall falls on a still frame instead of the fade.
+                        if large_photo
+                            && placeholder_active.get()
+                            && opened_at.elapsed() < OPEN_FADE_HOLD
+                        {
+                            return glib::ControlFlow::Continue;
+                        }
                         match receiver.try_recv() {
                             Ok(result) => {
                                 // A result from the previous zoom mode must
@@ -1560,15 +1645,18 @@ pub fn build(
                                                 crate::thumbnail::viewer_trace_reference(&photo.path()),
                                             );
                                         }
-                                        // A stand-in already shows the edited photo, so keep
-                                        // it over the unadjusted GPU base until the first GPU
-                                        // frame is presented.
+                                        // Under a stand-in the unadjusted GPU base is never
+                                        // seen; skip its (large) texture upload.
                                         if !(gpu_base_requested && placeholder_active.get()) {
                                             picture.set_paintable(Some(&texture));
                                             // Keep the CPU preview visible until the first
                                             // verified GPU frame has actually been presented.
                                             picture.set_opacity(1.0);
-                                            end_placeholder();
+                                        }
+                                        // The CPU preview is the final image; a GPU base waits
+                                        // for its first presented frame instead.
+                                        if !gpu_base_requested {
+                                            end_placeholder(true);
                                         }
                                         if native {
                                             let anchor =
@@ -1610,10 +1698,7 @@ pub fn build(
                                     }
                                     Err(error) => {
                                         status.set_text(&format!("Preview failed: {error}"));
-                                        if placeholder_active.get() {
-                                            picture.set_paintable(gtk::gdk::Paintable::NONE);
-                                            end_placeholder();
-                                        }
+                                        end_placeholder(false);
                                         preview_ready.set(true);
                                         first_frame_shown.set(true);
                                     }
@@ -1724,7 +1809,7 @@ pub fn build(
         gpu_canvas.set_frame_presented_handler(move || {
             picture.set_opacity(0.0);
             first_frame_shown.set(true);
-            end_placeholder();
+            end_placeholder(true);
         });
         let gpu_failed = gpu_failed.clone();
         let schedule_preview = schedule_preview.clone();
@@ -3289,7 +3374,7 @@ pub fn build(
     queue_preview();
 
     let show_placeholder_action: Rc<dyn Fn(&gtk::gdk::Paintable)> = {
-        let picture = picture.clone();
+        let standin = standin.clone();
         let overlay_layer = overlay_layer.clone();
         let draw_layer = draw_layer.clone();
         let placeholder_active = placeholder_active.clone();
@@ -3299,13 +3384,101 @@ pub fn build(
             if preview_ready.get() || first_frame_shown.get() {
                 return;
             }
-            picture.set_paintable(Some(paintable));
-            picture.set_opacity(1.0);
+            standin.set_paintable(Some(paintable));
+            standin.set_opacity(1.0);
+            standin.set_visible(true);
             overlay_layer.set_opacity(0.0);
             draw_layer.set_opacity(0.0);
             placeholder_active.set(true);
         })
     };
+
+    // Like the viewer, decode a screen-size edited copy in parallel with the
+    // full-resolution source. It lands within the open fade and replaces a
+    // soft stand-in (or becomes the stand-in), so the full source then swaps
+    // in at the same on-screen size instead of sharpening visibly.
+    {
+        let path = photo.path();
+        let rotation = active_rotation.get();
+        let recipe = session.borrow().recipe.clone();
+        let scale = parent.scale_factor().max(1);
+        let bound_width = (parent.width().max(1024) * scale) as u32;
+        let bound_height = (parent.height().max(768) * scale) as u32;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let started = std::time::Instant::now();
+        // Decided after the opener has handed over its stand-in: the viewer's
+        // frame is already screen-sharp, so only a small gallery thumbnail
+        // (or none) gets the extra decode, which would otherwise compete with
+        // the full-resolution one.
+        let standin_for_check = standin.clone();
+        glib::idle_add_local_once(move || {
+            let current = standin_for_check
+                .paintable()
+                .map_or(0, |paintable| paintable.intrinsic_width());
+            if current >= 1000 {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!("PIC_EDIT standin_sharp skipped standin_width={current}");
+                }
+                return;
+            }
+            std::thread::spawn(move || {
+                let image = super::render::render_for_viewer(
+                    &path,
+                    rotation,
+                    &recipe,
+                    bound_width,
+                    bound_height,
+                )
+                .map(|image| (image.width(), image.height(), image.into_raw()));
+                let _ = sender.send(image);
+            });
+        });
+        let standin = standin.clone();
+        let placeholder_active = placeholder_active.clone();
+        let preview_ready = preview_ready.clone();
+        let first_frame_shown = first_frame_shown.clone();
+        let show_placeholder_action = show_placeholder_action.clone();
+        glib::timeout_add_local(Duration::from_millis(5), move || {
+            let (width, height, pixels) = match receiver.try_recv() {
+                Ok(Ok(image)) => image,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+                _ => return glib::ControlFlow::Break,
+            };
+            let texture: gtk::gdk::Paintable = gtk::gdk::MemoryTexture::new(
+                width as i32,
+                height as i32,
+                gtk::gdk::MemoryFormat::R8g8b8a8,
+                &glib::Bytes::from_owned(pixels),
+                width as usize * 4,
+            )
+            .upcast();
+            let applied = if placeholder_active.get() {
+                // Keep a stand-in that is already at least as sharp
+                // (the viewer's own frame).
+                let current = standin.paintable().map_or(0, |p| p.intrinsic_width());
+                let sharper = current < width as i32;
+                if sharper {
+                    standin.set_paintable(Some(&texture));
+                }
+                sharper
+            } else if !preview_ready.get() && !first_frame_shown.get() {
+                show_placeholder_action(&texture);
+                true
+            } else {
+                false
+            };
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_EDIT standin_sharp elapsed_ms={:.1} size={}x{} applied={}",
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    width,
+                    height,
+                    applied
+                );
+            }
+            glib::ControlFlow::Break
+        });
+    }
 
     EditEditor {
         root,
@@ -3908,5 +4081,96 @@ mod panel_tests {
         assert!(pointer_over_content(100.0, 1000.0, 800.0));
         assert!(pointer_over_content(900.0, 1000.0, 800.0));
         assert!(!pointer_over_content(950.0, 1000.0, 800.0));
+    }
+}
+
+/// The opening stand-in. GtkPicture snaps its image to whole pixels, but the
+/// GPU canvas draws the photo at the exact fractional Fit rectangle, so a
+/// Picture stand-in sat up to a pixel off and the photo visibly shifted when
+/// it faded out. This draws the stand-in at the same rectangle as the canvas.
+mod standin_view {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use glib::subclass::prelude::*;
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::*;
+    use gtk4 as gtk;
+
+    #[derive(Default)]
+    pub struct StandinView {
+        pub(super) paintable: RefCell<Option<gtk::gdk::Paintable>>,
+        /// The editor's display dimensions once its preview is known.
+        pub(super) preview_dimensions: RefCell<Option<Rc<Cell<(i32, i32)>>>>,
+        /// Expected display dimensions until then (source size, library
+        /// rotation and crop).
+        pub(super) expected_dimensions: Cell<(f64, f64)>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for StandinView {
+        const NAME: &'static str = "PicEditStandinView";
+        type Type = super::StandinView;
+        type ParentType = gtk::Widget;
+    }
+
+    impl ObjectImpl for StandinView {}
+
+    impl WidgetImpl for StandinView {
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let Some(paintable) = self.paintable.borrow().clone() else {
+                return;
+            };
+            let widget = self.obj();
+            let known = self
+                .preview_dimensions
+                .borrow()
+                .as_ref()
+                .map(|dimensions| dimensions.get())
+                .filter(|&(width, height)| width > 1 && height > 1);
+            let (image_w, image_h) = known
+                .map(|(width, height)| (width as f64, height as f64))
+                .unwrap_or_else(|| self.expected_dimensions.get());
+            let (x, y, width, height) = super::contained_rect(
+                widget.width() as f64,
+                widget.height() as f64,
+                image_w,
+                image_h,
+            );
+            snapshot.save();
+            snapshot.translate(&gtk::graphene::Point::new(x as f32, y as f32));
+            paintable.snapshot(snapshot, width, height);
+            snapshot.restore();
+        }
+    }
+}
+
+glib::wrapper! {
+    pub struct StandinView(ObjectSubclass<standin_view::StandinView>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl StandinView {
+    fn imp(&self) -> &standin_view::StandinView {
+        glib::subclass::prelude::ObjectSubclassIsExt::imp(self)
+    }
+
+    fn new(preview_dimensions: Rc<Cell<(i32, i32)>>, expected: (f64, f64)) -> Self {
+        let view: Self = glib::Object::new();
+        view.imp()
+            .preview_dimensions
+            .replace(Some(preview_dimensions));
+        view.imp().expected_dimensions.set(expected);
+        view
+    }
+
+    fn set_paintable(&self, paintable: Option<&gtk::gdk::Paintable>) {
+        self.imp().paintable.replace(paintable.cloned());
+        self.queue_draw();
+    }
+
+    fn paintable(&self) -> Option<gtk::gdk::Paintable> {
+        self.imp().paintable.borrow().clone()
     }
 }

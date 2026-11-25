@@ -116,6 +116,15 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 5,
     );
 
+    // Editor panel slider handles keep one compact size above theme sizing.
+    let editor_sliders = gtk::CssProvider::new();
+    editor_sliders.load_from_string(include_str!("components/editor_sliders.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &editor_sliders,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 5,
+    );
+
     let platform = gtk::CssProvider::new();
     platform.load_from_string(PLATFORM);
     gtk::style_context_add_provider_for_display(

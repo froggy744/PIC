@@ -161,6 +161,13 @@
   border-radius: 12px;
 }
 
+/* Tools sits directly on the editor background, without the card. */
+.pic-editor-panel.pic-editor-panel-flat {
+  padding: 0;
+  background: none;
+  border: none;
+}
+
 /* Text style and alignment toggles read as one bordered button row. */
 .editor-tool-group.editor-format-group button.editor-tool-button {
   min-height: 30px;

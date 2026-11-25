@@ -208,16 +208,6 @@ impl Controls {
     }
 }
 
-fn add_section_label(parent: &gtk::Box, text: &str) {
-    let label = gtk::Label::new(Some(text));
-    label.set_xalign(0.0);
-    label.set_hexpand(true);
-    label.set_margin_top(8);
-    label.add_css_class("heading");
-    label.add_css_class("edit-section-label");
-    parent.append(&label);
-}
-
 const FILTER_TILE_WIDTH: i32 = 88;
 #[cfg(test)]
 const FILTER_TILE_MIN_WIDTH: i32 = FILTER_TILE_WIDTH;
@@ -353,12 +343,22 @@ fn add_slider(
     scale.set_hexpand(true);
     scale.add_css_class("edit-adjustment-scale");
 
+    // Two-sided sliders show a sign so "+0.35" and "-0.35" read at a glance.
     let precision = digits.max(0) as usize;
-    value.set_text(&format!("{:.*}", precision, scale.value()));
+    let signed = min < 0.0;
+    let format = move |n: f64| {
+        let text = format!("{:.*}", precision, n);
+        if signed && n > 0.0 && text.trim_start_matches(['0', '.']) != "" {
+            format!("+{text}")
+        } else {
+            text
+        }
+    };
+    value.set_text(&format(scale.value()));
     {
         let value = value.clone();
         scale.connect_value_changed(move |scale| {
-            value.set_text(&format!("{:.*}", precision, scale.value()));
+            value.set_text(&format(scale.value()));
         });
     }
 

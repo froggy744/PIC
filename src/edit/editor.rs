@@ -392,6 +392,9 @@ pub fn build(
     sidebar.set_halign(gtk::Align::Fill);
 
     let tools_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    tools_box.add_css_class("pic-editor-panel");
+    tools_box.add_css_class("pic-editor-panel-flat");
+    tools_box.set_valign(gtk::Align::Start);
     tools_box.set_hexpand(true);
     tools_box.set_halign(gtk::Align::Fill);
     tools_box.set_margin_top(12);
@@ -1011,60 +1014,66 @@ pub fn build(
     apply_crop_button.add_css_class("crop-apply-button");
     editor_action_row(&crop_box, &[&reset_crop, &apply_crop_button]);
 
-    add_section_label(&tools_box, "LIGHT");
+    // Sliders sit two per row; a single slider spans the full width.
+    let slider_pair = |parent: &gtk::Box| {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.set_homogeneous(true);
+        parent.append(&row);
+        row
+    };
+
+    editor_section_heading(&tools_box, "LIGHT");
     let light_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    light_box.add_css_class("edit-adjustment-group");
     tools_box.append(&light_box);
 
-    let exposure = add_slider(&light_box, "Exposure", -2.0, 2.0, 0.05, 2);
-    let contrast = add_slider(&light_box, "Contrast", -1.0, 1.0, 0.02, 2);
-    let fill_light = add_slider(&light_box, "Fill Light", -1.0, 1.0, 0.02, 2);
-    let highlights = add_slider(&light_box, "Highlights", -1.0, 1.0, 0.02, 2);
-    let shadows = add_slider(&light_box, "Shadows", -1.0, 1.0, 0.02, 2);
-    let whites = add_slider(&light_box, "Whites", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&light_box);
+    let exposure = add_slider(&row, "Exposure", -2.0, 2.0, 0.05, 2);
+    let contrast = add_slider(&row, "Contrast", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&light_box);
+    let highlights = add_slider(&row, "Highlights", -1.0, 1.0, 0.02, 2);
+    let shadows = add_slider(&row, "Shadows", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&light_box);
+    let whites = add_slider(&row, "Whites", -1.0, 1.0, 0.02, 2);
     whites.set_tooltip_text(Some("Adjust the brightest tones and white point"));
-    let blacks = add_slider(&light_box, "Blacks", -1.0, 1.0, 0.02, 2);
+    let blacks = add_slider(&row, "Blacks", -1.0, 1.0, 0.02, 2);
     blacks.set_tooltip_text(Some("Adjust the darkest tones and black point"));
+    let fill_light = add_slider(&light_box, "Fill Light", -1.0, 1.0, 0.02, 2);
+    editor_section_divider(&tools_box);
 
-    add_section_label(&tools_box, "COLOUR");
+    editor_section_heading(&tools_box, "COLOUR");
     let colour_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    colour_box.add_css_class("edit-adjustment-group");
     tools_box.append(&colour_box);
 
-    let saturation = add_slider(&colour_box, "Saturation", -1.0, 1.0, 0.02, 2);
-    let vibrance = add_slider(&colour_box, "Vibrance", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&colour_box);
+    let saturation = add_slider(&row, "Saturation", -1.0, 1.0, 0.02, 2);
+    let vibrance = add_slider(&row, "Vibrance", -1.0, 1.0, 0.02, 2);
     vibrance.set_tooltip_text(Some("Adjust muted colours more than vivid colours"));
-    let temperature = add_slider(&colour_box, "Warmth", -1.0, 1.0, 0.02, 2);
-    let tint = add_slider(&colour_box, "Tint", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&colour_box);
+    let temperature = add_slider(&row, "Warmth", -1.0, 1.0, 0.02, 2);
+    let tint = add_slider(&row, "Tint", -1.0, 1.0, 0.02, 2);
     tint.set_tooltip_text(Some("Shift colour balance between green and magenta"));
+    editor_section_divider(&tools_box);
 
-    add_section_label(&tools_box, "DETAIL");
+    editor_section_heading(&tools_box, "DETAIL & EFFECTS");
     let detail_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    detail_box.add_css_class("edit-adjustment-group");
     tools_box.append(&detail_box);
 
-    let sharpen = add_slider(&detail_box, "Sharpen", 0.0, 1.0, 0.02, 2);
-    let clarity = add_slider(&detail_box, "Clarity", -1.0, 1.0, 0.02, 2);
-    let smooth = add_slider(&detail_box, "Smooth", 0.0, 1.0, 0.02, 2);
+    let row = slider_pair(&detail_box);
+    let sharpen = add_slider(&row, "Sharpen", 0.0, 1.0, 0.02, 2);
+    let clarity = add_slider(&row, "Clarity", -1.0, 1.0, 0.02, 2);
+    let row = slider_pair(&detail_box);
+    let smooth = add_slider(&row, "Smooth", 0.0, 1.0, 0.02, 2);
     smooth.set_tooltip_text(Some("Soften fine texture while preserving strong edges"));
-    let grain = add_slider(&detail_box, "Grain", 0.0, 1.0, 0.02, 2);
+    let grain = add_slider(&row, "Grain", 0.0, 1.0, 0.02, 2);
     let vignette = add_slider(&detail_box, "Vignette", -1.0, 1.0, 0.02, 2);
     vignette.set_tooltip_text(Some(
         "Drag left to lighten photo edges, right to darken them; the centre is neutral",
     ));
-    // Make the existing left=light/right=dark behaviour discoverable.
-    // The CPU renderer already implements this sign convention.
-    let vignette_direction = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let lighten = gtk::Label::new(Some("← Lighter edges"));
-    lighten.set_xalign(0.0);
-    lighten.set_hexpand(true);
-    lighten.add_css_class("dim-label");
-    let darken = gtk::Label::new(Some("Darker edges →"));
-    darken.set_xalign(1.0);
-    darken.add_css_class("dim-label");
-    vignette_direction.append(&lighten);
-    vignette_direction.append(&darken);
-    detail_box.append(&vignette_direction);
+    let reset_adjustments = gtk::Button::with_label("Reset adjustments");
+    reset_adjustments.set_tooltip_text(Some(
+        "Return every Tools slider to neutral; filters, crop and layers stay",
+    ));
+    editor_action_row(&tools_box, &[&reset_adjustments]);
 
     let controls = Controls {
         straighten,
@@ -2084,6 +2093,38 @@ pub fn build(
             draw_layer.queue_draw();
         })
     };
+
+    // Reset adjustments: one undo step that returns every Tools slider to
+    // neutral, leaving filters, crop and layers untouched.
+    {
+        let session = session.clone();
+        let sync_controls = sync_controls.clone();
+        let queue_preview = queue_preview.clone();
+        let update_history_buttons = update_history_buttons.clone();
+        reset_adjustments.connect_clicked(move |_| {
+            session.borrow_mut().mutate(|r| {
+                r.exposure = 0.0;
+                r.contrast = 0.0;
+                r.fill_light = 0.0;
+                r.highlights = 0.0;
+                r.shadows = 0.0;
+                r.whites = 0.0;
+                r.blacks = 0.0;
+                r.saturation = 0.0;
+                r.vibrance = 0.0;
+                r.temperature = 0.0;
+                r.tint = 0.0;
+                r.sharpen = 0.0;
+                r.clarity = 0.0;
+                r.smooth = 0.0;
+                r.grain = 0.0;
+                r.vignette = 0.0;
+            });
+            sync_controls();
+            update_history_buttons();
+            queue_preview();
+        });
+    }
 
     connect_history_actions(
         &undo,

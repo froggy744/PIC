@@ -3795,6 +3795,48 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
 
     let edit_editor: Rc<RefCell<Option<crate::edit::EditEditor>>> = Rc::new(RefCell::new(None));
+    // InfoBar Draw: open the editor straight on its Draw tab. In the editor
+    // it switches to Draw, or closes like Edit when Draw is already showing.
+    {
+        let edit_editor = edit_editor.clone();
+        let front = front.clone();
+        let open_edit = open_edit.clone();
+        let info_weak = Rc::downgrade(&info);
+        info.draw.connect_clicked(move |_| {
+            // Collage photos use the collage editor's own Edit Photo action.
+            if front.current() == Front::Collage {
+                return;
+            }
+            let Some(info) = info_weak.upgrade() else { return };
+            let show_draw = || {
+                if let Ok(editor) = edit_editor.try_borrow() {
+                    if let Some(editor) = editor.as_ref() {
+                        editor.show_draw();
+                    }
+                }
+            };
+            if front.current() == Front::Editor {
+                let draw_showing = edit_editor
+                    .try_borrow()
+                    .ok()
+                    .and_then(|editor| editor.as_ref().map(|editor| editor.draw_is_active()))
+                    .unwrap_or(false);
+                if draw_showing {
+                    info.edit.emit_clicked();
+                } else {
+                    show_draw();
+                }
+                return;
+            }
+            // Copy the id out first: open_edit() changes the stack
+            // synchronously and may trigger InfoBar events.
+            let photo_id = info.editable_photo().map(|photo| photo.id());
+            if let Some(id) = photo_id {
+                open_edit(id);
+                show_draw();
+            }
+        });
+    }
     // Catch-all teardown when the collage/edit pages are left by any path
     // (sidebar navigation, search, opening the editor mid-collage, ...).
     // GtkStack reports the maximum minimum size of all its pages, hidden

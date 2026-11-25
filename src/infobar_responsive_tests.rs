@@ -77,7 +77,9 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
         .and_downcast::<gtk::MenuButton>()
         .unwrap();
     assert!(overflow.is_visible());
+    // Secondary controls in default bar order; Draw follows the pinned Edit.
     let moved: Vec<gtk::Widget> = vec![
+        bar.draw.clone().upcast(),
         bar.collage.clone().upcast(),
         bar.add_to_album.clone().upcast(),
         bar.one_to_one.clone().upcast(),
@@ -136,7 +138,8 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
             for (index, control) in moved.iter().enumerate() {
                 assert_eq!(
                     control.parent().as_ref() == Some(&original_parent),
-                    index != 5 && index < visible_count
+                    // Import (index 6) stays in the menu.
+                    index != 6 && index < visible_count
                 );
             }
             overflow.popup();
@@ -149,6 +152,7 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
                 .downcast::<gtk::Box>()
                 .unwrap();
             for (index, title) in [
+                "Draw",
                 "Collage",
                 "Add to Album",
                 "100%",
@@ -163,7 +167,7 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
             {
                 assert_eq!(
                     menu_row_visible(&menu_box, title),
-                    Some(index == 5 || index >= visible_count),
+                    Some(index == 6 || index >= visible_count),
                     "menu visibility mismatch for {title} at {width}px"
                 );
             }

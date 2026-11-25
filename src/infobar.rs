@@ -43,6 +43,7 @@ pub struct InfoBar {
     rating_value: gtk::Label,
     pub rating_buttons: Vec<gtk::Button>,
     pub edit: gtk::Button,
+    pub draw: gtk::Button,
     pub collage: gtk::Button,
     pub view_toggle: gtk::Button,
     photo_layout: Rc<Cell<crate::grid::PhotoLayout>>,
@@ -442,9 +443,13 @@ impl InfoBar {
         rating_popover.set_child(Some(&rating_box));
         rating.set_popover(Some(&rating_popover));
 
-        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        let edit = gtk::Button::from_icon_name("display-brightness-symbolic");
         configure_action_button(&edit);
         edit.set_tooltip_text(Some("Open or close photo editor"));
+        // Draw is used most, so it gets the pencil and opens straight there.
+        let draw = gtk::Button::from_icon_name("document-edit-symbolic");
+        configure_action_button(&draw);
+        draw.set_tooltip_text(Some("Draw on the photo"));
 
         let collage = gtk::Button::from_icon_name("view-grid-symbolic");
         configure_action_button(&collage);
@@ -540,6 +545,7 @@ impl InfoBar {
         actions.append(&favorite);
         actions.append(&rating);
         actions.append(&edit);
+        actions.append(&draw);
         actions.append(&properties_button);
         actions.append(&collage);
         actions.append(&add_to_album);
@@ -581,7 +587,7 @@ impl InfoBar {
         let preferences: Rc<RefCell<Option<Vec<bool>>>> = Rc::new(RefCell::new(
             connection.as_ref().and_then(|db| crate::db::setting(&db.borrow(), "infobar_visible_actions").ok().flatten())
                 .and_then(|value| serde_json::from_str::<Vec<bool>>(&value).ok())
-                .filter(|values| values.len() == 12),
+                .and_then(migrate_visible_actions),
         ));
         let preferences_changed = Rc::new(Cell::new(false));
         // The order of the photo actions in the bar, as entry indices. The
@@ -591,8 +597,8 @@ impl InfoBar {
                 .as_ref()
                 .and_then(|db| crate::db::setting(&db.borrow(), "infobar_action_order").ok().flatten())
                 .and_then(|value| serde_json::from_str::<Vec<usize>>(&value).ok())
-                .filter(|order| is_action_order(order))
-                .unwrap_or_else(|| (0..ACTION_COUNT).collect()),
+                .and_then(migrate_action_order)
+                .unwrap_or_else(default_action_order),
         ));
         let order_generation = Rc::new(Cell::new(0usize));
         let choices = gtk::MenuButton::new();
@@ -608,7 +614,7 @@ impl InfoBar {
         let choice_controls: Rc<RefCell<Vec<gtk::CheckButton>>> = Rc::new(RefCell::new(Vec::new()));
         let syncing = Rc::new(Cell::new(false));
         let mut order_rows: Vec<(gtk::Box, gtk::Button, gtk::Button)> = Vec::new();
-        for (index, label) in ["Zoom", "Favourites", "Rate", "Edit", "Collage", "Add to Album", "100%", "Rotate", "Export", "Import", "Settings", "Print"].iter().enumerate() {
+        for (index, label) in ["Zoom", "Favourites", "Rate", "Edit", "Collage", "Add to Album", "100%", "Rotate", "Export", "Import", "Settings", "Print", "Draw"].iter().enumerate() {
             let check = gtk::CheckButton::with_label(label);
             check.set_active(preferences.borrow().as_ref().map_or(index != 9, |values| values[index]));
             let prefs = preferences.clone();
@@ -619,7 +625,7 @@ impl InfoBar {
             check.connect_toggled(move |_| {
                 if syncing.get() { return; }
                 let values: Vec<bool> = controls.borrow().iter().map(|item| item.is_active()).collect();
-                if values.len() == 12 {
+                if values.len() == ACTION_COUNT {
                     if let Some(db) = &db { let _ = crate::db::set_setting(&db.borrow(), "infobar_visible_actions", &serde_json::to_string(&values).unwrap_or_default()); }
                     *prefs.borrow_mut() = Some(values);
                     changed.set(true);
@@ -735,6 +741,7 @@ impl InfoBar {
             (import_photos.clone().upcast(), "Import"),
             (more.clone().upcast(), "Settings"),
             (print.clone().upcast(), "Print"),
+            (draw.clone().upcast(), "Draw"),
         ]
         .into_iter()
         .map(|(control, title): (gtk::Widget, &str)| {
@@ -771,8 +778,8 @@ impl InfoBar {
         // popup into compact, easy-to-scan groups.
         overflow_box.append(&overflow_entries[0].1); // Zoom
         append_separator(&overflow_box);
-        for index in [1, 2, 3] {
-            // Favourite, Rate, Edit
+        for index in [1, 2, 3, DRAW_ACTION] {
+            // Favourite, Rate, Edit, Draw
             overflow_box.append(&overflow_entries[index].1);
         }
         append_separator(&overflow_box);
@@ -1051,7 +1058,9 @@ impl InfoBar {
                     }
                     let visible_groups = [
                         true,
-                        (1..=3).any(|index| overflow_entries[index].1.get_visible()),
+                        [1, 2, 3, DRAW_ACTION]
+                            .iter()
+                            .any(|&index| overflow_entries[index].1.get_visible()),
                         [5, 4]
                             .iter()
                             .any(|&index| overflow_entries[index].1.get_visible()),
@@ -1173,6 +1182,7 @@ impl InfoBar {
             rating_value,
             rating_buttons,
             edit,
+            draw,
             collage,
             view_toggle,
             photo_layout,
@@ -1534,6 +1544,7 @@ impl InfoBar {
         self.view_toggle
             .set_sensitive(target.gallery_controls_enabled());
         self.edit.set_sensitive(target.edit_enabled());
+        self.draw.set_sensitive(target.edit_enabled());
         // Collage has no presentation zoom. Disable the shared zoom slider
         // instead of letting it fall through and resize the hidden Gallery.
         self.grid_zoom
@@ -1593,6 +1604,7 @@ impl InfoBar {
             self.rating.set_sensitive(false);
             self.set_rating_presentation(0);
             self.edit.set_sensitive(target.edit_enabled());
+            self.draw.set_sensitive(target.edit_enabled());
             self.add_to_album.set_sensitive(false);
             self.rotate.set_sensitive(false);
             self.export.set_sensitive(false);
@@ -1656,6 +1668,7 @@ impl InfoBar {
             self.favorite.set_sensitive(actions);
             self.rating.set_sensitive(actions);
             self.edit.set_sensitive(target.edit_enabled());
+            self.draw.set_sensitive(target.edit_enabled());
             self.add_to_album.set_sensitive(actions);
             self.rotate.set_sensitive(actions);
             self.export.set_sensitive(actions);
@@ -1701,8 +1714,39 @@ impl InfoBar {
 /// there is room.
 type SqueezeHomes = Rc<RefCell<Vec<(gtk::Widget, gtk::Box, Rc<Cell<bool>>)>>>;
 
-/// The photo actions the user can show, hide and order in the bar.
-const ACTION_COUNT: usize = 12;
+/// The photo actions the user can show, hide and order in the bar. Entry
+/// indices are stable: Draw was added last, after the original twelve.
+const ACTION_COUNT: usize = 13;
+const EDIT_ACTION: usize = 3;
+const DRAW_ACTION: usize = 12;
+
+/// The bar order for a fresh profile: entry order, with Draw beside Edit.
+fn default_action_order() -> Vec<usize> {
+    let mut order: Vec<usize> = (0..DRAW_ACTION).collect();
+    order.insert(EDIT_ACTION + 1, DRAW_ACTION);
+    order
+}
+
+/// Saved "Show in InfoBar" choices. Ones saved before Draw existed have
+/// twelve entries; Draw is shown for them, like on a fresh profile.
+fn migrate_visible_actions(mut values: Vec<bool>) -> Option<Vec<bool>> {
+    if values.len() == DRAW_ACTION {
+        values.push(true);
+    }
+    (values.len() == ACTION_COUNT).then_some(values)
+}
+
+/// A saved bar order. One saved before Draw existed gets Draw placed right
+/// after Edit, wherever the user moved Edit.
+fn migrate_action_order(mut order: Vec<usize>) -> Option<Vec<usize>> {
+    let mut sorted = order.clone();
+    sorted.sort_unstable();
+    if sorted == (0..DRAW_ACTION).collect::<Vec<_>>() {
+        let edit = order.iter().position(|&entry| entry == EDIT_ACTION)?;
+        order.insert(edit + 1, DRAW_ACTION);
+    }
+    is_action_order(&order).then_some(order)
+}
 
 /// A saved bar order is usable only when it names every action once.
 fn is_action_order(order: &[usize]) -> bool {
@@ -1786,26 +1830,55 @@ fn format_aperture(value: f64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_aperture, format_date, is_action_order, move_in_order, rating_label};
+    use super::{
+        default_action_order, format_aperture, format_date, is_action_order,
+        migrate_action_order, migrate_visible_actions, move_in_order, rating_label,
+        ACTION_COUNT, DRAW_ACTION, EDIT_ACTION,
+    };
 
     #[test]
     fn action_order_moves_one_place_and_stops_at_the_ends() {
-        let mut order: Vec<usize> = (0..12).collect();
+        let mut order: Vec<usize> = (0..ACTION_COUNT).collect();
         assert!(move_in_order(&mut order, 3, -1));
         assert_eq!(&order[..4], &[0, 1, 3, 2]);
         assert!(move_in_order(&mut order, 3, 1));
         assert_eq!(&order[..4], &[0, 1, 2, 3]);
         assert!(!move_in_order(&mut order, 0, -1));
-        assert!(!move_in_order(&mut order, 11, 1));
+        assert!(!move_in_order(&mut order, ACTION_COUNT - 1, 1));
         assert!(!move_in_order(&mut order, 99, 1));
         assert!(is_action_order(&order));
     }
 
     #[test]
+    fn draw_defaults_beside_edit_and_migrates_into_saved_preferences() {
+        let order = default_action_order();
+        assert!(is_action_order(&order));
+        assert_eq!(&order[3..5], &[EDIT_ACTION, DRAW_ACTION]);
+
+        // A pre-Draw order keeps the user's arrangement; Draw follows Edit.
+        let saved = vec![11, 3, 10, 9, 8, 7, 6, 5, 4, 2, 1, 0];
+        let migrated = migrate_action_order(saved).unwrap();
+        assert_eq!(&migrated[..3], &[11, EDIT_ACTION, DRAW_ACTION]);
+        assert!(is_action_order(&migrated));
+        // A current order is kept as is; a broken one is rejected.
+        assert_eq!(migrate_action_order(order.clone()), Some(order));
+        assert_eq!(migrate_action_order(vec![0, 1, 2]), None);
+
+        // Pre-Draw visibility choices are kept, and Draw is shown.
+        let mut hidden = vec![true; 12];
+        hidden[4] = false;
+        let visible = migrate_visible_actions(hidden).unwrap();
+        assert_eq!(visible.len(), ACTION_COUNT);
+        assert!(!visible[4] && visible[DRAW_ACTION]);
+        assert_eq!(migrate_visible_actions(vec![false; ACTION_COUNT]).unwrap()[DRAW_ACTION], false);
+        assert_eq!(migrate_visible_actions(vec![true; 5]), None);
+    }
+
+    #[test]
     fn saved_action_order_must_name_every_action_once() {
-        assert!(is_action_order(&[11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]));
+        assert!(is_action_order(&[12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]));
         assert!(!is_action_order(&[0, 1, 2]));
-        assert!(!is_action_order(&[0, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
+        assert!(!is_action_order(&[0, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
         assert!(!is_action_order(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]));
     }
 

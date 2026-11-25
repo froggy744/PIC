@@ -30,6 +30,7 @@ pub struct EditEditor {
     one_to_one_sync: Rc<RefCell<Option<Box<dyn Fn(bool)>>>>,
     zoom_sync: Rc<RefCell<Option<Box<dyn Fn(f64, f64)>>>>,
     text_toggle: gtk::ToggleButton,
+    draw_toggle: gtk::ToggleButton,
     escape_action: Rc<dyn Fn()>,
     copy_saved: Rc<RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
 }
@@ -91,6 +92,15 @@ impl EditEditor {
     /// state after the editor has been moved into storage.
     pub fn text_toggle_handle(&self) -> gtk::ToggleButton {
         self.text_toggle.clone()
+    }
+
+    /// Switches to the Draw tab (the InfoBar Draw button opens here).
+    pub fn show_draw(&self) {
+        self.draw_toggle.set_active(true);
+    }
+
+    pub fn draw_is_active(&self) -> bool {
+        self.draw_toggle.is_active()
     }
 
     pub fn escape_action_handle(&self) -> Rc<dyn Fn()> {
@@ -3197,6 +3207,7 @@ pub fn build(
         one_to_one_sync,
         zoom_sync,
         text_toggle,
+        draw_toggle,
         escape_action,
         copy_saved,
     }

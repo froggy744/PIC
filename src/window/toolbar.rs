@@ -920,6 +920,7 @@
         ("favorite", "Favourites", info.favorite.clone().upcast()),
         ("rating", "Photo rating", info.rating.clone().upcast()),
         ("edit", "Photo editor", info.edit.clone().upcast()),
+        ("draw", "Draw", info.draw.clone().upcast()),
         ("collage", "Collage", info.collage.clone().upcast()),
         ("album", "Add to Album", info.add_to_album.clone().upcast()),
         ("actual_size", "100% zoom", info.one_to_one.clone().upcast()),

@@ -948,7 +948,7 @@ fn build_draw_panel(
     let _ = draw_toggle;
     let _ = queue_preview;
     let layer_for_update = layer.clone();
-    let select_for_update = select.clone();
+    let pen_for_update = pen.clone();
     let tools_for_update = tools.clone();
     let was_active = Rc::new(Cell::new(draw_toggle.is_active()));
     Rc::new(move || {
@@ -956,8 +956,9 @@ fn build_draw_panel(
         if active {
             was_active.set(true);
         } else if was_active.replace(false) {
-            tools_for_update.set(DrawTool::Select);
-            select_for_update.set_active(true);
+            // Reopening Draw starts with the pen, ready to draw.
+            tools_for_update.set(DrawTool::Pen);
+            pen_for_update.set_active(true);
         }
         layer_for_update.set_visible(true);
         layer_for_update.set_can_target(active);

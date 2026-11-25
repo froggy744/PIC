@@ -607,3 +607,68 @@ fn chosen_buttons_move_into_the_menu_from_the_right() {
     window.close();
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run individually"]
+fn show_in_infobar_moves_a_button_along_the_bar() {
+    libadwaita::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let bar = InfoBar::new();
+    let window = gtk::Window::builder()
+        .title("PIC InfoBar order regression")
+        .default_width(1600)
+        .default_height(100)
+        .child(&bar.root)
+        .build();
+    window.present();
+    settle();
+
+    let position_in_bar = |widget: &gtk::Widget| {
+        let mut child = bar.actions.first_child();
+        let mut position = 0;
+        while let Some(current) = child {
+            if &current == widget {
+                return Some(position);
+            }
+            position += 1;
+            child = current.next_sibling();
+        }
+        None
+    };
+    let favorite: gtk::Widget = bar.favorite.clone().upcast();
+    let rating: gtk::Widget = bar.rating.clone().upcast();
+    assert!(position_in_bar(&favorite).unwrap() < position_in_bar(&rating).unwrap());
+
+    // The "Show in InfoBar" row for Favourites: check, Move up, Move down.
+    let order_box = bar
+        .visibility_choices
+        .first_child()
+        .unwrap()
+        .downcast::<gtk::Box>()
+        .unwrap();
+    let mut row = order_box.first_child();
+    let favourites_row = loop {
+        let current = row.expect("Favourites row in Show in InfoBar");
+        let check = current.first_child().unwrap().downcast::<gtk::CheckButton>().unwrap();
+        if check.label().as_deref() == Some("Favourites") {
+            break current;
+        }
+        row = current.next_sibling();
+    };
+    let move_down = favourites_row.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+    move_down.emit_clicked();
+    settle();
+
+    assert!(
+        position_in_bar(&rating).unwrap() < position_in_bar(&favorite).unwrap(),
+        "Move down should put Favourites after Rate in the bar"
+    );
+    assert_eq!(
+        favourites_row.prev_sibling().and_then(|row| row.first_child())
+            .and_downcast::<gtk::CheckButton>()
+            .and_then(|check| check.label())
+            .as_deref(),
+        Some("Rate"),
+        "the list shows the new order"
+    );
+}

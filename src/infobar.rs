@@ -560,17 +560,31 @@ impl InfoBar {
                 .filter(|values| values.len() == 12),
         ));
         let preferences_changed = Rc::new(Cell::new(false));
+        // The order of the photo actions in the bar, as entry indices. The
+        // user arranges it in "Show in InfoBar"; the drawer keeps its groups.
+        let action_order: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(
+            connection
+                .as_ref()
+                .and_then(|db| crate::db::setting(&db.borrow(), "infobar_action_order").ok().flatten())
+                .and_then(|value| serde_json::from_str::<Vec<usize>>(&value).ok())
+                .filter(|order| is_action_order(order))
+                .unwrap_or_else(|| (0..ACTION_COUNT).collect()),
+        ));
+        let order_generation = Rc::new(Cell::new(0usize));
         let choices = gtk::MenuButton::new();
         choices.set_label("Show in InfoBar");
         let choices_popover = gtk::Popover::new();
+        // Open beside the ⋮ menu so the list never covers "Menu only".
+        choices_popover.set_position(gtk::PositionType::Left);
         let choices_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
         choices_box.set_margin_top(8);
         choices_box.set_margin_bottom(8);
         choices_box.set_margin_start(8);
-        choices_box.set_margin_end(8);
+        choices_box.set_margin_end(14);
         let choice_controls: Rc<RefCell<Vec<gtk::CheckButton>>> = Rc::new(RefCell::new(Vec::new()));
         let syncing = Rc::new(Cell::new(false));
-        for (index, label) in ["Size", "Favourites", "Rate", "Edit", "Collage", "Add to Album", "100%", "Rotate", "Export", "Import", "Settings", "Print"].iter().enumerate() {
+        let mut order_rows: Vec<(gtk::Box, gtk::Button, gtk::Button)> = Vec::new();
+        for (index, label) in ["Zoom", "Favourites", "Rate", "Edit", "Collage", "Add to Album", "100%", "Rotate", "Export", "Import", "Settings", "Print"].iter().enumerate() {
             let check = gtk::CheckButton::with_label(label);
             check.set_active(preferences.borrow().as_ref().map_or(index != 9, |values| values[index]));
             let prefs = preferences.clone();
@@ -588,8 +602,68 @@ impl InfoBar {
                 }
             });
             choice_controls.borrow_mut().push(check.clone());
-            choices_box.append(&check);
+            check.set_hexpand(true);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            row.append(&check);
+            let make_move_button = |icon: &str, direction: &str| {
+                let button = gtk::Button::from_icon_name(icon);
+                button.set_has_frame(false);
+                button.set_valign(gtk::Align::Center);
+                button.set_tooltip_text(Some(&format!("Move {direction}")));
+                button.update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Move {label} {direction}"
+                ))]);
+                row.append(&button);
+                button
+            };
+            let up = make_move_button("go-up-symbolic", "up");
+            let down = make_move_button("go-down-symbolic", "down");
+            order_rows.push((row, up, down));
         }
+        let order_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        for (row, _, _) in &order_rows {
+            order_box.append(row);
+        }
+        let order_rows = Rc::new(order_rows);
+        let arrange_choices: Rc<dyn Fn()> = {
+            let order = action_order.clone();
+            let rows = order_rows.clone();
+            let order_box = order_box.clone();
+            Rc::new(move || {
+                let order = order.borrow();
+                let mut previous: Option<gtk::Widget> = None;
+                for (position, &index) in order.iter().enumerate() {
+                    let (row, up, down) = &rows[index];
+                    order_box.reorder_child_after(row, previous.as_ref());
+                    up.set_sensitive(position > 0);
+                    down.set_sensitive(position + 1 < order.len());
+                    previous = Some(row.clone().upcast());
+                }
+            })
+        };
+        arrange_choices();
+        for (index, (_, up, down)) in order_rows.iter().enumerate() {
+            for (button, step) in [(up, -1isize), (down, 1)] {
+                let order = action_order.clone();
+                let arrange = arrange_choices.clone();
+                let db = connection.clone();
+                let changed = preferences_changed.clone();
+                let generation = order_generation.clone();
+                button.connect_clicked(move |_| {
+                    if !move_in_order(&mut order.borrow_mut(), index, step) {
+                        return;
+                    }
+                    if let Some(db) = &db {
+                        let value = serde_json::to_string(&*order.borrow()).unwrap_or_default();
+                        let _ = crate::db::set_setting(&db.borrow(), "infobar_action_order", &value);
+                    }
+                    generation.set(generation.get().wrapping_add(1));
+                    changed.set(true);
+                    arrange();
+                });
+            }
+        }
+        choices_box.append(&order_box);
         let automatic = gtk::Button::with_label("Use automatic layout");
         {
             let prefs = preferences.clone();
@@ -609,7 +683,7 @@ impl InfoBar {
         choices_box.append(&automatic);
         let choices_scroll = gtk::ScrolledWindow::new();
         choices_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        choices_scroll.set_max_content_height(400);
+        choices_scroll.set_max_content_height(620);
         choices_scroll.set_propagate_natural_height(true);
         choices_scroll.set_child(Some(&choices_box));
         choices_popover.set_child(Some(&choices_scroll));
@@ -625,7 +699,7 @@ impl InfoBar {
         overflow_box.append(&choices);
 
         let overflow_entries: Vec<(gtk::Widget, gtk::Box)> = [
-            (grid_zoom.clone().upcast(), "Size"),
+            (grid_zoom.clone().upcast(), "Zoom"),
             (favorite.clone().upcast(), "Favourites"),
             (rating.clone().upcast(), "Rate"),
             (edit.clone().upcast(), "Edit"),
@@ -671,7 +745,7 @@ impl InfoBar {
         };
         // Keep each row attached to its existing control while ordering the
         // popup into compact, easy-to-scan groups.
-        overflow_box.append(&overflow_entries[0].1); // Size
+        overflow_box.append(&overflow_entries[0].1); // Zoom
         append_separator(&overflow_box);
         for index in [1, 2, 3] {
             // Favourite, Rate, Edit
@@ -761,6 +835,9 @@ impl InfoBar {
         let selection_mode_for_resize = selection_mode.clone();
         let actions_for_resize = actions.clone();
         let overflow_for_resize = overflow.clone();
+        let action_order_for_resize = action_order.clone();
+        let order_generation_for_resize = order_generation.clone();
+        let applied_order = Cell::new(usize::MAX);
         root.add_tick_callback(move |bar, _| {
             let overflow = &overflow_for_resize;
             if selection_mode_for_resize.get() {
@@ -811,12 +888,16 @@ impl InfoBar {
                     900..=1199 => 6,
                     _ => overflow_entries.len(),
                 };
+                let order = action_order_for_resize.borrow().clone();
+                let position = |index: usize| {
+                    order.iter().position(|&entry| entry == index).unwrap_or(index)
+                };
                 let manual = preferences.borrow().clone();
                 let mask = manual.as_ref().map(|values| values.iter().enumerate().fold(0usize, |mask, (i, &visible)| mask | ((visible as usize) << i))).unwrap_or(usize::MAX);
                 let wanted = |index: usize| {
                     !hide_all
                         && manual.as_ref().map_or_else(
-                            || (index != 9 || width >= 2560) && index < 4 + visible_count,
+                            || (index != 9 || width >= 2560) && position(index) < 4 + visible_count,
                             |values| values[index],
                         )
                 };
@@ -874,7 +955,11 @@ impl InfoBar {
                     hide_all,
                 );
                 let preference_changed = preferences_changed.replace(false);
-                if (!keep_menu_stable || preference_changed) && visible_action_count.replace(state) != state {
+                let order_changed = applied_order.get() != order_generation_for_resize.get();
+                if (!keep_menu_stable || preference_changed)
+                    && (visible_action_count.replace(state) != state || order_changed)
+                {
+                    applied_order.set(order_generation_for_resize.get());
                     if hide_all || squeezed_out.contains(utilities_for_resize.upcast_ref()) {
                         if utilities_for_resize.parent().as_ref()
                             == Some(actions_for_resize.upcast_ref())
@@ -896,7 +981,8 @@ impl InfoBar {
                             && utilities_for_resize.first_child().is_some(),
                     );
                     let mut previous: Option<gtk::Widget> = None;
-                    for (index, (control, row)) in overflow_entries.iter().enumerate() {
+                    for &index in &order {
+                        let (control, row) = &overflow_entries[index];
                         if let Some(menu) = control.downcast_ref::<gtk::MenuButton>() {
                             if menu.is_active() {
                                 menu.popdown();
@@ -1591,6 +1677,29 @@ impl InfoBar {
 /// there is room.
 type SqueezeHomes = Rc<RefCell<Vec<(gtk::Widget, gtk::Box, Rc<Cell<bool>>)>>>;
 
+/// The photo actions the user can show, hide and order in the bar.
+const ACTION_COUNT: usize = 12;
+
+/// A saved bar order is usable only when it names every action once.
+fn is_action_order(order: &[usize]) -> bool {
+    let mut sorted = order.to_vec();
+    sorted.sort_unstable();
+    sorted == (0..ACTION_COUNT).collect::<Vec<_>>()
+}
+
+/// Move action `index` one place earlier (`step < 0`) or later in `order`.
+/// Returns whether anything moved.
+fn move_in_order(order: &mut [usize], index: usize, step: isize) -> bool {
+    let Some(from) = order.iter().position(|&entry| entry == index) else {
+        return false;
+    };
+    let Some(to) = from.checked_add_signed(step).filter(|&to| to < order.len()) else {
+        return false;
+    };
+    order.swap(from, to);
+    true
+}
+
 struct WrittenPhoto {
     photo: PhotoObject,
     summary: PhotoSummary,
@@ -1653,7 +1762,28 @@ fn format_aperture(value: f64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_aperture, format_date, rating_label};
+    use super::{format_aperture, format_date, is_action_order, move_in_order, rating_label};
+
+    #[test]
+    fn action_order_moves_one_place_and_stops_at_the_ends() {
+        let mut order: Vec<usize> = (0..12).collect();
+        assert!(move_in_order(&mut order, 3, -1));
+        assert_eq!(&order[..4], &[0, 1, 3, 2]);
+        assert!(move_in_order(&mut order, 3, 1));
+        assert_eq!(&order[..4], &[0, 1, 2, 3]);
+        assert!(!move_in_order(&mut order, 0, -1));
+        assert!(!move_in_order(&mut order, 11, 1));
+        assert!(!move_in_order(&mut order, 99, 1));
+        assert!(is_action_order(&order));
+    }
+
+    #[test]
+    fn saved_action_order_must_name_every_action_once() {
+        assert!(is_action_order(&[11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]));
+        assert!(!is_action_order(&[0, 1, 2]));
+        assert!(!is_action_order(&[0, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
+        assert!(!is_action_order(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]));
+    }
 
     #[test]
     fn numeric_rating_label_handles_unrated_and_out_of_range_values() {

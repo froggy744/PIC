@@ -439,19 +439,23 @@ pub struct Lightbox {
     handoff_companions: Rc<RefCell<Vec<gtk::Widget>>>,
 }
 
-/// Duration of the viewer's close fade (user close and editor handoff).
-/// The editor's page crossfades use the same length.
-pub const CLOSE_FADE_MS: u32 = 160;
-const CLOSE_FADE_SECONDS: f64 = CLOSE_FADE_MS as f64 / 1000.0;
+/// Duration of the viewer's close fade when the user closes it.
+const CLOSE_FADE_MS: u32 = 160;
+
+/// Duration of every fade into or out of the editor: the viewer's handoff
+/// and the editor page's crossfades. Shorter than a viewer close because
+/// the editor already shows the photo when the fade starts.
+pub const EDITOR_FADE_MS: u32 = 120;
 
 /// Longest the viewer (or the page under it) stays on screen waiting for
 /// the editor's first frame before giving way anyway; past this the click
 /// would feel ignored.
-pub const HANDOFF_WAIT_LIMIT: Duration = Duration::from_millis(350);
+pub const HANDOFF_WAIT_LIMIT: Duration = Duration::from_millis(150);
 
-/// Smoothstep close fade: the opacity after `elapsed`, and whether it ended.
-fn close_fade_opacity(elapsed: Duration) -> (f64, bool) {
-    let progress = (elapsed.as_secs_f64() / CLOSE_FADE_SECONDS).clamp(0.0, 1.0);
+/// Smoothstep fade lasting `duration_ms`: the opacity after `elapsed`, and
+/// whether it ended.
+fn close_fade_opacity(elapsed: Duration, duration_ms: u32) -> (f64, bool) {
+    let progress = (elapsed.as_secs_f64() * 1000.0 / f64::from(duration_ms.max(1))).clamp(0.0, 1.0);
     let eased = progress * progress * (3.0 - 2.0 * progress);
     (1.0 - eased, progress >= 1.0)
 }

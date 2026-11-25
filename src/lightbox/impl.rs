@@ -324,7 +324,7 @@ impl Lightbox {
                         started.set(Some(now));
                         now
                     });
-                    let (opacity, done) = close_fade_opacity(start.elapsed());
+                    let (opacity, done) = close_fade_opacity(start.elapsed(), CLOSE_FADE_MS);
                     root.set_opacity(opacity);
                     if done {
                         root.set_visible(false);
@@ -2672,7 +2672,7 @@ impl Lightbox {
                     now
                 }
             };
-            let (opacity, done) = close_fade_opacity(start.elapsed());
+            let (opacity, done) = close_fade_opacity(start.elapsed(), EDITOR_FADE_MS);
             root.set_opacity(opacity);
             for companion in lightbox.handoff_companions.borrow().iter() {
                 companion.set_opacity(opacity);
@@ -2689,6 +2689,15 @@ impl Lightbox {
             lightbox.close();
             glib::ControlFlow::Break
         });
+    }
+
+    /// The edited frame the viewer shows for `photo_id`, if it is on screen,
+    /// so the editor can start from it instead of an empty canvas.
+    pub fn displayed_paintable(&self, photo_id: i64) -> Option<gtk::gdk::Paintable> {
+        if !self.root.is_visible() || self.current_photo()?.id() != photo_id {
+            return None;
+        }
+        self.picture.paintable()
     }
 
     /// Whether the viewer is fading out over a page opened underneath it.

@@ -35,6 +35,8 @@ pub struct EditEditor {
     copy_saved: Rc<RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
     first_frame_shown: Rc<Cell<bool>>,
     preview_ready: Rc<Cell<bool>>,
+    placeholder_active: Rc<Cell<bool>>,
+    show_placeholder_action: Rc<dyn Fn(&gtk::gdk::Paintable)>,
 }
 
 impl EditEditor {
@@ -121,6 +123,19 @@ impl EditEditor {
     /// the window can wait on it before showing the editor page.
     pub fn preview_ready(&self) -> bool {
         self.preview_ready.get()
+    }
+
+    /// Show `paintable` (the viewer's frame or the gallery tile, both already
+    /// edited) on the canvas until the editor's own first frame replaces it,
+    /// so opening never shows an empty canvas. Ignored once a preview has
+    /// arrived.
+    pub fn show_placeholder(&self, paintable: &gtk::gdk::Paintable) {
+        (self.show_placeholder_action)(paintable);
+    }
+
+    /// Whether a stand-in from `show_placeholder` is still on the canvas.
+    pub fn has_placeholder(&self) -> bool {
+        self.placeholder_active.get()
     }
 }
 
@@ -703,6 +718,21 @@ pub fn build(
     // holds only the unadjusted base).
     let first_frame_shown = Rc::new(Cell::new(false));
     let preview_ready = Rc::new(Cell::new(false));
+    // A stand-in from `show_placeholder` is on the canvas. It already has the
+    // recipe's overlays and drawings baked in, so their layers stay hidden
+    // until the editor's own frame replaces it.
+    let placeholder_active = Rc::new(Cell::new(false));
+    let end_placeholder: Rc<dyn Fn()> = {
+        let placeholder_active = placeholder_active.clone();
+        let overlay_layer = overlay_layer.clone();
+        let draw_layer = draw_layer.clone();
+        Rc::new(move || {
+            if placeholder_active.replace(false) {
+                overlay_layer.set_opacity(1.0);
+                draw_layer.set_opacity(1.0);
+            }
+        })
+    };
     let preview_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     // Keep source-resolution edit bases across adjustments so slider changes
     // reuse the decoded pixels instead of rereading the original.
@@ -1295,6 +1325,8 @@ pub fn build(
         let sync_gpu_view = sync_gpu_view.clone();
         let first_frame_shown = first_frame_shown.clone();
         let preview_ready = preview_ready.clone();
+        let placeholder_active = placeholder_active.clone();
+        let end_placeholder = end_placeholder.clone();
         Rc::new(move || {
             // Throttle, not debounce: the old code reset the timer on every
             // slider tick, so a continuous drag skipped every intermediate
@@ -1327,8 +1359,17 @@ pub fn build(
             let active_rotation = active_rotation_for_queue.clone();
             let first_frame_shown = first_frame_shown.clone();
             let preview_ready = preview_ready.clone();
+            let placeholder_active = placeholder_active.clone();
+            let end_placeholder = end_placeholder.clone();
+            // The editor's first preview starts at once; only later requests
+            // are throttled.
+            let request_throttle_ms = if generation.get() == 0 {
+                0
+            } else {
+                PREVIEW_THROTTLE_MS
+            };
             let source = glib::timeout_add_local_once(
-                Duration::from_millis(PREVIEW_THROTTLE_MS),
+                Duration::from_millis(request_throttle_ms),
                 move || {
                     preview_debounce_for_fire.borrow_mut().take();
                     let current_generation = generation.get().wrapping_add(1);
@@ -1424,6 +1465,8 @@ pub fn build(
                     let cpu_preview_started = cpu_preview_started;
                     let first_frame_shown = first_frame_shown.clone();
                     let preview_ready = preview_ready.clone();
+                    let placeholder_active = placeholder_active.clone();
+                    let end_placeholder = end_placeholder.clone();
                     glib::timeout_add_local(Duration::from_millis(25), move || {
                         match receiver.try_recv() {
                             Ok(result) => {
@@ -1515,10 +1558,16 @@ pub fn build(
                                                 crate::thumbnail::viewer_trace_reference(&photo.path()),
                                             );
                                         }
-                                        picture.set_paintable(Some(&texture));
-                                        // Keep the CPU preview visible until the first verified
-                                        // GPU frame has actually been presented.
-                                        picture.set_opacity(1.0);
+                                        // A stand-in already shows the edited photo, so keep
+                                        // it over the unadjusted GPU base until the first GPU
+                                        // frame is presented.
+                                        if !(gpu_base_requested && placeholder_active.get()) {
+                                            picture.set_paintable(Some(&texture));
+                                            // Keep the CPU preview visible until the first
+                                            // verified GPU frame has actually been presented.
+                                            picture.set_opacity(1.0);
+                                            end_placeholder();
+                                        }
                                         if native {
                                             let anchor =
                                                 pending_one_to_one_anchor.borrow_mut().take();
@@ -1559,6 +1608,10 @@ pub fn build(
                                     }
                                     Err(error) => {
                                         status.set_text(&format!("Preview failed: {error}"));
+                                        if placeholder_active.get() {
+                                            picture.set_paintable(gtk::gdk::Paintable::NONE);
+                                            end_placeholder();
+                                        }
                                         preview_ready.set(true);
                                         first_frame_shown.set(true);
                                     }
@@ -1665,9 +1718,11 @@ pub fn build(
     if let Some(gpu_canvas) = &gpu_canvas {
         let picture = picture.clone();
         let first_frame_shown = first_frame_shown.clone();
+        let end_placeholder = end_placeholder.clone();
         gpu_canvas.set_frame_presented_handler(move || {
             picture.set_opacity(0.0);
             first_frame_shown.set(true);
+            end_placeholder();
         });
         let gpu_failed = gpu_failed.clone();
         let schedule_preview = schedule_preview.clone();
@@ -3231,6 +3286,25 @@ pub fn build(
 
     queue_preview();
 
+    let show_placeholder_action: Rc<dyn Fn(&gtk::gdk::Paintable)> = {
+        let picture = picture.clone();
+        let overlay_layer = overlay_layer.clone();
+        let draw_layer = draw_layer.clone();
+        let placeholder_active = placeholder_active.clone();
+        let preview_ready = preview_ready.clone();
+        let first_frame_shown = first_frame_shown.clone();
+        Rc::new(move |paintable| {
+            if preview_ready.get() || first_frame_shown.get() {
+                return;
+            }
+            picture.set_paintable(Some(paintable));
+            picture.set_opacity(1.0);
+            overlay_layer.set_opacity(0.0);
+            draw_layer.set_opacity(0.0);
+            placeholder_active.set(true);
+        })
+    };
+
     EditEditor {
         root,
         photo_id: photo.id(),
@@ -3249,6 +3323,8 @@ pub fn build(
         copy_saved,
         first_frame_shown,
         preview_ready,
+        placeholder_active,
+        show_placeholder_action,
     }
 }
 

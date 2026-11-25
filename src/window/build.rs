@@ -3971,9 +3971,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // index. Photos, Folders and Albums keep their existing route.
             let opened_from_library =
                 main_stack.visible_child_name().as_deref() == Some("library");
+            // The edited image already on screen (the viewer's frame, else the
+            // gallery tile) stands in on the editor canvas until the editor's
+            // own first frame is ready, so both fades can start at once.
+            let placeholder = lightbox.displayed_paintable(id).or_else(|| {
+                gallery
+                    .transition_source_for_photo(id)
+                    .map(|(_, paintable)| paintable)
+                    .filter(|paintable| !paintable.is::<gtk::WidgetPaintable>())
+            });
             // Opened from the viewer: its last frame stays over the editor
-            // until the editor has drawn the photo, then fades out, instead
-            // of cutting to an empty canvas. Elsewhere this closes at once.
+            // until the editor shows the photo, then fades out, instead of
+            // cutting to an empty canvas. Elsewhere this closes at once.
             {
                 let edit_editor = edit_editor.clone();
                 lightbox.fade_out_to(
@@ -3982,7 +3991,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         edit_editor.try_borrow().is_ok_and(|editor| {
                             editor
                                 .as_ref()
-                                .is_some_and(|editor| editor.photo_id() == id && editor.first_frame_shown())
+                                .is_some_and(|editor| {
+                                    editor.photo_id() == id
+                                        && (editor.first_frame_shown() || editor.has_placeholder())
+                                })
                         })
                     },
                 );
@@ -4069,6 +4081,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 saved,
                 export_for_editor.clone(),
             );
+            if let Some(placeholder) = &placeholder {
+                editor.show_placeholder(placeholder);
+            }
             {
                 let one_to_one = info.one_to_one.clone();
                 editor.set_one_to_one_sync_handler(move |enabled| {
@@ -4123,10 +4138,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 main_stack.set_visible_child_name("edit");
                 return;
             }
-            // From a page: keep it on screen while the editor decodes its
-            // preview (up to the viewer handoff's limit), then crossfade
-            // with the viewer's close-fade length, instead of cutting to an
-            // empty canvas.
+            // From a page: keep it on screen until the editor shows the photo
+            // (its stand-in, else its preview, up to the viewer handoff's
+            // limit), then crossfade over EDITOR_FADE_MS, instead of cutting
+            // to an empty canvas.
             let edit_editor = edit_editor.clone();
             let edit_open_serial = edit_open_serial.clone();
             let requested = std::time::Instant::now();
@@ -4134,10 +4149,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if edit_open_serial.get() != open_serial {
                     return glib::ControlFlow::Break;
                 }
+                let placeholder_shown = edit_editor
+                    .try_borrow()
+                    .is_ok_and(|editor| editor.as_ref().is_some_and(|editor| editor.has_placeholder()));
                 let ready = edit_editor.try_borrow().is_ok_and(|editor| {
                     editor
                         .as_ref()
-                        .is_some_and(|editor| editor.photo_id() == id && editor.preview_ready())
+                        .is_some_and(|editor| {
+                            editor.photo_id() == id
+                                && (editor.preview_ready() || editor.has_placeholder())
+                        })
                 });
                 let waited = requested.elapsed();
                 if !ready && waited < crate::lightbox::HANDOFF_WAIT_LIMIT {
@@ -4145,12 +4166,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_EDIT_OPEN stage=crossfade waited_ms={:.1} preview_ready={}",
+                        "PIC_EDIT_OPEN stage=crossfade waited_ms={:.1} ready={} placeholder={}",
                         waited.as_secs_f64() * 1000.0,
-                        ready
+                        ready,
+                        placeholder_shown
                     );
                 }
-                stack.set_transition_duration(crate::lightbox::CLOSE_FADE_MS);
+                stack.set_transition_duration(crate::lightbox::EDITOR_FADE_MS);
                 stack.set_visible_child_full("edit", gtk::StackTransitionType::Crossfade);
                 glib::ControlFlow::Break
             });
@@ -4655,12 +4677,12 @@ thread_local! {
     static LEAVING_EDITOR_WITH_FADE: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Leave the photo editor for `page`, crossfading over the viewer's close
-/// fade length like the editor's open does. Without animations the switch
+/// Leave the photo editor for `page`, crossfading over EDITOR_FADE_MS like
+/// the editor's open does. Without animations the switch
 /// is immediate; switching to the page already shown does nothing.
 fn leave_photo_editor(stack: &gtk::Stack, page: &str) {
     if stack.is_mapped() && stack.settings().is_gtk_enable_animations() {
-        stack.set_transition_duration(crate::lightbox::CLOSE_FADE_MS);
+        stack.set_transition_duration(crate::lightbox::EDITOR_FADE_MS);
         LEAVING_EDITOR_WITH_FADE.with(|leaving| leaving.set(true));
         stack.set_visible_child_full(page, gtk::StackTransitionType::Crossfade);
         LEAVING_EDITOR_WITH_FADE.with(|leaving| leaving.set(false));
@@ -4694,7 +4716,7 @@ fn detach_photo_editor(
     let edit_page = edit_page.clone();
     let edit_editor = edit_editor.clone();
     glib::timeout_add_local_once(
-        Duration::from_millis(u64::from(crate::lightbox::CLOSE_FADE_MS) + 60),
+        Duration::from_millis(u64::from(crate::lightbox::EDITOR_FADE_MS) + 60),
         move || {
             if old_root.parent().as_ref() != Some(edit_page.upcast_ref::<gtk::Widget>()) {
                 return;

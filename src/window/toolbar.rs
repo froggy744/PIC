@@ -578,6 +578,51 @@
     metadata_panel.button.add_css_class("pic-header-action");
     rating_filter_button.add_css_class("pic-header-action");
     info.view_toggle.add_css_class("pic-header-action");
+    // Focus mode: dims every photo but the one under the pointer or the
+    // single selection. It belongs to All Photos, so it shares the date
+    // browser's visibility gate (set wherever the view changes).
+    let focus_mode_button = gtk::ToggleButton::new();
+    focus_mode_button.set_icon_name("focus-windows-symbolic");
+    focus_mode_button.set_tooltip_text(Some("Focus mode: dim all but one photo"));
+    focus_mode_button.add_css_class("pic-header-action");
+    focus_mode_button.set_active(
+        crate::settings::saved_bool(&connection.borrow(), db::FOCUS_MODE_SETTING_KEY)
+            .unwrap_or(false),
+    );
+    focus_mode_button.set_visible(date_browser_button.get_visible());
+    grid::set_focus_mode_enabled(focus_mode_button.is_active());
+    grid::set_focus_mode_in_scope(date_browser_button.get_visible());
+    {
+        let focus_mode_button = focus_mode_button.downgrade();
+        date_browser_button.connect_visible_notify(move |date_button| {
+            let in_scope = date_button.get_visible();
+            if let Some(button) = focus_mode_button.upgrade() {
+                button.set_visible(in_scope);
+            }
+            grid::set_focus_mode_in_scope(in_scope);
+        });
+    }
+    {
+        let connection = connection.clone();
+        let gallery = gallery.clone();
+        focus_mode_button.connect_toggled(move |button| {
+            let enabled = button.is_active();
+            if enabled {
+                // Start lit on the selected photo; with none, dimming waits
+                // for the pointer.
+                grid::set_focus_mode_lit(gallery.selected_photo_ids(None).first().copied());
+            }
+            grid::set_focus_mode_enabled(enabled);
+            if let Err(error) = db::set_setting(
+                &connection.borrow(),
+                db::FOCUS_MODE_SETTING_KEY,
+                if enabled { "true" } else { "false" },
+            ) {
+                eprintln!("Could not save focus mode setting: {error}");
+            }
+        });
+    }
+    header_tools.append(&focus_mode_button);
     header_tools.append(&date_browser_button);
     header_tools.append(&sort_button);
     header_tools.append(&metadata_panel.button);
@@ -636,7 +681,8 @@
         right_header.pack_end(&immersive_tools_separator);
         // Header order, left to right.
         let tools: Vec<(gtk::Widget, gtk::Box)> = [
-            (date_browser_button.clone().upcast::<gtk::Widget>(), "Date browser"),
+            (focus_mode_button.clone().upcast::<gtk::Widget>(), "Focus mode"),
+            (date_browser_button.clone().upcast(), "Date browser"),
             (sort_button.clone().upcast(), "Sort photos"),
             (metadata_panel.button.clone().upcast(), "Photo filters"),
             (rating_filter_button.clone().upcast(), "Filter by rating"),
@@ -656,7 +702,7 @@
         })
         .collect();
         // Least important first; Photo filters stays longest.
-        const SQUEEZE_ORDER: [usize; 5] = [0, 4, 1, 3, 2];
+        const SQUEEZE_ORDER: [usize; 6] = [0, 1, 5, 2, 4, 3];
         const SPARE: i32 = 24;
         const SEARCH_WIDE: i32 = 180;
         const SEARCH_NARROW: i32 = 96;
@@ -674,7 +720,7 @@
                 tool.get_visible()
                     && tool.parent().as_ref() == Some(header_tools.upcast_ref())
             };
-            rating_view_separator.set_visible(in_bar(&tools[3].0) && in_bar(&tools[4].0));
+            rating_view_separator.set_visible(in_bar(&tools[4].0) && in_bar(&tools[5].0));
             immersive_tools_separator.set_visible(tools.iter().any(|(tool, _)| in_bar(tool)));
             let width = header.width();
             if width <= 0 || header_overflow.is_active() {
@@ -758,12 +804,12 @@
                         previous = Some(tool.clone());
                     }
                 }
-                if in_bar(&tools[3].0) {
-                    header_tools.reorder_child_after(&rating_view_separator, Some(&tools[3].0));
+                if in_bar(&tools[4].0) {
+                    header_tools.reorder_child_after(&rating_view_separator, Some(&tools[4].0));
                 }
                 header_overflow.set_visible(count > 0);
             }
-            rating_view_separator.set_visible(in_bar(&tools[3].0) && in_bar(&tools[4].0));
+            rating_view_separator.set_visible(in_bar(&tools[4].0) && in_bar(&tools[5].0));
             immersive_tools_separator.set_visible(tools.iter().any(|(tool, _)| in_bar(tool)));
             glib::ControlFlow::Continue
         });

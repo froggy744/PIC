@@ -190,6 +190,7 @@ pub(crate) fn gallery_scrolling() -> bool {
 // The grid stays one Rust module for private-state compatibility, while its
 // implementation is split into focused source files for maintenance.
 include!("grid/tile.rs");
+include!("grid/focus_mode.rs");
 include!("grid/grouping.rs");
 include!("grid/sectioned_folder.rs");
 include!("grid/photo_wall.rs");

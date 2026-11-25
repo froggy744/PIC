@@ -383,3 +383,8 @@ button.infobar-selected-thumb:hover {
 .photo-tags-global .scrapbook-inspector-paper-title {
     font-weight: 700;
 }
+
+/* Focus mode: the shade over unlit gallery photos (opacity set in code). */
+.focus-dim-layer {
+    background-color: black;
+}

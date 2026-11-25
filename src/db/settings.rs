@@ -5,6 +5,7 @@ pub const CORNER_STYLE_SETTING_KEY: &str = "corner-style";
 pub const THUMBNAIL_SQUARE_CORNERS_SETTING_KEY: &str = "thumbnail-square-corners";
 pub const THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY: &str = "thumbnail-fit-whole-photo";
 pub const THUMBNAIL_FILE_NAMES_SETTING_KEY: &str = "thumbnail-file-names";
+pub const FOCUS_MODE_SETTING_KEY: &str = "gallery-focus-mode";
 pub const THUMBNAIL_HIGH_QUALITY_SETTING_KEY: &str = "thumbnail-high-quality";
 pub const ZOOM_ANIMATIONS_ENABLED_SETTING_KEY: &str = "zoom-animations-enabled";
 pub const LIBRARY_AVAILABLE_SETTING_KEY: &str = "library-stats-available";

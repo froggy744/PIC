@@ -537,6 +537,13 @@ impl Gallery {
                 .and_then(|(_, position)| selection.item(position))
                 .and_downcast::<PhotoObject>();
             sectioned_for_selection.sync_selection();
+            // Focus mode follows a single selection (arrow keys, clicks);
+            // a multi-selection leaves the lit photo to the pointer.
+            if selected.size() == 1 {
+                if let Some(photo) = photo.as_ref() {
+                    focus_mode_follow(photo.id());
+                }
+            }
             (selected_for_signal)(photo);
         });
 

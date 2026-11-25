@@ -296,6 +296,14 @@ mod square_tile {
         // Stored so the offline badge can be created lazily on first use
         // (folder tiles no longer build it eagerly).
         pub unavailable: RefCell<Option<Rc<dyn Fn(PhotoObject, gtk::Widget)>>>,
+        /// Focus-mode dim level drawn now, 0 (lit) to 1 (fully dimmed).
+        pub focus_dim: Cell<f32>,
+        /// Level the focus-mode fade is heading to.
+        pub focus_dim_target: Cell<f32>,
+        pub focus_fade_tick: RefCell<Option<gtk::TickCallbackId>>,
+        /// Black layer inside the photo frame that dims rectangular tiles;
+        /// built on first use. The frame clips it to the theme's corners.
+        pub focus_dim_layer: RefCell<Option<gtk::Box>>,
     }
 
     #[glib::object_subclass]
@@ -315,6 +323,61 @@ mod square_tile {
     }
 
     impl SquareTile {
+        /// Focus mode, Honeycomb: darken an unlit hexagon. Hexagon tiles
+        /// overlap their neighbours' corners, so the shade is masked to the
+        /// hexagon. Rectangular tiles use `focus_dim_layer` instead.
+        fn snapshot_focus_dim(&self, snapshot: &gtk::Snapshot) {
+            let level = self.focus_dim.get();
+            if level <= 0.001 {
+                return;
+            }
+            let obj = self.obj();
+            let (w, h) = (obj.width(), obj.height());
+            if w <= 0 || h <= 0 {
+                return;
+            }
+            self.ensure_hex_mask(w, h);
+            snapshot.push_mask(gtk::gsk::MaskMode::Alpha);
+            if let Some((_, _, node)) = self.hex_mask.borrow().as_ref() {
+                snapshot.append_node(node);
+            }
+            snapshot.pop();
+            snapshot.append_color(
+                &gtk::gdk::RGBA::new(0.0, 0.0, 0.0, level * super::FOCUS_DIM_STRENGTH),
+                &gtk::graphene::Rect::new(0.0, 0.0, w as f32, h as f32),
+            );
+            snapshot.pop();
+        }
+
+        /// Build (or reuse) the alpha mask of this tile's hexagon.
+        fn ensure_hex_mask(&self, w: i32, h: i32) {
+            let stale = self
+                .hex_mask
+                .borrow()
+                .as_ref()
+                .is_none_or(|(mw, mh, _)| *mw != w || *mh != h);
+            if !stale {
+                return;
+            }
+            let bounds = gtk::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
+            let mask = gtk::Snapshot::new();
+            let cr = mask.append_cairo(&bounds);
+            let points = super::honeycomb::vertices(
+                self.hex_width.get().max(1.0),
+                self.hex_height.get().max(1.0),
+            );
+            cr.move_to(points[0].0, points[0].1);
+            for &(x, y) in &points[1..] {
+                cr.line_to(x, y);
+            }
+            cr.close_path();
+            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+            let _ = cr.fill();
+            drop(cr);
+            self.hex_mask
+                .replace(mask.to_node().map(|node| (w, h, node)));
+        }
+
         fn snapshot_hexagon(&self, snapshot: &gtk::Snapshot) {
             let obj = self.obj();
             let w = obj.width();
@@ -324,29 +387,7 @@ mod square_tile {
             }
             let bounds = gtk::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
             if !self.honeycomb_mask_cached.get() {
-                let stale = self
-                    .hex_mask
-                    .borrow()
-                    .as_ref()
-                    .is_none_or(|(mw, mh, _)| *mw != w || *mh != h);
-                if stale {
-                    let mask = gtk::Snapshot::new();
-                    let cr = mask.append_cairo(&bounds);
-                    let points = super::honeycomb::vertices(
-                        self.hex_width.get().max(1.0),
-                        self.hex_height.get().max(1.0),
-                    );
-                    cr.move_to(points[0].0, points[0].1);
-                    for &(x, y) in &points[1..] {
-                        cr.line_to(x, y);
-                    }
-                    cr.close_path();
-                    cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
-                    let _ = cr.fill();
-                    drop(cr);
-                    self.hex_mask
-                        .replace(mask.to_node().map(|node| (w, h, node)));
-                }
+                self.ensure_hex_mask(w, h);
                 snapshot.push_mask(gtk::gsk::MaskMode::Alpha);
                 if let Some((_, _, node)) = self.hex_mask.borrow().as_ref() {
                     snapshot.append_node(node);
@@ -437,6 +478,7 @@ mod square_tile {
             if !self.honeycomb_mask_cached.get() {
                 snapshot.pop();
             }
+            self.snapshot_focus_dim(snapshot);
         }
 
         #[cfg(test)]
@@ -783,7 +825,104 @@ impl SquareTile {
         tile.imp().filename_visible.set(false);
         tile.imp().favorite_indicators_visible.set(true);
         child.as_ref().set_parent(&tile);
+        register_focus_tile(&tile);
+        // Focus mode lights the tile the pointer enters. GTK sets PRELIGHT on
+        // every ancestor of the hovered widget, and Honeycomb's `contains`
+        // keeps it to the hexagon. Losing PRELIGHT changes nothing, so the
+        // last tile stays lit across the gaps.
+        tile.connect_state_flags_changed(|tile, previous| {
+            if tile.state_flags().contains(gtk::StateFlags::PRELIGHT)
+                && !previous.contains(gtk::StateFlags::PRELIGHT)
+            {
+                if let Some(photo_id) = tile.imp().photo.borrow().as_ref().map(PhotoObject::id) {
+                    focus_mode_follow(photo_id);
+                }
+            }
+        });
         tile
+    }
+
+    /// Bring the focus-mode dim level in line with the shared state. Binds
+    /// jump straight there; a lit-photo change fades (see `focus_fade_level`).
+    fn sync_focus_dim(&self, animate: bool) {
+        let imp = self.imp();
+        let photo_id = imp.photo.borrow().as_ref().map(PhotoObject::id);
+        let target = if focus_mode_dims(photo_id) { 1.0 } else { 0.0 };
+        let changed = imp.focus_dim_target.replace(target) != target;
+        let fading = imp.focus_fade_tick.borrow().is_some();
+        // A running fade toward the same target may continue; a bind (no
+        // animation) settles it at once, so a tile unmapped mid-fade can
+        // never stay stuck part-way.
+        if !changed && if fading { animate } else { imp.focus_dim.get() == target } {
+            return;
+        }
+        if let Some(tick) = imp.focus_fade_tick.take() {
+            tick.remove();
+        }
+        let from = imp.focus_dim.get();
+        // Reduced-motion desktops (gtk-enable-animations off) jump.
+        if !animate || !self.is_mapped() || !self.settings().is_gtk_enable_animations() {
+            if from != target {
+                self.show_focus_dim(target);
+            }
+            return;
+        }
+        let start = Cell::new(None::<i64>);
+        let tick = self.add_tick_callback(move |tile, clock| {
+            let now = clock.frame_time();
+            let started = start.get().unwrap_or(now);
+            start.set(Some(started));
+            let (level, done) = focus_fade_level(from, target, now - started);
+            tile.show_focus_dim(level);
+            if done {
+                tile.imp().focus_fade_tick.take();
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+        imp.focus_fade_tick.replace(Some(tick));
+    }
+
+    /// Draw the focus-mode dim at `level` (0 lit, 1 fully dimmed): black
+    /// at `FOCUS_DIM_STRENGTH` over the photo, and the filename faded to
+    /// match. Dimming toward black reads as "lights down" in light and dark
+    /// themes alike.
+    fn show_focus_dim(&self, level: f32) {
+        let imp = self.imp();
+        imp.focus_dim.set(level);
+        let shade = level * FOCUS_DIM_STRENGTH;
+        if let Some(label) = imp.filename_label.borrow().as_ref() {
+            label.set_opacity(1.0 - shade as f64);
+        }
+        let rectangular = !imp.honeycomb.get();
+        let layer = imp.focus_dim_layer.borrow().clone();
+        if rectangular && shade > 0.001 {
+            let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
+                return;
+            };
+            let layer = layer.unwrap_or_else(|| {
+                let layer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                layer.add_css_class("focus-dim-layer");
+                layer.set_can_target(false);
+                layer.set_halign(gtk::Align::Fill);
+                layer.set_valign(gtk::Align::Fill);
+                frame.add_overlay(&layer);
+                imp.focus_dim_layer.replace(Some(layer.clone()));
+                layer
+            });
+            // Badges are added lazily; keep the shade above them.
+            if frame.last_child().as_ref() != Some(layer.upcast_ref()) {
+                layer.insert_before(&frame, None::<&gtk::Widget>);
+            }
+            layer.set_opacity(shade as f64);
+            layer.set_visible(true);
+        } else if let Some(layer) = layer {
+            layer.set_visible(false);
+        }
+        if !rectangular {
+            self.queue_draw();
+        }
     }
 
     pub(crate) fn photo(&self) -> Option<PhotoObject> {
@@ -887,6 +1026,7 @@ impl SquareTile {
             label.set_margin_end(4);
             label.set_can_target(false);
             label.add_css_class("thumbnail-filename");
+            label.set_opacity(1.0 - (self.imp().focus_dim.get() * FOCUS_DIM_STRENGTH) as f64);
             label.set_parent(self);
             self.imp().filename_label.replace(Some(label));
             created = true;
@@ -1013,6 +1153,7 @@ impl SquareTile {
             self.unload_visual();
         }
         self.imp().photo.replace(Some(photo.clone()));
+        self.sync_focus_dim(false);
         if photo.corrupt() {
             self.clear_corrupt_visual();
         }
@@ -1363,6 +1504,7 @@ impl SquareTile {
             .is_some_and(|current| current.id() == photo.id());
         if !same_photo {
             self.imp().photo.replace(Some(photo.clone()));
+            self.sync_focus_dim(false);
         }
         self.imp().photo_index.set(Some(photo_index));
 
@@ -1567,6 +1709,7 @@ impl SquareTile {
         self.imp().visual_loaded.set(false);
         self.imp().applied_visual_key.borrow_mut().take();
         self.imp().photo.take();
+        self.sync_focus_dim(false);
         self.imp().photo_index.set(None);
         if let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() {
             if let Some(picture) = frame.child().and_downcast::<gtk::Picture>() {
@@ -1952,6 +2095,8 @@ impl SquareTile {
                 self.remove_css_class("honeycomb-tile");
                 self.imp().hex_mask.take();
             }
+            // Honeycomb and rectangular tiles draw the focus dim differently.
+            self.show_focus_dim(self.imp().focus_dim.get());
             self.queue_draw();
         }
     }

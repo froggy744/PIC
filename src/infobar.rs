@@ -411,6 +411,7 @@ impl InfoBar {
         rating_value.set_visible(false);
         rating_value.set_width_chars(3);
         rating_value.set_xalign(0.0);
+        rating_value.add_css_class("rating-value");
         rating_content.append(&rating_value);
         rating.set_child(Some(&rating_content));
         rating.set_has_frame(false);
@@ -1558,8 +1559,7 @@ impl InfoBar {
         } else {
             "starred-symbolic"
         }));
-        self.rating_value
-            .set_markup(&format!("<b>{}</b>", rating_label(rating)));
+        self.rating_value.set_text(&rating_label(rating));
         self.rating_value.set_visible(rating > 0);
         let tooltip = if rating == 0 {
             "Rate photo".to_string()

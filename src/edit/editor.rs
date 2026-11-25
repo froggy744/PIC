@@ -393,7 +393,6 @@ pub fn build(
 
     let tools_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     tools_box.add_css_class("pic-editor-panel");
-    tools_box.add_css_class("pic-editor-panel-flat");
     tools_box.set_valign(gtk::Align::Start);
     tools_box.set_hexpand(true);
     tools_box.set_halign(gtk::Align::Fill);

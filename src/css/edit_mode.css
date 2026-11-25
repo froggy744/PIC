@@ -153,21 +153,6 @@
   margin-top: 0;
 }
 
-/* Each inspector panel sits in one soft card. */
-.pic-editor-panel {
-  padding: 12px;
-  background-color: alpha(@theme_fg_color, 0.035);
-  border: 1px solid alpha(@theme_fg_color, 0.08);
-  border-radius: 12px;
-}
-
-/* Tools sits directly on the editor background, without the card. */
-.pic-editor-panel.pic-editor-panel-flat {
-  padding: 0;
-  background: none;
-  border: none;
-}
-
 /* Text style and alignment toggles read as one bordered button row. */
 .editor-tool-group.editor-format-group button.editor-tool-button {
   min-height: 30px;

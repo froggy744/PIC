@@ -1259,7 +1259,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let info_for_collection_nav = info.clone();
     let search_for_collection_nav = search_text.clone();
     let sort_for_collection_nav = sort.clone();
-        let group_mode_for_collection_nav = group_mode.clone();
+    let group_mode_for_collection_nav = group_mode.clone();
     let gallery_for_collection_nav = gallery.clone();
     let lightbox_for_collection_nav = lightbox.clone();
     let front_for_collection_nav = front.clone();
@@ -1290,6 +1290,29 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             destination,
             ..nav_base.clone()
         };
+        let nav_request = |filter: sidebar::SidebarFilter,
+                           destination: db::Destination,
+                           favorites_only: bool| PhotoListRequest {
+            filter,
+            scope: nav_scope(destination),
+            sort: sort_for_collection_nav.get(),
+            favorites_only,
+        };
+        // A candidate page's photos, through the grid's pipeline.
+        let nav_photo_list = |filter, destination, favorites_only| {
+            photo_list(
+                &connection_for_collection_nav.borrow(),
+                &nav_request(filter, destination, favorites_only),
+            )
+            .unwrap_or_default()
+        };
+        // Whether a candidate page has photos, without ordering them.
+        let nav_has_photos = |filter, destination| {
+            photo_list_has_photos(
+                &connection_for_collection_nav.borrow(),
+                &nav_request(filter, destination, false),
+            )
+        };
 
         match current_filter {
             sidebar::SidebarFilter::Folder(current_folder_id) => {
@@ -1317,16 +1340,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         candidate += step;
                         continue;
                     };
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::Folder(folder.id)),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
+                    let nav_list = nav_photo_list(
+                        sidebar::SidebarFilter::Folder(folder.id),
+                        db::Destination::Folder(folder.id),
+                        false,
+                    );
 
-                    if !photos.is_empty() {
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Folder(folder.id);
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1350,7 +1370,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         let objects = photos
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
@@ -1374,24 +1394,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     return;
                 };
                 let first_available_album = albums.iter().position(|album| {
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::Album(album.id)),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_files_check(&mut photos, &nav_base);
-                    !photos.is_empty()
+                    nav_has_photos(sidebar::SidebarFilter::Album(album.id), db::Destination::Album(album.id))
                 });
                 let last_available_album = albums.iter().rposition(|album| {
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::Album(album.id)),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_files_check(&mut photos, &nav_base);
-                    !photos.is_empty()
+                    nav_has_photos(sidebar::SidebarFilter::Album(album.id), db::Destination::Album(album.id))
                 });
 
                 // The album sequence is connected to Recently Added at its
@@ -1399,20 +1405,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 // navigation feel continuous instead of opening another
                 // album unexpectedly.
                 if direction < 0 && Some(current_index) == first_available_album {
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::AllPhotos),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    limit_recently_added(
-                        &connection_for_collection_nav.borrow(),
+                    let nav_list = nav_photo_list(
                         sidebar::SidebarFilter::RecentlyAdded,
-                        &mut photos,
+                        db::Destination::AllPhotos,
+                        false,
                     );
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
-                    if !photos.is_empty() {
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1431,7 +1429,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         gallery_for_collection_nav.select_last_photo();
                         let objects = photos
                             .iter()
@@ -1449,15 +1447,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let folders = db::folders(&connection_for_collection_nav.borrow())
                         .unwrap_or_default();
                     for folder in folders {
-                        let mut photos = db::browse_photos(
-                            &connection_for_collection_nav.borrow(),
-                            &nav_scope(db::Destination::Folder(folder.id)),
-                        )
-                        .unwrap_or_default();
-                        retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                        apply_files_check(&mut photos, &nav_base);
-                        sort_photos(&mut photos, sort_for_collection_nav.get());
-                        if photos.is_empty() {
+                        let nav_list = nav_photo_list(
+                            sidebar::SidebarFilter::Folder(folder.id),
+                            db::Destination::Folder(folder.id),
+                            false,
+                        );
+                        if nav_list.photos.is_empty() {
                             continue;
                         }
 
@@ -1484,7 +1479,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         let objects = photos
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
@@ -1499,16 +1494,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let mut candidate = current_index as isize + step;
                 while candidate >= 0 && candidate < albums.len() as isize {
                     let album = &albums[candidate as usize];
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::Album(album.id)),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
+                    let nav_list = nav_photo_list(
+                        sidebar::SidebarFilter::Album(album.id),
+                        db::Destination::Album(album.id),
+                        false,
+                    );
 
-                    if !photos.is_empty() {
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Album(album.id);
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1527,7 +1519,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         let objects = photos
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
@@ -1548,15 +1540,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             | sidebar::SidebarFilter::RecentlyAdded => {
                 // Photos connects forward to Favorites at its last item.
                 if current_filter == sidebar::SidebarFilter::All && direction > 0 {
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::Favorites),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
-                    if !photos.is_empty() {
+                    let nav_list = nav_photo_list(
+                        sidebar::SidebarFilter::Favorites,
+                        db::Destination::Favorites,
+                        false,
+                    );
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1575,7 +1564,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         let objects = photos
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
@@ -1593,15 +1582,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if current_filter == sidebar::SidebarFilter::Favorites
                     && direction < 0
                 {
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::AllPhotos),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
-                    if !photos.is_empty() {
+                    let nav_list = nav_photo_list(
+                        sidebar::SidebarFilter::All,
+                        db::Destination::AllPhotos,
+                        false,
+                    );
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::All;
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1620,7 +1606,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         gallery_for_collection_nav.select_last_photo();
                         let objects = photos
                             .iter()
@@ -1636,20 +1622,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if current_filter == sidebar::SidebarFilter::Favorites
                     && direction > 0
                 {
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::AllPhotos),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    limit_recently_added(
-                        &connection_for_collection_nav.borrow(),
+                    let nav_list = nav_photo_list(
                         sidebar::SidebarFilter::RecentlyAdded,
-                        &mut photos,
+                        db::Destination::AllPhotos,
+                        false,
                     );
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
-                    if !photos.is_empty() {
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1668,7 +1646,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         let objects = photos
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
@@ -1683,15 +1661,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if current_filter == sidebar::SidebarFilter::RecentlyAdded
                     && direction < 0
                 {
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::Favorites),
-                    )
-                    .unwrap_or_default();
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
-                    if !photos.is_empty() {
+                    let nav_list = nav_photo_list(
+                        sidebar::SidebarFilter::Favorites,
+                        db::Destination::Favorites,
+                        false,
+                    );
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1710,7 +1685,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         gallery_for_collection_nav.select_last_photo();
                         let objects = photos
                             .iter()
@@ -1730,15 +1705,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let albums = db::browse_albums(&connection_for_collection_nav.borrow(), &nav_base)
                         .unwrap_or_default();
                     for album in albums {
-                        let mut photos = db::browse_photos(
-                            &connection_for_collection_nav.borrow(),
-                            &nav_scope(db::Destination::Album(album.id)),
-                        )
-                        .unwrap_or_default();
-                        retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                        apply_files_check(&mut photos, &nav_base);
-                        sort_photos(&mut photos, sort_for_collection_nav.get());
-                        if photos.is_empty() {
+                        let nav_list = nav_photo_list(
+                            sidebar::SidebarFilter::Album(album.id),
+                            db::Destination::Album(album.id),
+                            false,
+                        );
+                        if nav_list.photos.is_empty() {
                             continue;
                         }
 
@@ -1760,7 +1732,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         let objects = photos
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)
@@ -1795,26 +1767,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let favorites_only = current_filter == sidebar::SidebarFilter::Favorites;
                 while candidate >= 0 && candidate < folders.len() as isize {
                     let folder = &folders[candidate as usize];
-                    let mut photos = db::browse_photos(
-                        &connection_for_collection_nav.borrow(),
-                        &nav_scope(db::Destination::Folder(folder.id)),
-                    )
-                    .unwrap_or_default();
-                    if favorites_only {
-                        // Favourites within this folder: the scope has one
-                        // destination, so the folder is the query's.
-                        photos.retain(|photo| photo.favorite);
-                    }
-                    retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    limit_recently_added(
-                        &connection_for_collection_nav.borrow(),
-                        current_filter,
-                        &mut photos,
+                    let nav_list = nav_photo_list(
+                        // Recently Added keeps its limit on each folder page.
+                        if current_filter == sidebar::SidebarFilter::RecentlyAdded {
+                            current_filter
+                        } else {
+                            sidebar::SidebarFilter::Folder(folder.id)
+                        },
+                        db::Destination::Folder(folder.id),
+                        favorites_only,
                     );
-                    apply_files_check(&mut photos, &nav_base);
-                    sort_photos(&mut photos, sort_for_collection_nav.get());
 
-                    if !photos.is_empty() {
+                    if !nav_list.photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Folder(folder.id);
                         filter_for_collection_nav.set(new_filter);
                         restore_section_layout(
@@ -1838,7 +1802,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             group_mode_for_collection_nav.get(),
                             search.is_empty(),
                         );
-                        gallery_for_collection_nav.replace(&photos);
+                        let photos = show_photo_list_now(&gallery_for_collection_nav, nav_list);
                         let objects = photos
                             .iter()
                             .map(crate::photo_object::PhotoObject::from_photo)

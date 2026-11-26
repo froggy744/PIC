@@ -139,7 +139,7 @@ fn members(
 /// The photos the database returns for `scope` (taken for `filter`), before
 /// format, RAW+JPEG, Recently Added and Files filtering. `None` for
 /// destinations that show no photo grid (Albums, Library).
-pub(super) fn collection_photos(
+fn collection_photos(
     connection: &Connection,
     filter: SidebarFilter,
     scope: &db::BrowseScope,
@@ -150,7 +150,7 @@ pub(super) fn collection_photos(
     Some(db::browse_photos(connection, scope).unwrap_or_default())
 }
 
-pub(super) fn limit_recently_added(connection: &Connection, filter: SidebarFilter, photos: &mut Vec<db::Photo>) {
+fn limit_recently_added(connection: &Connection, filter: SidebarFilter, photos: &mut Vec<db::Photo>) {
     if filter != SidebarFilter::RecentlyAdded {
         return;
     }
@@ -167,7 +167,7 @@ pub(super) fn limit_recently_added(connection: &Connection, filter: SidebarFilte
 
 /// The Files choice (Online, Offline, Corrupt) SQL cannot express, checked on
 /// the loaded photos. Stored ratings are already in the query.
-pub(super) fn apply_files_check(photos: &mut Vec<db::Photo>, scope: &db::BrowseScope) {
+fn apply_files_check(photos: &mut Vec<db::Photo>, scope: &db::BrowseScope) {
     match scope.files_check() {
         Some(RatingFilter::Online) => {
             photos.retain(|photo| crate::source::folder_available(photo.folder_id));

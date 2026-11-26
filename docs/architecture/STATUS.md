@@ -43,10 +43,10 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 | 14 | Browse scope: one value for "what am I browsing" | Strong | merged | merge `16fa04e7` (`refactor/browse-scope`) | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
-| 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | in progress (`refactor/photo-list-pipeline`) | none | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
+| 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | merged | merge `456325ac` (`refactor/photo-list-pipeline`) | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
 | 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
 | 17 | Album list: one owner of the albums as shown | Strong | deferred (its count bug fixed, see below) | none | `src/window/albums.rs`, `src/window/layout.rs`, `src/sidebar.rs` |
-| 18 | Collection navigation out of `build()` | Strong | deferred | none | `src/window/build.rs` |
+| 18 | Collection navigation out of `build()` | Strong | deferred (test gap recorded, see its section) | none | `src/window/build.rs` |
 | 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
 
@@ -538,7 +538,9 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
 
-### 15 · One photo-list pipeline (in progress, `refactor/photo-list-pipeline`)
+### 15 · One photo-list pipeline (merged 2026-11-26)
+Merged into `main` 2026-11-26 (merge `456325ac`, branch deleted), approved by the owner. Open: the follow-ups below; collection navigation's test gap is recorded under 18. Next in order: 17.
+
 Started 2026-11-26 at `main` @ `0653bd77`, on top of 14's `BrowseScope`. Decisions D1-D6 approved by the owner.
 
 #### The four entry points before (at `0653bd77`)
@@ -624,6 +626,15 @@ Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch);
 #### Follow-ups
 - The rating is still held twice (session row for queries, cell for photo marks and the offline watch); one owner when 17/20 give the views a scope.
 - `admits(photo)` for 15's reducer.
+
+### 18 · Collection navigation out of `build()` (deferred)
+**Test coverage gap (recorded 2026-11-26, after 15).** Collection navigation (the `collection_navigation` closure in `build()`, `src/window/build.rs`, wired to the viewer through `Lightbox::set_collection_navigation_handler`) has no test of its own: no unit or display test drives it, and the GUI harness has no step for it. 15 moved its lists onto the shared pipeline; what is tested is only the request shape its pages use (`navigation_pages_are_one_folder_sorted_flat_with_favourites_kept` in `window::photo_list`) and the stale-result guard it calls (`a_gallery_shown_now_drops_an_older_refresh`). Untested behaviour:
+- which page comes next in each direction (folders in visible sidebar order, albums in order, the Recently Added ↔ albums ↔ folders boundaries, library views moving by the current photo's folder);
+- skipping empty candidates (`photo_list_has_photos`), including under a toolbar rating, metadata filters, a search and RAW+JPEG pairing;
+- favourites within a folder page, the Recently Added limit on folder pages;
+- what it updates: the sidebar filter and selection, section layout, grouping, gallery, `select_last_photo`, and reopening the viewer on the new page.
+
+Also seen in 15: the `Folder(current_folder_id)` arm is dead (the closure returns early for Folder), and whether its folder pages should be the Folder stream instead of single-folder flat pages is 18's decision (15 decision D3). Moving it out of `build()` into a pure "next page" decision plus a GTK adapter is what makes those testable; write the table tests first.
 
 ### Round three (2026-11-26): deferred, not rejected
 The owner deferred all seven candidates: the bugs the review found are fixed one at a time instead of starting another refactoring cycle. The candidates stay valid; revisit them in this order when a refactor is wanted: 14 → 15 → 17 → 16 → 18, then 19 and 20.

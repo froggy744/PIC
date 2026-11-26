@@ -3,11 +3,16 @@
 //! public lightbox API so the same file runs on older commits for comparison.
 //!
 //! PIC_BENCH_LIGHTBOX_SCENARIO  cold_fit | fit_100 | fit_100_fit_100 |
-//!                              png_jpeg_raw | png_cached | rapid | close_decoding
+//!                              toggle_repeat | png_jpeg_raw | png_cached |
+//!                              rapid | sustained | close_decoding
 //! PIC_BENCH_LIGHTBOX_PNG       large PNG
 //! PIC_BENCH_LIGHTBOX_JPEG      JPEG
 //! PIC_BENCH_LIGHTBOX_RAW       RAW
 //! PIC_BENCH_LIGHTBOX_SET       '|'-separated photos for rapid navigation
+//! PIC_BENCH_LIGHTBOX_SUSTAINED '|'-separated large photos for sustained navigation
+//!
+//! `scripts/bench-lightbox-large-images.sh` runs every scenario five times and
+//! prints only the summary.
 
 use super::*;
 use std::time::{Duration, Instant};
@@ -90,6 +95,92 @@ fn wait_texture(
     }
 }
 
+/// Instant of the last painted frame of `window` (the texture is presented).
+fn paint_watch(window: &gtk::Window) -> Rc<Cell<Option<Instant>>> {
+    let painted = Rc::new(Cell::new(None));
+    let clock = window.frame_clock().expect("window frame clock");
+    let painted_for_clock = painted.clone();
+    clock.connect_after_paint(move |_| painted_for_clock.set(Some(Instant::now())));
+    painted
+}
+
+/// Milliseconds from `started` until a frame was painted after `shown_at`.
+fn wait_present(
+    lightbox: &Lightbox,
+    painted: &Cell<Option<Instant>>,
+    started: Instant,
+    shown_at: Instant,
+) -> u128 {
+    let context = glib::MainContext::default();
+    lightbox.picture.queue_draw();
+    loop {
+        while context.pending() {
+            context.iteration(false);
+        }
+        if let Some(at) = painted.get().filter(|at| *at > shown_at) {
+            return at.duration_since(started).as_millis();
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "frame never painted"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// One navigation step, dwelling `dwell`: time until the next photo's texture
+/// is set and until the first frame painted with it (None: not presented
+/// before the next step, i.e. skipped by rapid navigation).
+fn navigate_step(
+    lightbox: &Lightbox,
+    painted: &Cell<Option<Instant>>,
+    direction: i32,
+    dwell: Duration,
+) -> (Option<u128>, Option<u128>) {
+    let context = glib::MainContext::default();
+    let before = shown(lightbox);
+    let started = Instant::now();
+    lightbox.navigate_photo(direction);
+    let (mut display, mut present, mut shown_at) = (None, None, None);
+    while started.elapsed() < dwell {
+        while context.pending() {
+            context.iteration(false);
+        }
+        if display.is_none() && shown(lightbox) != before {
+            display = Some(started.elapsed().as_millis());
+            shown_at = Some(Instant::now());
+            lightbox.picture.queue_draw();
+        } else if let (Some(shown_at), None) = (shown_at, present) {
+            if let Some(at) = painted.get().filter(|at| *at > shown_at) {
+                present = Some(at.duration_since(started).as_millis());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    (display, present)
+}
+
+fn process_threads() -> (usize, usize) {
+    let mut total = 0;
+    let mut dropping = 0;
+    for task in std::fs::read_dir("/proc/self/task")
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        total += 1;
+        let comm = std::fs::read_to_string(task.path().join("comm")).unwrap_or_default();
+        if comm.starts_with("viewer-retain") {
+            dropping += 1;
+        }
+    }
+    (total, dropping)
+}
+
+fn ms_text(ms: Option<u128>) -> String {
+    ms.map_or("-".to_string(), |ms| ms.to_string())
+}
+
 fn report(scenario: &str, step: &str, ms: Option<u128>) {
     // Let prefetch and late workers finish so memory is the settled value.
     pump(Duration::from_millis(1200));
@@ -118,6 +209,7 @@ fn bench_lightbox_large_images() {
         .build();
     window.present();
     pump(Duration::from_millis(500));
+    let painted = paint_watch(&window);
     reset_peak();
     println!(
         "BENCH scenario={scenario} step=baseline rss_mb={}",
@@ -152,6 +244,31 @@ fn bench_lightbox_large_images() {
                 report(&scenario, "100_again", Some(ms));
             }
         }
+        "toggle_repeat" => {
+            let photo = png();
+            lightbox.open(vec![photo.clone()], 0);
+            let (_, mut current) = wait_texture(&lightbox, None, fit(photo.width()));
+            pump(Duration::from_millis(1200));
+            for round in 0..10 {
+                for one_to_one in [true, false] {
+                    let started = Instant::now();
+                    lightbox.set_one_to_one(one_to_one);
+                    let (display, texture) = if one_to_one {
+                        wait_texture(&lightbox, Some(&current), native(photo.width()))
+                    } else {
+                        wait_texture(&lightbox, Some(&current), fit(photo.width()))
+                    };
+                    let present = wait_present(&lightbox, &painted, started, Instant::now());
+                    current = texture;
+                    println!(
+                        "BENCH scenario={scenario} kind=toggle round={round} to={} display_ms={display} present_ms={present}",
+                        if one_to_one { "100" } else { "fit" },
+                    );
+                    pump(Duration::from_millis(150));
+                }
+            }
+            report(&scenario, "toggles", None);
+        }
         "png_jpeg_raw" => {
             lightbox.open(vec![png(), jpeg(), raw()], 0);
             let (ms, first) = wait_texture(&lightbox, None, |_| true);
@@ -174,8 +291,13 @@ fn bench_lightbox_large_images() {
             let (ms, _) = wait_texture(&lightbox, Some(&second), |_| true);
             report(&scenario, "cached_jpeg", Some(ms));
         }
-        "rapid" => {
-            let photos: Vec<PhotoObject> = bench_env("PIC_BENCH_LIGHTBOX_SET")
+        "rapid" | "sustained" => {
+            let list = if scenario == "rapid" {
+                "PIC_BENCH_LIGHTBOX_SET"
+            } else {
+                "PIC_BENCH_LIGHTBOX_SUSTAINED"
+            };
+            let photos: Vec<PhotoObject> = bench_env(list)
                 .split('|')
                 .enumerate()
                 .map(|(index, path)| bench_photo(path, 10 + index as i64))
@@ -183,12 +305,38 @@ fn bench_lightbox_large_images() {
             let count = photos.len();
             lightbox.open(photos, 0);
             wait_texture(&lightbox, None, |_| true);
+            // Rapid: one sweep forward. Sustained: forward and back twice.
+            let sweeps: &[i32] = if scenario == "rapid" {
+                &[1]
+            } else {
+                &[1, -1, 1, -1]
+            };
             let started = Instant::now();
-            // Step about as fast as a person tapping the arrow key: prefetch
-            // starts 250 ms after each photo settles, so it runs concurrently.
-            for _ in 1..count {
-                lightbox.navigate_photo(1);
-                pump(Duration::from_millis(400));
+            let (mut max_rss, mut max_threads, mut max_dropping) = (0, 0, 0);
+            let mut step = 0;
+            for (sweep, direction) in sweeps.iter().enumerate() {
+                // Step about as fast as a person tapping the arrow key:
+                // prefetch starts 250 ms after a photo settles, so it runs
+                // concurrently with the next navigation.
+                for _ in 1..count {
+                    let (display, present) =
+                        navigate_step(&lightbox, &painted, *direction, Duration::from_millis(400));
+                    let (threads, dropping) = process_threads();
+                    max_rss = max_rss.max(proc_mb("VmRSS:"));
+                    max_threads = max_threads.max(threads);
+                    max_dropping = max_dropping.max(dropping);
+                    println!(
+                        "BENCH scenario={scenario} kind=nav step={step} display_ms={} present_ms={}",
+                        ms_text(display),
+                        ms_text(present),
+                    );
+                    step += 1;
+                }
+                println!(
+                    "BENCH scenario={scenario} kind=sweep sweep={sweep} rss_mb={} peak_mb={}",
+                    proc_mb("VmRSS:"),
+                    proc_mb("VmHWM:"),
+                );
             }
             // The foreground generation returns to 0 once the last photo shows.
             let context = glib::MainContext::default();
@@ -196,9 +344,12 @@ fn bench_lightbox_large_images() {
                 while context.pending() {
                     context.iteration(false);
                 }
-                assert!(started.elapsed() < Duration::from_secs(120));
+                assert!(started.elapsed() < Duration::from_secs(300));
                 std::thread::sleep(Duration::from_millis(1));
             }
+            println!(
+                "BENCH scenario={scenario} kind=threads max_threads={max_threads} max_drop_threads={max_dropping} max_rss_mb={max_rss}"
+            );
             report(&scenario, "all", Some(started.elapsed().as_millis()));
         }
         "close_decoding" => {
@@ -211,5 +362,7 @@ fn bench_lightbox_large_images() {
     }
     lightbox.close();
     report(&scenario, "after_close", None);
+    let (threads, dropping) = process_threads();
+    println!("BENCH scenario={scenario} kind=threads_after_close threads={threads} drop_threads={dropping}");
     window.close();
 }

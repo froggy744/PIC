@@ -2030,9 +2030,27 @@ mod tests {
         VIEWER_RETAIN_LIMIT_OVERRIDE.store(0, Ordering::Relaxed);
     }
 
+    /// The retention tests share VIEWER_RETAIN and the limit override, so
+    /// they run one at a time even under a parallel `cargo test`, each
+    /// starting and ending with an empty slot and the default limit.
+    struct RetentionTestGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    impl Drop for RetentionTestGuard {
+        fn drop(&mut self) {
+            reset_retention();
+        }
+    }
+
+    fn retention_guard() -> RetentionTestGuard {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_retention();
+        RetentionTestGuard(guard)
+    }
+
     #[test]
     fn retention_publishes_only_for_the_owner_of_the_photo_in_front() {
-        reset_retention();
+        let _guard = retention_guard();
         let a = retain_rgb("owner-a");
         let b = retain_rgb("owner-b");
         a.front(Some(1));
@@ -2050,7 +2068,7 @@ mod tests {
 
     #[test]
     fn cancelled_or_closed_decode_does_not_publish() {
-        reset_retention();
+        let _guard = retention_guard();
         let a = retain_rgb("cancel");
         a.front(Some(1));
         a.decode_with(64, 64, 1, false, || {});
@@ -2064,7 +2082,7 @@ mod tests {
 
     #[test]
     fn navigation_drops_pixels_and_stale_workers_cannot_publish_or_take() {
-        reset_retention();
+        let _guard = retention_guard();
         let a = retain_rgb("nav-a");
         let b = retain_rgb("nav-b");
         a.front(Some(1));
@@ -2088,7 +2106,7 @@ mod tests {
 
     #[test]
     fn promoted_prefetch_publishes_when_it_finishes() {
-        reset_retention();
+        let _guard = retention_guard();
         let a = retain_rgb("promote");
         a.front(None);
         a.decode_with(64, 64, 7, true, || {});
@@ -2101,7 +2119,7 @@ mod tests {
 
     #[test]
     fn retain_limit_uses_the_decoded_buffer_size() {
-        reset_retention();
+        let _guard = retention_guard();
         let a = retain_rgb("limit");
         let decoded = 320 * 200 * 3;
         a.front(Some(1));
@@ -2117,6 +2135,7 @@ mod tests {
 
     #[test]
     fn native_decode_takes_retained_pixels_without_changing_them() {
+        let _guard = retention_guard();
         for fixture in [retain_rgb("take-rgb"), retain_rgba("take-rgba")] {
             reset_retention();
             let expected = image::open(&fixture.path).unwrap().to_rgba8();

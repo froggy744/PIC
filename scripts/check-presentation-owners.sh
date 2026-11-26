@@ -10,6 +10,11 @@
 # Photo mark commands (candidate 9) are likewise the only writer of photo
 # favourites and ratings:
 #   - src/window/photo_mark_commands.rs (the decision is window::photo_marks)
+# Photo change (candidate 16) gives every photo change one fan-out; it is the
+# only writer of the shown photo's facts (InfoBar::photo_updated) and the
+# Library counts after a change, and writes the gallery's marks:
+#   - src/window/photo_change_widgets.rs (photo_changed; the decision is
+#     window::photo_change)
 # The current photo (candidate 10) has one owner, the InfoBar
 # (`InfoBar::current_photo`); no window code may keep a hand-synced copy in a
 # `selected_photo` cell again.
@@ -63,6 +68,7 @@ SIDEBAR_OWNER='src/window/sidebar_widgets.rs'
 PROPERTIES_OWNER='src/window/properties_widgets.rs'
 INFOBAR_OWNER='src/infobar.rs'
 MARKS_OWNER='src/window/photo_mark_commands.rs'
+PHOTO_CHANGE_OWNER='src/window/photo_change_widgets.rs'
 FRONT_OWNER='src/window/front_surface.rs'
 MIRRORS_OWNER='src/window/front_mirrors.rs'
 ZOOM_OWNER='src/window/zoom_slider_widgets.rs'
@@ -82,7 +88,7 @@ RULES=(
   "sidebar-mirror~$SIDEBAR_OWNER src/sidebar.rs~(^|[^[:alnum:]_])(set_pinned|set_hover_open|clear_hover_open)\(~sidebar.rs pin and hover-peek mirror"
   "sidebar-split~$SIDEBAR_OWNER~main_split$ID*\.(set_show_sidebar|set_collapsed|set_pin_sidebar|set_enable_show_gesture|set_enable_hide_gesture|set_sidebar)\(~main split visibility, pin, gestures and sidebar child"
   "infobar-actions~$INFOBAR_OWNER~\.(favorite|rating|edit|add_to_album|rotate|export|print|more|view_toggle|grid_zoom)\.set_sensitive\(~InfoBar photo-action and gallery-control enabled state"
-  "photo-marks~$MARKS_OWNER src/library_home_tests.rs~(db::set_(favorite|favorite_for_photos|rating_for_photos)|\.update_(favorites|ratings))\(~favourite and rating writes (library and gallery objects)"
+  "photo-marks~$MARKS_OWNER $PHOTO_CHANGE_OWNER src/library_home_tests.rs~(db::set_(favorite|favorite_for_photos|rating_for_photos)|\.update_(favorites|ratings))\(~favourite and rating writes (library and gallery objects)"
   "current-photo~$INFOBAR_OWNER~(^|[^[:alnum:]_])selected_(photo|for)$ID*(\.replace\(|\.borrow_mut\(|:[[:space:]]*Rc<)~a hand-kept copy of the current photo (read InfoBar::current_photo)"
   "front-surface~$FRONT_OWNER src/lightbox/tests.rs~((lightbox$ID*|viewer)\.root\.is_visible\(\)|visible_child_name\(\)\.as_deref\(\)[[:space:]]*[!=]=[[:space:]]*Some\(\"(edit|photos|collage)\"\)|\.is_overview_visible\(\)|date_browser_overview)~which surface is in front (ask FrontSurface)"
   "front-mirrors~$MIRRORS_OWNER $INFOBAR_OWNER src/window/metadata_panel.rs~(\.(set_lightbox_shown|set_date_overview_shown|set_page_allowed|set_lightbox_open|set_navigation_view)\(|(^|[^[:alnum:]_])info$ID*\.set_page\()~front inputs of the InfoBar, Properties and metadata panel (FrontMirrors)"
@@ -90,6 +96,7 @@ RULES=(
   "session-state~$SESSION_OWNER $SESSION_FIXTURES~(LAST_(VIEW|VIEW_PHOTO_ID|ACTIVATED_PHOTO_ID|VIEW_SCROLL|ALBUMS_SCROLL)|WINDOW_(WIDTH|HEIGHT|MAXIMIZED)|SIDEBAR_WIDTH_FRACTION|SIDEBAR_COLLAPSED_WIDTH|PROPERTIES_WIDTH_FRACTION|COMPACT_SIDEBAR_WIDTH)_SETTING_KEY|\"(last-view|last-view-photo-id|last-activated-photo-id|last-view-scroll|last-albums-scroll|window-width|window-height|window-maximized|sidebar-width-fraction|properties-width-fraction|sidebar-collapsed-width|compact-sidebar-width-v2)\"~window session keys (load and save through window::session_state)"
   "scroll-motion~$SCROLL_OWNER~(^|[^[:alnum:]_])(grid|folder)_(direct_)?scrub_(active|generation|frames|last_queue|sampler)([^[:alnum:]_(]|_for|$)|THUMBNAIL_MOTION_PUMP_FRAMES|ScrollbarScrub~a hand-kept gallery scrub, settle or pump state (ask window::scroll_motion)"
   "photo-list~$PHOTO_LIST_OWNER src/image_format.rs~(^|[^[:alnum:]_])(retain_raw_jpeg_pair_mode|limit_recently_added|apply_files_check|collection_photos)\(~a photo-list pipeline step by hand (build lists with window::photo_list)"
+  "photo-change~$PHOTO_CHANGE_OWNER $INFOBAR_OWNER src/infobar_responsive_tests.rs src/sidebar.rs~(^|[^[:alnum:]_])(photo_updated|update_library_counts)\(~the shown photo's facts or the Library counts after a photo change (say photo_changed)"
   "album-list~$ALBUM_LIST_OWNER~(albums_view::refresh|sidebar::refresh_album_rows)\(~the sidebar album rows or the Albums home (say AlbumList::changed)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
@@ -118,6 +125,11 @@ ALLOW=(
   "src/window.rs|WINDOW_WIDTH_SETTING_KEY,|test-only re-export for the window test fixtures"
   "src/window/metadata_panel.rs|(LAST_VIEW_SETTING_KEY, format!(\"folder:{folder}\")),|test fixture (metadata panel window test)"
   "src/albums_view.rs|db::set_setting(&connection.borrow(), \"last-view\", \"albums\").unwrap();|test fixture (cover flow full-app validation)"
+  "src/window/build.rs|sidebar::update_library_counts(&sidebar_for_events, counts);|the scan's own batched Library counts (candidate 16 F4)"
+  "src/window/photo_actions.rs|info.photo_updated(&destination);|test fixture (the shown photo)"
+  "src/window/photo_actions.rs|info.photo_updated(&viewer_photo);|test fixture (the shown photo)"
+  "src/window/photo_actions.rs|sidebar::update_library_counts(&sidebar, db::sidebar_counts(&connection.borrow()).unwrap());|test fixture (trash counts test)"
+  "src/window/photo_mark_commands.rs|info.photo_updated(&anchor);|test fixture (the shown photo)"
   "src/window/layout.rs|dock.set_visible(false);|KNOWN EXCEPTION: compact_dock visible-notify immersive guard predates SidebarWidgets"
 )
 
@@ -184,7 +196,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -253,6 +265,12 @@ RS
                 && stack.visible_child_name().as_deref() == Some("photos")
             panel_for_close.set_lightbox_open(false);
             panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
+                sidebar::update_library_counts(&sidebar_for_events, counts);
+RS
+  cat >"$root/$PHOTO_CHANGE_OWNER" <<'RS'
+                context.info.photo_updated(shown);
+                sidebar::update_library_counts(sidebar, counts);
+                    MarkChange::Rating(rating) => gallery.update_ratings(&plan.ids, rating),
 RS
   cat >"$root/$SESSION_OWNER" <<'RS'
 pub(super) const LAST_VIEW_SETTING_KEY: &str = "last-view";
@@ -279,7 +297,8 @@ RS
     IFS='|' read -r apath atext _ <<<"$entry"
     [[ "$apath" == src/window/layout.rs || "$apath" == src/window/library.rs \
       || "$apath" == src/window.rs || "$apath" == src/window/metadata_panel.rs \
-      || "$apath" == src/albums_view.rs ]] \
+      || "$apath" == src/albums_view.rs || "$apath" == src/window/photo_actions.rs \
+      || "$apath" == "$MARKS_OWNER" ]] \
       && printf '    %s\n' "$atext" >>"$root/$apath"
   done
 }
@@ -344,6 +363,8 @@ self_test() {
     "Files check by hand in library.rs|src/window/library.rs|apply_files_check(&mut photos, &scope);|photo-list"
     "scrub sampler back in build.rs|src/window/build.rs|let folder_scrub_sampler = Rc::new(RefCell::new(FolderScrollbarScrub::default()));|scroll-motion"
     "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"
+    "shown photo written in build.rs|src/window/build.rs|info.photo_updated(&photo);|photo-change"
+    "Library counts written in albums.rs|src/window/albums.rs|sidebar::update_library_counts(&sidebar, counts);|photo-change"
   )
   local entry name file line rule
   for entry in "${cases[@]}"; do

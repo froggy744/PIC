@@ -44,7 +44,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 | 14 | Browse scope: one value for "what am I browsing" | Strong | merged | merge `16fa04e7` (`refactor/browse-scope`) | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | merged | merge `456325ac` (`refactor/photo-list-pipeline`) | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
-| 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
+| 16 | Photo change: one notification, one fan-out | Strong | in progress (`refactor/photo-change`) | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | deferred (test gap recorded, see its section) | none | `src/window/build.rs` |
 | 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
@@ -537,6 +537,45 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - GUI harness `screensaver`: its report ends at the editing prerequisites (27 PASS, 2 FAIL: the pre-existing editor checks below), so it reached no screensaver step.
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
+
+### 16 · Photo change: one notification, one fan-out (in progress)
+Started 2026-11-26 at `main` @ `f94fa7e5` on `refactor/photo-change` (pushed, not merged). Design decisions taken by the agent on the owner's standing instruction (closest to today's behaviour, drift fixed).
+
+#### Before (at `f94fa7e5`)
+Eight change sites, each refreshing its own subset (read from the code):
+
+| Site | Gallery tiles | Viewer objects | InfoBar | Properties (front) | Library counts | Album counts | View membership |
+|---|---|---|---|---|---|---|---|
+| Marks (`photo_mark_commands::run`) | yes | shown photo only | yes | yes | yes | yes | `photo_marks::plan` |
+| Editor saved (`build.rs` `saved`) | yes | no (viewer is closed while editing) | yes | no | no | yes | open Smart Album with an Edited rule |
+| Bulk edit (`finish_bulk_recipe`) | yes | yes | if shown | no | no | yes | any metadata filter, History, or Reset |
+| Rotate (`rotate_current_photo`) | yes | `refresh_current` | yes | yes | no | yes | open Smart Album with an Edited rule |
+| Trash (`trash_photos`) | rebuild | closes | cleared | not cleared | yes | yes | rebuild |
+| Rename (`show_rename_dialog`) | the clicked object only | no | yes | **no** (file name, path stale) | no | no | **never** (search and Name sort ignored) |
+| Tags (Properties chips) | n/a | n/a | n/a | that panel's tag rows only | no | yes | open Smart Album with a Tags rule; **a metadata Tags filter ignored** |
+| Scan updates (`PhotosUpdated`, in-place `PhotosIndexed`) | yes | **no** (viewer keeps old facts) | yes | **no** | scanner's own | at IndexingFinished | scan's own gate |
+
+#### Decisions (2026-11-26, agent)
+- F1: pure `photo_change.rs`: `ChangeKind` (Marks(Membership), Recipes, Rotated, Renamed, Tagged, Trashed, Indexed, Removed) and a `ChangeView` (front, whether the shown photo changed, sidebar destination, sort, search, metadata filters, open Smart Album rules) go in; a `FanOut` comes out: what the shown photo's surfaces do (keep / refresh the front surface / clear), library counts, album counts, view membership (`photo_marks::Membership`). Table tests.
+- F2: GTK adapter `photo_change_widgets.rs`, one function `photo_changed(context, PhotoChange)`; `PhotoChange` carries the new values each site already has (mark plan, recipes, rotated/renamed photo, tagged id, trashed ids, scan records, removed ids). It always writes the values to the gallery's objects and tiles and to the viewer's own objects, then applies the `FanOut`. Callers keep their database writes and their error handling; the fan-out runs only after a write succeeded.
+- F3: shown photo: Trashed clears the InfoBar and Properties (the viewer closes, as today); every other kind refreshes the InfoBar and the front surface's Properties when the shown photo is among the changed ids; Removed (scan) keeps them (gallery and viewer move their own selection).
+- F4: library counts: Marks and Trashed. Scan kinds keep the scanner's batched counts.
+- F5: album counts: every kind except Indexed (the scan recounts once at IndexingFinished, as today).
+- F6: membership: Marks pass `photo_marks::plan`'s answer through; Trashed rebuilds; Removed removes; Indexed keeps (the scan's own gate decides what reaches the gallery). Recipes, Rotated, Renamed, Tagged rebuild when a field they change is narrowed: a metadata filter with a selection on it, or the open Smart Album's rules naming it (Recipes, Rotated → Edited; Renamed → FileType; Tagged → Tags), plus Recipes in History, plus Renamed under a search (it matches paths) or the Name sort.
+- F7: drift dropped: bulk edit rebuilt under *any* metadata filter and always after Reset; now only by F6 (a recipe changes only Edited; History is kept). A bulk edit reports each slice as `Recipes { more_coming: true }` (values and the shown photo, so tiles still change as it runs; no recount, no rebuild), then its end once with no photos (recount and rebuild once).
+- F8: out of scope: the scan's append queue and counts batching, collage tile refresh after the editor, the editor's own state, `photo_marks::plan`. The folder favourite (`layout.rs`) keeps its own grid rebuild; its shown-photo re-read (`reload_shown_photo`) now goes through the adapter as `Indexed`. Follow-up: it never recounts Smart Albums (a Favourite rule goes stale until the next recount).
+
+#### Stages
+1. Pure `photo_change.rs` with table tests (4, seen red against a stub first). Done: `de2b0515`.
+2. Adapter `photo_change_widgets.rs`; marks, editor save, bulk edit, rotate, trash, rename, tags, scan updates and removals moved onto it; `smart_albums_changed`, `show_changed_photo`, `update_counts`, `Gallery::update_edit_recipe` and bulk's `refresh_grid_when_done` deleted. Display tests `a_scan_update_reaches_the_viewer_and_its_properties` and `untagging_under_a_tag_filter_drops_the_photo`, seen red with the adapter put back to the old sites' behaviour. Done: `71b2acd7`. The owner approved adding `photo_change_widgets.rs` as an owner of the `photo-marks` rule (it writes the gallery's marks).
+3. Owner rule `photo-change` (`photo_updated` and `update_library_counts` only in the adapter, the InfoBar, the sidebar and the InfoBar responsive tests; allowed: the scan's batched counts in `build.rs` and four test fixtures; two self-test cases), `photo-marks` gains the adapter as owner; GLOSSARY (**Photo change**), AUDIT-INDEX. Done in the commit after `71b2acd7`.
+
+#### Verification so far (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings.
+- Unit: `window::photo` (49 passed, includes `photo_change` 4).
+- Display (Xvfb, one process each): the two new tests; existing `copy_and_paste_edits_menu_persists_the_recipe_for_export`, `rotating_in_the_viewer_refreshes_the_viewer_properties`, `trashing_photos_updates_library_counts`, `albums_home_keeps_browsing_filters_after_edits_and_recounts`, `marks_change_a_whole_selection_or_nothing`, `marks_recount_smart_albums_once_per_burst`: all pass.
+- `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits; `--self-test` ok.
+- Not covered by tests: the rename dialog, the editor's `saved` callback and the scan event handler in `build()` (their adapter paths are tested).
 
 ### 17 · Album list (merged 2026-11-26)
 Merged into `main` 2026-11-26 (merge `2d7a5e27`), approved by the owner. Open: the follow-ups below and the pre-existing album view test failure. Next in order: 16.

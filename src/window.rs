@@ -29,6 +29,9 @@ mod photo_mark_commands;
 mod photo_marks;
 mod photo_list;
 mod album_list;
+mod album_list_widgets;
+use album_list::AlbumChange;
+use album_list_widgets::AlbumList;
 use photo_list::{photo_list, photo_list_has_photos, PhotoList, PhotoListRequest};
 mod front_surface;
 mod front_mirrors;
@@ -503,7 +506,8 @@ struct PhotoActionContext {
     import_folder: Rc<dyn Fn()>,
     delete_album: Rc<dyn Fn(i64)>,
     on_unavailable: Rc<dyn Fn()>,
-    refresh_albums_home: Rc<dyn Fn(&[db::Album])>,
+    /// The one owner of the album surfaces (sidebar rows, Albums home).
+    albums: Rc<AlbumList>,
     navigate_to_folder: Rc<dyn Fn(i64, i64)>,
     open_collage: Rc<dyn Fn(Vec<i64>)>,
     open_edit: Rc<dyn Fn(i64)>,

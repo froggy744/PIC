@@ -17,7 +17,7 @@
     };
 
     let nav_request_sequence = Rc::new(Cell::new(0_u64));
-    let album_theme_changed_for_destination = album_theme_changed.clone();
+    let album_list_for_destination = album_list.clone();
     let destination_click_with_target: Rc<dyn Fn(sidebar::SidebarFilter, bool, bool) -> Option<u64>> = {
         let search_entry = search_entry_slot.clone();
         let search_text = search_text.clone();
@@ -41,9 +41,6 @@
         let rating_filter_scope = rating_filter_scope_slot.clone();
         let sidebar_selection = sidebar_selection_slot.clone();
         let main_stack = main_stack.clone();
-        let albums_home = albums_home.clone();
-        let connection_for_albums = connection.clone();
-        let album_home_click_slot = album_home_click_slot.clone();
         let open_in_folder_exact_target = open_in_folder_exact_target.clone();
         let search_result_folder_on_close = search_result_folder_on_close.clone();
         let search_close_waiting = search_close_waiting.clone();
@@ -176,24 +173,7 @@
             }
             if new_filter == sidebar::SidebarFilter::Albums {
                 main_stack.set_visible_child_name("albums");
-                if let Ok(albums) = db::browse_albums(
-                    &connection_for_albums.borrow(),
-                    &albums_home_scope(&connection_for_albums.borrow()),
-                ) {
-                    let on_album = album_home_click_slot
-                        .borrow()
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| Rc::new(|_| {}));
-                    albums_view::refresh(
-                        &albums_home,
-                        &albums,
-                        connection_for_albums.clone(),
-                        grid_thumbnail_size,
-                        on_album,
-                        album_theme_changed_for_destination.clone(),
-                    );
-                }
+                album_list_for_destination.changed(AlbumChange::Shown);
                 return None;
             }
             main_stack.set_visible_child_name("photos");
@@ -423,28 +403,14 @@
             }
         })
     }));
-    albums_home_refresh_slot.replace(Some({
-        let albums_home = albums_home.clone();
-        let connection = connection.clone();
-        let click_slot = album_home_click_slot.clone();
-        Rc::new(move |albums| {
-            let on_album = click_slot
-                .borrow()
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| Rc::new(|_| {}));
-            // Album cards keep using existing cached thumbnails; this only
-            // replaces the index data after an album mutation.
-            albums_view::refresh(
-                &albums_home,
-                albums,
-                connection.clone(),
-                grid_thumbnail_size,
-                on_album,
-                album_theme_changed.clone(),
-            );
-        })
-    }));
+    // Album cards keep using existing cached thumbnails; a refresh only
+    // replaces the index data.
+    album_list.attach_home(
+        albums_home.clone(),
+        grid_thumbnail_size,
+        album_home_click_slot.clone(),
+        album_theme_changed.clone(),
+    );
 
     // The overlay holds the hidden-sidebar hover target. Divider dragging
     // resizes the split and its visible content directly.

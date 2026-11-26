@@ -534,8 +534,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         })
     };
     availability_refresh_slot.replace(Some(availability_refresh.clone()));
-    let albums_home_refresh_slot: Rc<RefCell<Option<Rc<dyn Fn(&[db::Album])>>>> =
-        Rc::new(RefCell::new(None));
+    // The one owner of the album surfaces; the sidebar and the Albums home
+    // are attached once they are built.
+    let album_list = AlbumList::new(connection.clone(), filter.clone());
+    album_list.attach_sidebar(sidebar_for_unavailable.clone(), delete_album.clone());
     let album_home_click_slot: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> =
         Rc::new(RefCell::new(None));
     let library_navigation_slot: Rc<RefCell<Option<Rc<dyn Fn(sidebar::SidebarFilter)>>>> =
@@ -583,14 +585,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         open_edit: open_edit.clone(),
         edit_clipboard: edit_clipboard.clone(),
         export: export_photos.clone(),
-        refresh_albums_home: {
-            let slot = albums_home_refresh_slot.clone();
-            Rc::new(move |albums| {
-                if let Some(refresh) = slot.borrow().as_ref() {
-                    refresh(albums);
-                }
-            })
-        },
+        albums: album_list.clone(),
         window: window.clone().upcast::<gtk::Window>().downgrade(),
         context_menu_host: context_menu_host.clone(),
         operation_progress: operation_progress.clone(),
@@ -1076,7 +1071,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let settings_lightbox = lightbox.clone();
     let settings_sidebar = sidebar_for_unavailable.clone();
     let settings_on_unavailable = availability_refresh.clone();
-    let settings_albums_refresh = albums_home_refresh_slot.clone();
+    let settings_album_list = album_list.clone();
     let settings_rebuild_folder_watches = rebuild_folder_watches.clone();
     let settings_theme_engine = theme_engine.clone();
     let settings_switch_library_slot = switch_library_slot.clone();
@@ -1090,8 +1085,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let lightbox = settings_lightbox.clone();
         let sidebar = settings_sidebar.clone();
         let on_unavailable = settings_on_unavailable.clone();
-        let theme_connection = settings_connection.clone();
-        let theme_albums_refresh = settings_albums_refresh.clone();
+        let theme_album_list = settings_album_list.clone();
         let watch_connection = settings_connection.clone();
         let watch_sidebar = settings_sidebar.clone();
         let watch_on_unavailable = settings_on_unavailable.clone();
@@ -1126,16 +1120,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     }
                 }
             }),
-            Rc::new(move || {
-                let albums = db::browse_albums(
-                    &theme_connection.borrow(),
-                    &albums_home_scope(&theme_connection.borrow()),
-                )
-                .unwrap_or_default();
-                if let Some(refresh) = theme_albums_refresh.borrow().as_ref() {
-                    refresh(&albums);
-                }
-            }),
+            Rc::new(move || theme_album_list.changed(AlbumChange::Appearance)),
             Rc::new(move || {
                 crate::window::debug_log("THUMB SETTINGS: apply callback entered");
                 thumbs_gallery.set_honeycomb_border_width(crate::settings::honeycomb_border_width(&thumbs_connection.borrow()));
@@ -2829,21 +2814,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     photo_page.append(&grid_overlay);
 
     let album_theme_changed: Rc<dyn Fn()> = {
-        let connection = connection.clone();
-        let refresh_slot = albums_home_refresh_slot.clone();
-        let sidebar_slot = sidebar_for_unavailable.clone();
-        let on_delete_album = delete_album.clone();
-        Rc::new(move || {
-            let albums = db::browse_albums(&connection.borrow(), &albums_home_scope(&connection.borrow()))
-                .unwrap_or_default();
-            if let Some(sidebar) = sidebar_slot.borrow().as_ref() {
-                let sidebar_albums = db::albums(&connection.borrow()).unwrap_or_default();
-                sidebar::refresh_album_rows(sidebar, &sidebar_albums, &on_delete_album);
-            }
-            if let Some(refresh) = refresh_slot.borrow().as_ref() {
-                refresh(&albums);
-            }
-        })
+        let album_list = album_list.clone();
+        Rc::new(move || album_list.changed(AlbumChange::Appearance))
     };
     // Clone for the theme engine: the original is captured by the layout.rs
     // include below.
@@ -2870,33 +2842,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     );
     crate::startup_trace::mark("albums_widgets_done", Some(albums_started));
     if initial_filter == sidebar::SidebarFilter::Albums {
-        let albums_home = albums_home.clone();
-        let connection = connection.clone();
-        let on_album = open_album.clone();
-        let on_appearance_changed = album_theme_changed.clone();
         let initialized = Rc::new(Cell::new(false));
         let populated = Rc::new(Cell::new(false));
         let populate_albums = {
-            let albums_home = albums_home.clone();
-            let connection = connection.clone();
-            let on_album = on_album.clone();
-            let on_appearance_changed = on_appearance_changed.clone();
+            let album_list = album_list.clone();
             Rc::new(move || {
                 if populated.replace(true) {
                     return;
                 }
                 let started = Instant::now();
-                let albums =
-                    db::browse_albums(&connection.borrow(), &albums_home_scope(&connection.borrow()))
-                        .unwrap_or_default();
-                albums_view::refresh(
-                    &albums_home,
-                    &albums,
-                    connection.clone(),
-                    grid_thumbnail_size,
-                    on_album.clone(),
-                    on_appearance_changed.clone(),
-                );
+                album_list.changed(AlbumChange::Shown);
                 crate::startup_trace::mark("initial_albums_populated", Some(started));
             })
         };
@@ -7061,7 +7016,7 @@ fn start_photo_export_single(
         let import_folder = import_folder.clone();
         let delete_album = delete_album.clone();
         let on_unavailable = availability_refresh.clone();
-        let albums_refresh = albums_home_refresh_slot.clone();
+        let album_list = album_list.clone();
         let filter = filter.clone();
         let search_text = search_text.clone();
         let search_entry = search_entry_slot.clone();
@@ -7261,9 +7216,9 @@ fn start_photo_export_single(
                     sidebar::SidebarVisibility::from_connection(&connection.borrow()),
                 );
             }
-            if let Some(refresh) = albums_refresh.borrow().as_ref() {
-                refresh(&albums);
-            }
+            // After the connection swap and the rating reset: nothing counted
+            // for the old library lands, and the home counts the new one.
+            album_list.changed(AlbumChange::LibraryOpened);
             library_home.reload(library.path.clone());
             main_stack.set_visible_child_name(if new_filter == sidebar::SidebarFilter::Library {
                 "library"

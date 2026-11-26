@@ -490,7 +490,7 @@
             let sort = sort.clone();
             let gallery = gallery.clone();
             let navigate = library_navigation_slot.clone();
-            let album_refresh = albums_home_refresh_slot.clone();
+            let album_list = album_list.clone();
             Rc::new(move || {
                 gallery.invalidate_folder_cache();
                 if filter.get() == sidebar::SidebarFilter::Library {
@@ -498,35 +498,9 @@
                         navigate(sidebar::SidebarFilter::All);
                     }
                 } else if filter.get() == sidebar::SidebarFilter::Albums {
-                    let path = db::connection_path(&connection.borrow()).ok();
-                    let snapshot =
-                        db::BrowseSnapshot::new(&connection.borrow(), albums_home_scope(&connection.borrow()));
-                    let scope = snapshot.scope.clone();
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    std::thread::spawn(move || {
-                        let result = path
-                            .and_then(|path| db::open_existing(&path).ok())
-                            .and_then(|c| db::browse_albums(&c, &scope).ok());
-                        let _ = tx.send(result);
-                    });
-                    let slot = album_refresh.clone();
-                    let c = connection.clone();
-                    glib::timeout_add_local(Duration::from_millis(25), move || {
-                        match rx.try_recv() {
-                            Ok(Some(albums)) => {
-                                if snapshot.is_current(&c.borrow(), &albums_home_scope(&c.borrow())) {
-                                    if let Some(refresh) = slot.borrow().as_ref() {
-                                        refresh(&albums);
-                                    }
-                                }
-                                glib::ControlFlow::Break
-                            }
-                            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                                glib::ControlFlow::Continue
-                            }
-                            _ => glib::ControlFlow::Break,
-                        }
-                    });
+                    // The home's counts follow the browse scope (worker,
+                    // stale results dropped by the album list).
+                    album_list.changed(AlbumChange::BrowseChanged);
                 } else {
                     refresh_grid_preserving_folder_viewport(
                         &connection,

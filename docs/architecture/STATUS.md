@@ -770,7 +770,7 @@ Bugs found by the review (read from the code; fix individually):
 ### What is left (2026-11-26, after 18)
 Candidates 14-18 merged; only `main` remains (local and GitHub).
 - 18: checked by hand by the owner 2026-11-26: done. Open only: a test for a library switch during navigation.
-- 16: the sidebar folder favourite never recounted Smart Albums: fixed on `fix/folder-favourite-recount` (it now asks the album list to recount; compile-checked, no test).
+- 16: the sidebar folder favourite never recounted Smart Albums: fixed, merged 2026-11-26 (it now asks the album list to recount; compile-checked, no test).
 - 17: pre-existing failure `album_view_modes_preserve_albums_and_click_navigation` (bookshelf photo-count colour), also on `main`; not investigated.
 - 14: `scripts/browse-scope-checks/run.sh` never run.
 - Not started (deferred): 19 scan events as a reducer; 20 `PhotoActionContext` shrinks.

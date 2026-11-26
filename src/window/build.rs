@@ -888,6 +888,31 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     );
     recount.connect_activate(move |_, _| refresh_smart_album_counts(&recount_context));
     window.add_action(&recount);
+    // Open an album as its sidebar row does (the photo menu's In Albums).
+    let open_album_slot = album_home_click_slot.clone();
+    let open_album_context = action_context.clone();
+    let open_album = gio::SimpleAction::new(
+        OPEN_ALBUM_ACTION.trim_start_matches("win."),
+        Some(glib::VariantTy::INT64),
+    );
+    open_album.connect_activate(move |_, target| {
+        let Some(album_id) = target.and_then(|value| value.get::<i64>()) else {
+            return;
+        };
+        let viewer_in_front = open_album_context
+            .front
+            .upgrade()
+            .is_some_and(|front| front.current() == Front::Lightbox);
+        if viewer_in_front {
+            if let Some(lightbox) = open_album_context.lightbox.upgrade() {
+                lightbox.close();
+            }
+        }
+        if let Some(open) = open_album_slot.borrow().as_ref() {
+            open(album_id);
+        }
+    });
+    window.add_action(&open_album);
     let delete_context = action_context.clone();
     let delete_parent = window.clone();
     delete_album_slot.replace(Some(Rc::new(move |album_id| {

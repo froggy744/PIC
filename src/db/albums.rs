@@ -94,6 +94,29 @@ pub fn albums(connection: &Connection) -> Result<Vec<Album>> {
     Ok(albums)
 }
 
+/// The albums, manual and Smart, that hold `photo_id`, ordered like `albums`.
+/// Membership is `album_membership`, so this agrees with every album view.
+pub fn albums_containing_photo(connection: &Connection, photo_id: i64) -> Result<Vec<Album>> {
+    let mut containing = Vec::new();
+    for album in albums(connection)? {
+        let (membership, args) = album_membership(connection, album.id, 2)?;
+        let mut values: Vec<rusqlite::types::Value> = vec![photo_id.into()];
+        values.extend(args);
+        let holds: bool = connection.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM photos p
+                 WHERE p.id = ?1 AND p.trashed = 0 AND ({membership}))"
+            ),
+            rusqlite::params_from_iter(values),
+            |row| row.get(0),
+        )?;
+        if holds {
+            containing.push(album);
+        }
+    }
+    Ok(containing)
+}
+
 /// Whether any Smart Album exists, so photo changes can skip recounting
 /// album rows in libraries that have none.
 pub fn has_smart_albums(connection: &Connection) -> Result<bool> {

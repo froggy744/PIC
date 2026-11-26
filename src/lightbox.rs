@@ -513,3 +513,6 @@ include!("lightbox/tests.rs");
 #[cfg(test)]
 #[path = "lightbox/offline_tests.rs"]
 mod offline_tests;
+#[cfg(test)]
+#[path = "lightbox/bench_tests.rs"]
+mod bench_tests;

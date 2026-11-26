@@ -25,6 +25,7 @@ use layout_settle::{
     should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
 };
 
+mod collection_navigation;
 mod photo_change;
 mod photo_change_widgets;
 mod photo_mark_commands;

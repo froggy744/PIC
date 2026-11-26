@@ -714,7 +714,7 @@ Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch);
 - `admits(photo)` for 15's reducer.
 
 ### 18 · Collection navigation out of `build()` (merged 2026-11-26)
-Merged into `main` 2026-11-26 (merge `ecc8e954`), approved by the owner; branch deleted. Checked by hand by the owner 2026-11-26. Open: a library-switch test.
+Merged into `main` 2026-11-26 (merge `ecc8e954`), approved by the owner; branch deleted. Checked by hand by the owner 2026-11-26. Library-switch test added 2026-11-26: `viewer_up_and_down_drop_a_move_planned_in_the_previous_library` (display; seen red with the database check removed from the worker-result guard). Nothing open.
 
 Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. Decisions N1-N8 approved by the owner 2026-11-26 with the additions below; the agent's own choices are marked (agent).
 
@@ -740,7 +740,7 @@ Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. D
 1. Pure `collection_navigation.rs`, table tests first (5, seen red against a stub). Done in the stage 1 commit.
 2. `CollectionNavigation` adapter on a worker with stale-result guards; `enter_destination` extracted; the `build()` closure deleted (library rows and albums). `sidebar::navigation_destinations` replaces `visible_folder_ids`; `Gallery::select_last_photo` and `SectionedFolderView::scroll_to_index` lost their last caller and are deleted. Display tests `viewer_up_and_down_walk_the_sidebar_collections`, `viewer_up_and_down_drop_stale_and_needless_moves` (the stale test seen red with the destination check removed). Folder rows are not stops until stage 3 (dead-code warnings for the folder helpers until then). Done in the stage 2 commit.
 3. Folder rows: the continuous stream, landing within folders, navigation inside Folder mode. The worker lists the stream once when the walk first reaches a folder row (or uses the viewer's photos in Folder mode, with the shown photo's row as the current one); inside the stream only the viewer moves. Display test `viewer_up_and_down_move_through_the_folder_stream`. Done in the stage 3 commit.
-4. Owner rule `collection-navigation` (`set_collection_navigation_handler` only in the adapter, which installs itself with `install`; one self-test case). Done in the stage 4 commit. GLOSSARY and AUDIT-INDEX entries added. Still open: a by-hand check; the library-switch drop is guarded (database path) but not tested.
+4. Owner rule `collection-navigation` (`set_collection_navigation_handler` only in the adapter, which installs itself with `install`; one self-test case). Done in the stage 4 commit. GLOSSARY and AUDIT-INDEX entries added. The by-hand check and the library-switch test were done later (see the top of this section).
 
 #### Verification (2026-11-26)
 - `cargo check --locked` and `--tests`: no warnings.
@@ -843,13 +843,13 @@ Found while fixing and validating 19's two bugs (`fix/scan-admission-pairing`, s
 
 ### What is left (2026-11-26, after 18)
 Candidates 14-18 merged; only `main` remains (local and GitHub).
-- 18: checked by hand by the owner 2026-11-26: done. Open only: a test for a library switch during navigation.
+- 18: checked by hand by the owner 2026-11-26: done. Library-switch test added 2026-11-26: done.
 - 16: the sidebar folder favourite never recounted Smart Albums: fixed, merged 2026-11-26 (it now asks the album list to recount; compile-checked, no test).
 - 17: pre-existing failure `album_view_modes_preserve_albums_and_click_navigation` (bookshelf photo-count colour), also on `main`; not investigated.
 - 14: `scripts/browse-scope-checks/run.sh` never run.
 - 19: merged 2026-11-26 (merge `db8d6588`). Its two bugs (Folder view admission, RAW+JPEG pairing) fixed and merged 2026-11-26 (merge `50238693`, see 19); four follow-ups under "Backlog".
 - 20: merged 2026-11-26 (merge `f598440d`), test fixture only.
-All round-three candidates (14-20) are merged. Open: 19's two suspected bugs (subfolder admission, RAW+JPEG pairing; need approval), 18's library-switch test, 17's pre-existing bookshelf colour failure, 14's unrun browse-scope checks.
+All round-three candidates (14-20) are merged. Open: 17's pre-existing bookshelf colour failure, 14's unrun browse-scope checks. (19's two bugs, 18's library-switch test and the four scan backlog items are done.)
 
 ### Next (updated 2026-11-26)
 Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands. Progress (2026-11-26): all five fixed (`18923e3e`, `24297e1b`, `5d83b50c`, `d3d2252a`, `ab33310c`), each with a test seen red first. Merged into `main` 2026-11-26 (merge `4db4685f`), followed by `feature/album-links` (merge `e2c4b980`: one Add to Album list and New Album dialog, the photo menu's In Albums links; issues #266, #267). Both branches deleted. Round three (14-20) stays deferred.

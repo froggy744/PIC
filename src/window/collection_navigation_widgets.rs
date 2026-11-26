@@ -575,6 +575,42 @@ mod tests {
         assert!(library.entered.borrow().is_empty());
     }
 
+    /// Another library opened while a move is planned on the worker: the old
+    /// library's result is dropped (the database path no longer matches),
+    /// and the next press moves within the new library.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn viewer_up_and_down_drop_a_move_planned_in_the_previous_library() {
+        let library = fixture("switch", LIBRARY, vec![All, Favorites]);
+        let second = library.directory.join("second.db");
+        {
+            let other = db::open(&second).unwrap();
+            other
+                .execute_batch(
+                    "INSERT INTO folders (id, path, name) VALUES (1, '/s/one', 'one');
+                     INSERT INTO photos (id, path, folder_id, favorite) VALUES
+                        (11, '/s/one/x.jpg', 1, 1), (12, '/s/one/y.jpg', 1, 0);",
+                )
+                .unwrap();
+        }
+
+        // The worker plans Favourites in the first library; the window
+        // switches library before the result arrives.
+        library.navigation.navigate(1);
+        library.connection.replace(db::open(&second).unwrap());
+        library.idle();
+        assert!(
+            library.entered.borrow().is_empty(),
+            "a move planned in the previous library is not shown"
+        );
+        assert_eq!((library.filter.get(), library.shown()), (All, Some(1)));
+
+        // Nothing is left running or queued: the next press moves within the
+        // second library (its only favourite).
+        library.press(1, Favorites, 11);
+        assert_eq!(*library.entered.borrow(), [Favorites]);
+    }
+
     /// Folder rows are sections of the one Folder stream: landing on one
     /// shows the stream on that row's first (or last) photo, Up/Down inside
     /// Folder mode moves between rows in the viewer's stream, a photo in a

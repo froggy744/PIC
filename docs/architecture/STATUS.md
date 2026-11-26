@@ -47,7 +47,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 16 | Photo change: one notification, one fan-out | Strong | merged | merge `41d31b9c` (`refactor/photo-change`) | `src/window/photo_change.rs` (pure: `ChangeKind`, `ChangeView`, `FanOut`), `src/window/photo_change_widgets.rs` (GTK adapter `photo_changed`) |
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
-| 19 | Scan events as a reducer | Worth exploring | done on `refactor/scan-events`, not merged | none | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
+| 19 | Scan events as a reducer | Worth exploring | merged | merge `db8d6588` (`refactor/scan-events`) | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
 
 ## Outstanding work
@@ -756,7 +756,9 @@ Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. D
 
 Also seen in 15: the `Folder(current_folder_id)` arm is dead (the closure returns early for Folder), and whether its folder pages should be the Folder stream instead of single-folder flat pages is 18's decision (15 decision D3). Moving it out of `build()` into a pure "next page" decision plus a GTK adapter is what makes those testable; write the table tests first.
 
-### 19 · Scan events as a reducer (done on branch, not merged)
+### 19 · Scan events as a reducer (merged 2026-11-26)
+Merged into `main` 2026-11-26 (merge `db8d6588`), approved by the owner; branch deleted. Open: the two suspected bugs below (need approval), and an import seen by hand running to "✓ Previews complete".
+
 Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q1-Q5 approved by the owner 2026-11-26; the agent's refinements are marked (agent).
 
 #### Before (at `b8e3dda8`, `build.rs:5697-6417`)
@@ -806,8 +808,9 @@ Candidates 14-18 merged; only `main` remains (local and GitHub).
 - 16: the sidebar folder favourite never recounted Smart Albums: fixed, merged 2026-11-26 (it now asks the album list to recount; compile-checked, no test).
 - 17: pre-existing failure `album_view_modes_preserve_albums_and_click_navigation` (bookshelf photo-count colour), also on `main`; not investigated.
 - 14: `scripts/browse-scope-checks/run.sh` never run.
-- Not started (deferred): 19 scan events as a reducer; 20 `PhotoActionContext` shrinks.
-Suggested order: the 16 recount fix, then 19 when a refactor is wanted.
+- 19: merged 2026-11-26 (merge `db8d6588`); open: the subfolder-admission and RAW+JPEG pairing suspected bugs, a finished import by hand.
+- Not started (deferred): 20 `PhotoActionContext` shrinks.
+Suggested order: 20 next (it follows 14, 16, 17).
 
 ### Next (updated 2026-11-26)
 Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands. Progress (2026-11-26): all five fixed (`18923e3e`, `24297e1b`, `5d83b50c`, `d3d2252a`, `ab33310c`), each with a test seen red first. Merged into `main` 2026-11-26 (merge `4db4685f`), followed by `feature/album-links` (merge `e2c4b980`: one Add to Album list and New Album dialog, the photo menu's In Albums links; issues #266, #267). Both branches deleted. Round three (14-20) stays deferred.

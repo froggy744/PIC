@@ -52,7 +52,7 @@ impl ViewerReadContext {
         }
     }
 
-    pub(crate) fn lane(&self) -> ViewerReadLane {
+    fn lane(&self) -> ViewerReadLane {
         (self.lane)()
     }
 

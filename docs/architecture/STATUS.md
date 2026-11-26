@@ -42,7 +42,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 11 | Window session state | Worth exploring | merged | merge `4f47d674` (`refactor/window-session-state`) | `src/window/session_state.rs` (pure: keys, defaults, clamps, load, record; `SessionStore` seam) |
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
-| 14 | Browse scope: one value for "what am I browsing" | Strong | in progress (`refactor/browse-scope`) | none | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
+| 14 | Browse scope: one value for "what am I browsing" | Strong | merged | merge `16fa04e7` (`refactor/browse-scope`) | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | deferred | none | `src/window/library.rs`, `src/window/build.rs` |
 | 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
 | 17 | Album list: one owner of the albums as shown | Strong | deferred (its count bug fixed, see below) | none | `src/window/albums.rs`, `src/window/layout.rs`, `src/sidebar.rs` |
@@ -538,7 +538,9 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
 
-### 14 · Browse scope (in progress, `refactor/browse-scope`)
+### 14 · Browse scope (merged 2026-11-26)
+Merged into `main` 2026-11-26 (merge `16fa04e7`, branch deleted). The owner approved the revised decisions 4, 6 and 7 and checked the rating picker, facet counts, Smart Albums, library switching and search by hand: working. Follow-ups below stay open. Next in order: 15.
+
 Started 2026-11-26 at `main` @ `8bd8cd7c`. The owner approved the nine decisions below and asked for the agent to decide open questions itself.
 
 #### Decisions
@@ -557,7 +559,7 @@ Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch);
 #### Stages
 1. `BrowseScope`, `Destination`, `RatingFilter`, `BrowseSnapshot` with table tests. Done: `2375d8d8`.
 2. Every browsing query takes the scope; callers build it through the mapping. Done: `e6d38ca1`.
-3. Docs: this section, GLOSSARY (Browse scope), AUDIT-INDEX.
+3. Docs: this section, GLOSSARY (Browse scope), AUDIT-INDEX. Done: `f415fc5a`.
 
 #### Behaviour now aligned (was drift)
 - Facet counts and the photo count use the grid's search (path, date, album name; before: path only) and its destination (History, Ratings and Rating(n) narrow the counts too).
@@ -571,7 +573,7 @@ Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch);
 - Round-three fixes: `sidebar_rating_destinations_are_independent_of_toolbar_and_favourites`, `startup_restores_history_in_history_order`, `scan_appends_new_photos_only_to_an_unfiltered_view` (unit), and in Xvfb `toolbar_rating_filter_shows_it_is_off_in_ratings`, `trashing_photos_updates_library_counts`, `rotating_in_the_viewer_refreshes_the_viewer_properties`, `albums_home_keeps_browsing_filters_after_edits_and_recounts`: pass.
 - Xvfb also: `save_as_smart_album_copies_the_active_filters`, `rating_filter_refresh_invalidates_previous_folder_membership`, `metadata_panel_navigation_auto_closes_and_allows_manual_reopen`: pass.
 - `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits.
-- Not run: GUI harness, by-hand check of the rating picker, facets and Albums home.
+- Not run: GUI harness. The owner's by-hand check replaced the planned smoke check.
 
 #### Follow-ups
 - The rating is still held twice (session row for queries, cell for photo marks and the offline watch); one owner when 17/20 give the views a scope.

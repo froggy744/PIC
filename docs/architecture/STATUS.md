@@ -48,7 +48,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
 | 19 | Scan events as a reducer | Worth exploring | merged | merge `db8d6588` (`refactor/scan-events`) | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
-| 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | done on `refactor/photo-action-context-fixture`, not merged (test fixture only) | none | `src/window.rs` (`#[cfg(test)] PhotoActionContext::for_tests`) |
+| 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | merged (test fixture only) | merge `f598440d` (`refactor/photo-action-context-fixture`) | `src/window.rs` (`#[cfg(test)] PhotoActionContext::for_tests`) |
 
 ## Outstanding work
 
@@ -791,7 +791,9 @@ Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q
 - Not run: no display test drives a real scan through the window, and the GUI harness `import` suite needs a release build (not authorised).
 - By hand (owner, 2026-11-26, `cargo run` with `PIC_WATCH_TRACE=1`): import into All Photos appends live; library refresh and Folder refresh run; Stop ends each; after the stop fix the sidebar shows the imported folder tree with real counts. No panic, GTK critical or borrow error in the logs. Not yet seen by hand: an import running to "✓ Previews complete".
 
-### 20 · PhotoActionContext: one test fixture (done on branch, not merged)
+### 20 · PhotoActionContext: one test fixture (merged 2026-11-26)
+Merged into `main` 2026-11-26 (merge `f598440d`), approved by the owner; branch deleted.
+
 Started 2026-11-26 at `main` @ `b54bc829` on `refactor/photo-action-context-fixture`.
 
 #### Before
@@ -825,8 +827,8 @@ Candidates 14-18 merged; only `main` remains (local and GitHub).
 - 17: pre-existing failure `album_view_modes_preserve_albums_and_click_navigation` (bookshelf photo-count colour), also on `main`; not investigated.
 - 14: `scripts/browse-scope-checks/run.sh` never run.
 - 19: merged 2026-11-26 (merge `db8d6588`); open: the subfolder-admission and RAW+JPEG pairing suspected bugs, a finished import by hand.
-- 20: test fixture only, on `refactor/photo-action-context-fixture` (see its section).
-All round-three candidates are merged or on a branch.
+- 20: merged 2026-11-26 (merge `f598440d`), test fixture only.
+All round-three candidates (14-20) are merged. Open: 19's two suspected bugs (subfolder admission, RAW+JPEG pairing; need approval), 18's library-switch test, 17's pre-existing bookshelf colour failure, 14's unrun browse-scope checks.
 
 ### Next (updated 2026-11-26)
 Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands. Progress (2026-11-26): all five fixed (`18923e3e`, `24297e1b`, `5d83b50c`, `d3d2252a`, `ab33310c`), each with a test seen red first. Merged into `main` 2026-11-26 (merge `4db4685f`), followed by `feature/album-links` (merge `e2c4b980`: one Add to Album list and New Album dialog, the photo menu's In Albums links; issues #266, #267). Both branches deleted. Round three (14-20) stays deferred.

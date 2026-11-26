@@ -624,6 +624,35 @@ fn collection_photos(
     Some(photos)
 }
 
+/// The photos the window opens on for the restored destination, filtered
+/// and in display order, as the grid would show them.
+fn startup_photos(
+    connection: &Connection,
+    initial_filter: sidebar::SidebarFilter,
+    rating_filter: RatingFilter,
+    sort: PhotoSort,
+    folders: &[db::Folder],
+) -> Vec<db::Photo> {
+    // The same per-destination query as a grid refresh (History included).
+    let mut photos = collection_photos(connection, initial_filter, "").unwrap_or_default();
+    retain_enabled_formats(connection, &mut photos);
+    limit_recently_added(connection, initial_filter, &mut photos);
+    apply_collection_rating_filter(&mut photos, initial_filter, rating_filter);
+    if matches!(initial_filter, sidebar::SidebarFilter::Folder(_)) {
+        let display_mode = sidebar::FolderDisplayMode::from_setting(
+            db::setting(connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
+        sort_folder_stream(&mut photos, folders, sort, display_mode);
+    } else if initial_filter != sidebar::SidebarFilter::History {
+        // History keeps its most-recent-first order, as in a grid refresh.
+        sort_photos(&mut photos, sort);
+    }
+    photos
+}
+
 fn limit_recently_added(
     connection: &Connection,
     filter: sidebar::SidebarFilter,
@@ -1474,6 +1503,40 @@ mod photo_action_tests {
             assert_eq!(RatingFilter::from_key(filter.key()), filter);
         }
         assert_eq!(RatingFilter::from_key("0"), RatingFilter::Unrated);
+    }
+
+    #[test]
+    fn startup_restores_history_in_history_order() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        connection.execute_batch(
+            "INSERT INTO folders(id,path,name) VALUES (1,'/photos','photos');
+             INSERT INTO photos(id,path,folder_id) VALUES
+                (1,'/photos/a.jpg',1),(2,'/photos/b.jpg',1),
+                (3,'/photos/c.jpg',1),(4,'/photos/d.jpg',1);",
+        ).unwrap();
+        // Edit a, then c: History lists the most recent edit first.
+        for id in [1, 3] {
+            db::commit_edit_recipes(&connection, &[(id, format!("edit-{id}"))], "Edit", None)
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let history = db::browse_history_photos(&connection)
+            .unwrap()
+            .iter()
+            .map(|photo| photo.id)
+            .collect::<Vec<_>>();
+        assert_eq!(history, [3, 1]);
+
+        let by_name = PhotoSort { field: SortField::Name, direction: SortDirection::Ascending };
+        let restored = crate::window::startup_photos(
+            &connection,
+            sidebar::SidebarFilter::History,
+            RatingFilter::All,
+            by_name,
+            &db::folders(&connection).unwrap(),
+        );
+        assert_eq!(restored.iter().map(|photo| photo.id).collect::<Vec<_>>(), history);
     }
 
     #[test]

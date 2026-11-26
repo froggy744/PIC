@@ -123,38 +123,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         grid::GroupMode::None
     }));
     let startup_photos_started = Instant::now();
-    let mut photos = match initial_filter {
-        sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
-        sidebar::SidebarFilter::Album(album_id) => {
-            db::browse_photos_in_album(&connection.borrow(), album_id, None).unwrap_or_default()
-        }
-        sidebar::SidebarFilter::Favorites => {
-            db::browse_photos(&connection.borrow(), None, true, None).unwrap_or_default()
-        }
-        _ => db::browse_photos(&connection.borrow(), None, false, None).unwrap_or_default(),
-    };
-    crate::startup_trace::mark("startup_photo_query", Some(startup_photos_started));
-    retain_enabled_formats(&connection.borrow(), &mut photos);
-    limit_recently_added(
+    let photos = startup_photos(
         &connection.borrow(),
         initial_filter,
-        &mut photos,
+        rating_filter.get(),
+        sort.get(),
+        &folders,
     );
-    apply_collection_rating_filter(&mut photos, initial_filter, rating_filter.get());
-    if matches!(initial_filter, sidebar::SidebarFilter::Folder(_)) {
-        let display_mode = sidebar::FolderDisplayMode::from_setting(
-            db::setting(
-                &connection.borrow(),
-                sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY,
-            )
-            .ok()
-            .flatten()
-            .as_deref(),
-        );
-        sort_folder_stream(&mut photos, &folders, sort.get(), display_mode);
-    } else {
-        sort_photos(&mut photos, sort.get());
-    }
+    crate::startup_trace::mark("startup_photo_query", Some(startup_photos_started));
     let startup_photos = Rc::new(photos);
     crate::startup_trace::mark("database_photos_sorted", Some(build_started));
     if std::env::var_os("PIC_STARTUP_TRACE").is_some() {

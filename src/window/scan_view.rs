@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use super::{format_count, scan_may_append_new_photos, ScanJobKind, ScanJobState};
 use crate::db;
+use crate::image_format::RawJpegPairMode;
 use crate::scanner::ScanEvent;
 use crate::sidebar::SidebarFilter;
 
@@ -52,6 +53,11 @@ pub(super) trait ScanViewFacts {
     fn folder_exists(&self, id: i64) -> bool;
     /// Whether the thumbnail pass deferred offline sources.
     fn recovery_deferred(&self) -> bool;
+    /// The RAW+JPEG pair mode (asked once per indexed batch that may append).
+    fn pair_mode(&self) -> RawJpegPairMode;
+    /// Whether a new RAW or JPEG photo's twin (same folder and stem, the other
+    /// kind) is already catalogued (asked only outside Both mode).
+    fn has_pair_twin(&self, photo: &db::Photo) -> bool;
 }
 
 /// One step for the adapter, applied in the order given.
@@ -166,6 +172,10 @@ pub(super) struct ScanView {
     last_sidebar_count_update: Instant,
     thumbnail_dirty_paths: VecDeque<PathBuf>,
     thumbnail_dirty_seen: HashSet<PathBuf>,
+    /// The catalogue holds photos the shown list lacks and no live append
+    /// will add: new photos while a Folder view is shown. A rebuild clears
+    /// it; the job's end or Stop rebuilds while it is set.
+    view_stale: bool,
 }
 
 impl ScanView {
@@ -183,6 +193,7 @@ impl ScanView {
             last_sidebar_count_update: now,
             thumbnail_dirty_paths: VecDeque::new(),
             thumbnail_dirty_seen: HashSet::new(),
+            view_stale: false,
         }
     }
 
@@ -381,7 +392,14 @@ impl ScanView {
                 }));
                 // Progressive imports append quickly; refresh jobs do one
                 // final rebuild after the whole serialized multi-folder job.
-                if !is_refresh(job.kind) {
+                // A Folder view had no live appends: rebuild its stream in
+                // place (selected folder and scroll kept), and only when new
+                // photos are missing from it.
+                if !is_refresh(job.kind) && shows_folder_stream(facts) {
+                    if self.view_stale {
+                        effects.push(ScanEffect::RebuildFolderStream);
+                    }
+                } else if !is_refresh(job.kind) {
                     effects.push(ScanEffect::RefreshGrid);
                 }
                 if !self.network_scan {
@@ -458,6 +476,11 @@ impl ScanView {
                     }
                     _ => format!("Import stopped · {imported} photos added"),
                 };
+                // Photos catalogued before Stop that the view lacks: rebuild
+                // it once, as the job's end would have.
+                if self.view_stale {
+                    effects.push(self.rebuild_effect(facts));
+                }
                 // Folders found before Stop were added as flat rows counted
                 // 0; rebuild them as a finished job does (the availability
                 // pass, or for a folder refresh the row redraw).
@@ -475,6 +498,15 @@ impl ScanView {
                     ScanEffect::HideProgressAfter(MESSAGE_HOLD),
                 ]);
             }
+        }
+        // Any rebuild shows the catalogue as it is: nothing left to reconcile.
+        if effects.iter().any(|effect| {
+            matches!(
+                effect,
+                ScanEffect::RefreshGrid | ScanEffect::RebuildFolderStream
+            )
+        }) {
+            self.view_stale = false;
         }
         effects
     }
@@ -498,18 +530,17 @@ impl ScanView {
         let filter = facts.filter();
         let filters_active = !scope.filters.is_empty();
         let appends_new = scan_may_append_new_photos(&scope);
-        let shows_folder = |folder_id: Option<i64>| match filter {
-            SidebarFilter::All => true,
-            SidebarFilter::Folder(id) => Some(id) == folder_id,
-            _ => false,
-        };
+        // Only All Photos takes live appends. A Folder view shows the whole
+        // library as the Folder stream, and an append cannot land in its
+        // folder's section; the stream is rebuilt instead.
+        let appends_here = filter == SidebarFilter::All;
         let new = photos
             .iter()
             .filter(|indexed| indexed.newly_discovered)
             .count();
         let matching = photos
             .iter()
-            .filter(|indexed| indexed.newly_discovered && shows_folder(indexed.photo.folder_id))
+            .filter(|indexed| indexed.newly_discovered && appends_here)
             .count();
         effects.push(ScanEffect::Trace(ScanTrace::WatchIndexed {
             kind: job.kind,
@@ -524,17 +555,35 @@ impl ScanView {
             search_active,
             filters_active,
         }));
+        if new > 0 && shows_folder_stream(facts) {
+            self.view_stale = true;
+        }
         if search_active || filters_active {
             return;
         }
         let mut reread = Vec::new();
+        // Asked once per batch, and only when a photo may be appended.
+        let mut pair_mode = None;
         for indexed in photos {
             let photo = &indexed.photo;
             if indexed.newly_discovered
+                && appends_here
                 && appends_new
                 && facts.format_enabled(&photo.path)
-                && shows_folder(photo.folder_id)
             {
+                let mode = *pair_mode.get_or_insert_with(|| facts.pair_mode());
+                if let Some(preferred) = pair_half(photo, mode) {
+                    if facts.has_pair_twin(photo) {
+                        // One half of a pair the full list collapses: never
+                        // show both. A withheld preferred half means the view
+                        // shows the other one, so it is rebuilt at the end
+                        // (or on Stop).
+                        if preferred {
+                            self.view_stale = true;
+                        }
+                        continue;
+                    }
+                }
                 self.pending_photos.push_back(photo.clone());
             } else if !indexed.newly_discovered {
                 // Folder refreshes deliberately avoid a full gallery
@@ -590,7 +639,16 @@ impl ScanView {
         // photos would form a second, misplaced section for their folder.
         // Rebuild the stream in place once the refresh added photos,
         // keeping the visible position.
-        let rebuild_stream = !refresh_grid && is_refresh(kind) && total_imported > 0 && in_folder;
+        let mut rebuild_stream =
+            !refresh_grid && is_refresh(kind) && total_imported > 0 && in_folder;
+        let mut refresh_grid = refresh_grid;
+        // New photos the view still lacks (a Folder view has no live appends).
+        if self.view_stale && !refresh_grid && !rebuild_stream {
+            match self.rebuild_effect(facts) {
+                ScanEffect::RebuildFolderStream => rebuild_stream = true,
+                _ => refresh_grid = true,
+            }
+        }
         let folder_refresh = kind == Some(ScanJobKind::FolderRefresh);
         effects.push(ScanEffect::Trace(ScanTrace::WatchFinished {
             kind,
@@ -636,6 +694,16 @@ impl ScanView {
         ]);
     }
 
+    /// The rebuild that shows the catalogue in the current view: the Folder
+    /// stream in place, otherwise a grid refresh.
+    fn rebuild_effect(&self, facts: &dyn ScanViewFacts) -> ScanEffect {
+        if shows_folder_stream(facts) {
+            ScanEffect::RebuildFolderStream
+        } else {
+            ScanEffect::RefreshGrid
+        }
+    }
+
     fn mark_thumbnail_dirty(&mut self, path: PathBuf) {
         if self.thumbnail_dirty_seen.insert(path.clone()) {
             self.thumbnail_dirty_paths.push_back(path);
@@ -661,6 +729,7 @@ impl ScanView {
             self.pending_sidebar_counts = None;
             self.photos_since_sidebar_update = 0;
             self.displayed_generation = None;
+            self.view_stale = false;
         }
         if self.pending_sidebar_counts.is_some()
             && (self.photos_since_sidebar_update >= SIDEBAR_COUNT_PHOTOS
@@ -704,6 +773,28 @@ fn passes_after_stop(event: &ScanEvent) -> bool {
             | ScanEvent::LibraryCountsChanged { .. }
             | ScanEvent::ThumbnailCreated { .. }
     )
+}
+
+/// For a RAW or JPEG photo while pairs collapse (not Both mode): whether it
+/// is the half the mode shows. `None` when pairing does not apply to it.
+fn pair_half(photo: &db::Photo, mode: RawJpegPairMode) -> Option<bool> {
+    if mode == RawJpegPairMode::Both {
+        return None;
+    }
+    let format = crate::image_format::for_path(&photo.path)?;
+    let raw = format.decoder == crate::image_format::DecoderKind::Raw;
+    if !raw && format.id != "jpeg" {
+        return None;
+    }
+    Some(match mode {
+        RawJpegPairMode::PreferRaw => raw,
+        _ => !raw,
+    })
+}
+
+/// Whether the view is the Folder stream (a Folder view without a search).
+fn shows_folder_stream(facts: &dyn ScanViewFacts) -> bool {
+    matches!(facts.filter(), SidebarFilter::Folder(_)) && !facts.search_active()
 }
 
 fn is_refresh(kind: Option<ScanJobKind>) -> bool {
@@ -760,6 +851,7 @@ mod tests {
     use crate::db::filters::{Field, Selection};
     use crate::db::{BrowseScope, Destination, RatingFilter};
     use crate::scanner::IndexedPhoto;
+    use std::cell::RefCell;
 
     struct Facts {
         filter: SidebarFilter,
@@ -770,6 +862,23 @@ mod tests {
         deferred: bool,
         scope_asked: Cell<usize>,
         formats_asked: Cell<usize>,
+        pair_mode: RawJpegPairMode,
+        /// What the scanner has committed so far: (folder, path).
+        catalogue: RefCell<Vec<(Option<i64>, String)>>,
+        twin_lookups: Cell<usize>,
+    }
+
+    impl Facts {
+        /// The scanner commits a batch before it sends the event.
+        fn commit(&self, event: &ScanEvent) {
+            if let ScanEvent::PhotosIndexed { photos, .. } = event {
+                self.catalogue.borrow_mut().extend(
+                    photos
+                        .iter()
+                        .map(|indexed| (indexed.photo.folder_id, indexed.photo.path.clone())),
+                );
+            }
+        }
     }
 
     impl Default for Facts {
@@ -783,6 +892,9 @@ mod tests {
                 deferred: false,
                 scope_asked: Cell::new(0),
                 formats_asked: Cell::new(0),
+                pair_mode: RawJpegPairMode::Both,
+                catalogue: RefCell::default(),
+                twin_lookups: Cell::new(0),
             }
         }
     }
@@ -807,6 +919,22 @@ mod tests {
         }
         fn recovery_deferred(&self) -> bool {
             self.deferred
+        }
+        fn pair_mode(&self) -> RawJpegPairMode {
+            self.pair_mode
+        }
+        /// The same stem in the same folder, the other kind (RAW / JPEG).
+        fn has_pair_twin(&self, photo: &db::Photo) -> bool {
+            self.twin_lookups.set(self.twin_lookups.get() + 1);
+            let split = |path: &str| {
+                let (stem, extension) = path.rsplit_once('.').unwrap();
+                (stem.to_owned(), extension.eq_ignore_ascii_case("jpg"))
+            };
+            let (stem, jpeg) = split(&photo.path);
+            self.catalogue.borrow().iter().any(|(folder, path)| {
+                let (other_stem, other_jpeg) = split(path);
+                *folder == photo.folder_id && other_stem == stem && other_jpeg != jpeg
+            })
         }
     }
 
@@ -1021,6 +1149,8 @@ mod tests {
                 true,
                 false,
             ),
+            // A Folder view is the whole library as the Folder stream: a live
+            // append cannot land in its section, so nothing joins it live.
             (
                 "own folder",
                 SidebarFilter::Folder(1),
@@ -1029,7 +1159,7 @@ mod tests {
                 false,
                 1,
                 true,
-                true,
+                false,
                 false,
             ),
             (
@@ -1189,27 +1319,26 @@ mod tests {
     #[test]
     fn the_format_is_asked_only_for_new_photos_that_may_join() {
         let now = Instant::now();
-        let facts = Facts {
-            filter: SidebarFilter::Folder(1),
-            ..Facts::default()
-        };
-        let mut view = ScanView::new(now);
-        let mut job = job(ScanJobKind::Import);
-        step(
-            &mut view,
-            &mut job,
-            7,
-            &indexed(&[
-                (1, 1, "/a.jpg", true),
-                (2, 1, "/b.jpg", false),
-                (3, 2, "/c.jpg", true),
-            ]),
-            &facts,
-            now,
-        );
-        // Photo 3 is in another folder but the format is checked first, as before.
-        assert_eq!(facts.formats_asked.get(), 2);
-        assert_eq!(drain_appends(&mut view, 7, now), [1]);
+        let batch = indexed(&[
+            (1, 1, "/a.jpg", true),
+            (2, 1, "/b.jpg", false),
+            (3, 2, "/c.jpg", true),
+        ]);
+        for (filter, asked, appended) in [
+            (SidebarFilter::All, 2, vec![1, 3]),
+            // Nothing joins a Folder view live: no format is asked.
+            (SidebarFilter::Folder(1), 0, vec![]),
+        ] {
+            let facts = Facts {
+                filter,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut job = job(ScanJobKind::Import);
+            step(&mut view, &mut job, 7, &batch, &facts, now);
+            assert_eq!(facts.formats_asked.get(), asked, "{filter:?}");
+            assert_eq!(drain_appends(&mut view, 7, now), appended, "{filter:?}");
+        }
     }
 
     #[test]
@@ -2021,6 +2150,373 @@ mod tests {
                 appends
             );
         }
+    }
+
+    fn grid_rebuilds(effects: &[ScanEffect]) -> (usize, usize) {
+        let count = |wanted: fn(&ScanEffect) -> bool| effects.iter().filter(|e| wanted(e)).count();
+        (
+            count(|e| matches!(e, ScanEffect::RefreshGrid)),
+            count(|e| matches!(e, ScanEffect::RebuildFolderStream)),
+        )
+    }
+
+    /// Runs `events` and returns every effect.
+    fn run_events(
+        view: &mut ScanView,
+        job: &mut ScanJobState,
+        facts: &Facts,
+        events: &[ScanEvent],
+    ) -> Vec<ScanEffect> {
+        let now = Instant::now();
+        let mut effects = Vec::new();
+        for event in events {
+            facts.commit(event);
+            effects.extend(step(view, job, 7, event, facts, now));
+        }
+        effects
+    }
+
+    fn one(id: i64, folder: i64, path: &str) -> ScanEvent {
+        indexed(&[(id, folder, path, true)])
+    }
+
+    #[test]
+    fn a_new_pair_never_shows_both_halves_and_stop_shows_the_preferred_one() {
+        let now = Instant::now();
+        let (raw, jpeg) = (one(1, 1, "/p/a.NEF"), one(2, 1, "/p/a.jpg"));
+        // (mode, first, second) -> the live half; whether Stop rebuilds.
+        for (mode, first, second, live, stop_rebuilds) in [
+            (RawJpegPairMode::PreferRaw, &raw, &jpeg, 1, false),
+            (RawJpegPairMode::PreferRaw, &jpeg, &raw, 2, true),
+            (RawJpegPairMode::PreferJpeg, &jpeg, &raw, 2, false),
+            (RawJpegPairMode::PreferJpeg, &raw, &jpeg, 1, true),
+        ] {
+            let case = format!("{mode:?} first={first:?}");
+            let facts = Facts {
+                pair_mode: mode,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut job = job_with_queue(ScanJobKind::Refresh);
+            run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[first.clone(), second.clone()],
+            );
+            assert_eq!(drain_appends(&mut view, 7, now), [live], "{case}");
+            // Stop right after the second half is catalogued.
+            job.stop_requested = true;
+            let stopped = run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[ScanEvent::Cancelled { imported: 2 }],
+            );
+            let expected = if stop_rebuilds { (1, 0) } else { (0, 0) };
+            assert_eq!(grid_rebuilds(&stopped), expected, "{case}");
+
+            // The same order finishing normally: an import's end of indexing
+            // rebuilds the gallery from the catalogue (the full list pairs).
+            let facts = Facts {
+                pair_mode: mode,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut import = self::job(ScanJobKind::Import);
+            let end = run_events(
+                &mut view,
+                &mut import,
+                &facts,
+                &[
+                    first.clone(),
+                    second.clone(),
+                    ScanEvent::IndexingFinished { imported: 2 },
+                ],
+            );
+            assert_eq!(drain_appends(&mut view, 7, now), [live], "{case}");
+            assert_eq!(grid_rebuilds(&end), (1, 0), "{case}");
+            let finished = run_events(
+                &mut view,
+                &mut import,
+                &facts,
+                &[ScanEvent::Finished {
+                    imported: 2,
+                    failed: 0,
+                }],
+            );
+            assert_eq!(grid_rebuilds(&finished), (0, 0), "{case}: reconciled once");
+        }
+    }
+
+    #[test]
+    fn both_halves_in_one_batch_wait_for_the_rebuild() {
+        let now = Instant::now();
+        let facts = Facts {
+            pair_mode: RawJpegPairMode::PreferRaw,
+            ..Facts::default()
+        };
+        let mut view = ScanView::new(now);
+        let mut job = job_with_queue(ScanJobKind::Refresh);
+        run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[indexed(&[
+                (1, 1, "/p/a.NEF", true),
+                (2, 1, "/p/a.jpg", true),
+            ])],
+        );
+        assert!(drain_appends(&mut view, 7, now).is_empty());
+        job.stop_requested = true;
+        let stopped = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[ScanEvent::Cancelled { imported: 2 }],
+        );
+        assert_eq!(grid_rebuilds(&stopped), (1, 0));
+    }
+
+    #[test]
+    fn unpaired_files_and_both_mode_append_as_before() {
+        let now = Instant::now();
+        let batches = [
+            one(1, 1, "/p/solo.NEF"),
+            one(2, 1, "/p/other.jpg"),
+            // The same name in another folder is not a twin.
+            one(3, 1, "/p/a.NEF"),
+            one(4, 2, "/q/a.jpg"),
+            // PNG never pairs: no lookup.
+            one(5, 1, "/p/a.png"),
+        ];
+        for (mode, lookups) in [(RawJpegPairMode::PreferRaw, 4), (RawJpegPairMode::Both, 0)] {
+            let facts = Facts {
+                pair_mode: mode,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut job = job_with_queue(ScanJobKind::Refresh);
+            run_events(&mut view, &mut job, &facts, &batches);
+            assert_eq!(
+                drain_appends(&mut view, 7, now),
+                [1, 2, 3, 4, 5],
+                "{mode:?}"
+            );
+            assert_eq!(facts.twin_lookups.get(), lookups, "{mode:?}");
+            job.stop_requested = true;
+            let stopped = run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[ScanEvent::Cancelled { imported: 5 }],
+            );
+            assert_eq!(grid_rebuilds(&stopped), (0, 0), "{mode:?}");
+        }
+        // Both mode shows both halves of a pair live.
+        let facts = Facts::default();
+        let mut view = ScanView::new(now);
+        let mut job = job(ScanJobKind::Import);
+        run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[one(1, 1, "/p/a.NEF"), one(2, 1, "/p/a.jpg")],
+        );
+        assert_eq!(drain_appends(&mut view, 7, now), [1, 2]);
+        assert_eq!(facts.twin_lookups.get(), 0);
+    }
+
+    #[test]
+    fn a_folder_view_shows_new_photos_at_the_rebuild_not_live() {
+        let now = Instant::now();
+        // Own folder, a subfolder, an unrelated folder.
+        let batch = indexed(&[
+            (1, 1, "/p/a.jpg", true),
+            (2, 3, "/p/sub/b.jpg", true),
+            (3, 9, "/q/c.jpg", true),
+        ]);
+        for filter in [
+            SidebarFilter::Folder(1),
+            SidebarFilter::Folder(3),
+            SidebarFilter::Folder(9),
+        ] {
+            let facts = Facts {
+                filter,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut job = job(ScanJobKind::Import);
+            let effects = run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[batch.clone(), ScanEvent::IndexingFinished { imported: 3 }],
+            );
+            assert!(drain_appends(&mut view, 7, now).is_empty(), "{filter:?}");
+            // One in-place rebuild of the stream (keeps the selected folder
+            // and the scroll position), not a full refresh.
+            assert_eq!(grid_rebuilds(&effects), (0, 1), "{filter:?}");
+            // Nothing left to reconcile when the job ends or is stopped.
+            let end = run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[ScanEvent::Finished {
+                    imported: 3,
+                    failed: 0,
+                }],
+            );
+            assert_eq!(grid_rebuilds(&end), (0, 0), "{filter:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_view_is_not_rebuilt_when_no_photo_is_new() {
+        let facts = Facts {
+            filter: SidebarFilter::Folder(1),
+            ..Facts::default()
+        };
+        let mut view = ScanView::new(Instant::now());
+        let mut job = job(ScanJobKind::Import);
+        let effects = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[
+                indexed(&[(1, 1, "/p/a.jpg", false)]),
+                ScanEvent::IndexingFinished { imported: 1 },
+            ],
+        );
+        assert_eq!(grid_rebuilds(&effects), (0, 0));
+        // The known photo still updates in place.
+        assert!(has(&effects, |e| matches!(e, ScanEffect::PhotosChanged(_))));
+    }
+
+    #[test]
+    fn all_photos_keeps_its_live_appends_and_its_refresh() {
+        let now = Instant::now();
+        let facts = Facts::default();
+        let mut view = ScanView::new(now);
+        let mut job = job(ScanJobKind::Import);
+        let effects = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[
+                indexed(&[(1, 1, "/p/a.jpg", true), (2, 3, "/p/sub/b.jpg", true)]),
+                ScanEvent::IndexingFinished { imported: 2 },
+            ],
+        );
+        assert_eq!(drain_appends(&mut view, 7, now), [1, 2]);
+        assert_eq!(grid_rebuilds(&effects), (1, 0));
+        // Stop after live appends: nothing is missing, no rebuild.
+        let mut view = ScanView::new(now);
+        let mut job = job_with_queue(ScanJobKind::Refresh);
+        job.stop_requested = true;
+        let stopped = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[
+                indexed(&[(1, 1, "/p/a.jpg", true)]),
+                ScanEvent::Cancelled { imported: 1 },
+            ],
+        );
+        assert_eq!(grid_rebuilds(&stopped), (0, 0));
+    }
+
+    #[test]
+    fn stop_in_a_folder_view_rebuilds_the_stream_only_when_photos_are_missing() {
+        let facts = Facts {
+            filter: SidebarFilter::Folder(1),
+            ..Facts::default()
+        };
+        for (kind, events, rebuilds) in [
+            // New photos, then Stop before the end of indexing.
+            (
+                ScanJobKind::Import,
+                vec![indexed(&[(1, 9, "/q/a.jpg", true)])],
+                (0, 1),
+            ),
+            (
+                ScanJobKind::Refresh,
+                vec![indexed(&[(1, 3, "/p/sub/a.jpg", true)])],
+                (0, 1),
+            ),
+            (
+                ScanJobKind::FolderRefresh,
+                vec![indexed(&[(1, 1, "/p/a.jpg", true)])],
+                (0, 1),
+            ),
+            // Nothing new: nothing to rebuild.
+            (
+                ScanJobKind::Refresh,
+                vec![indexed(&[(1, 1, "/p/a.jpg", false)])],
+                (0, 0),
+            ),
+            (ScanJobKind::Import, vec![], (0, 0)),
+            // Already rebuilt when indexing finished (Stop during thumbnails).
+            (
+                ScanJobKind::Import,
+                vec![
+                    indexed(&[(1, 9, "/q/a.jpg", true)]),
+                    ScanEvent::IndexingFinished { imported: 1 },
+                ],
+                (0, 1),
+            ),
+        ] {
+            let mut view = ScanView::new(Instant::now());
+            let mut job = job_with_queue(kind);
+            let mut all = run_events(&mut view, &mut job, &facts, &events);
+            job.stop_requested = true;
+            all.extend(run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[ScanEvent::Cancelled { imported: 1 }],
+            ));
+            assert_eq!(grid_rebuilds(&all), rebuilds, "{kind:?} {events:?}");
+        }
+    }
+
+    #[test]
+    fn a_multi_folder_refresh_in_a_folder_view_rebuilds_once_at_the_end() {
+        let facts = Facts {
+            filter: SidebarFilter::Folder(1),
+            ..Facts::default()
+        };
+        let mut view = ScanView::new(Instant::now());
+        let mut job = job_with_queue(ScanJobKind::Refresh);
+        let first = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[
+                indexed(&[(1, 3, "/p/sub/a.jpg", true)]),
+                ScanEvent::IndexingFinished { imported: 1 },
+                ScanEvent::Finished {
+                    imported: 1,
+                    failed: 0,
+                },
+            ],
+        );
+        assert_eq!(
+            grid_rebuilds(&first),
+            (0, 0),
+            "the next folder starts first"
+        );
+        job.pending.clear();
+        let last = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[ScanEvent::Finished {
+                imported: 0,
+                failed: 0,
+            }],
+        );
+        assert_eq!(grid_rebuilds(&last), (0, 1));
     }
 
     #[test]

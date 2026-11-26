@@ -212,6 +212,7 @@ fn show_unavailable_dialog(
     let photo_for_response = photo.clone();
     let connection_for_response = connection.clone();
     let availability_refresh_for_response = availability_refresh.clone();
+    let parent_for_counts = parent.clone();
     dialog.connect_response(None, move |_, response| {
         if response == "retry" {
             availability_refresh_for_response();
@@ -224,6 +225,7 @@ fn show_unavailable_dialog(
                 eprintln!("Could not remove unavailable photo from library: {error}");
             }
             availability_refresh_for_response();
+            let _ = parent_for_counts.activate_action(REFRESH_SMART_ALBUM_COUNTS_ACTION, None);
         } else {
             return;
         }

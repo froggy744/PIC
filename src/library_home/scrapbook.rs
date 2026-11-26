@@ -675,6 +675,7 @@ impl ScrapbookDashboard {
                 );
                 if let Err(error) = result { eprintln!("PIC scrapbook tag: {error:#}"); }
                 dashboard.refresh_tags();
+                let _ = dashboard.root.activate_action(crate::window::REFRESH_SMART_ALBUM_COUNTS_ACTION, None);
             });
             self.selected_tags.insert(&chip, -1);
         }
@@ -720,6 +721,7 @@ impl ScrapbookDashboard {
                     );
                     if let Err(error) = result { eprintln!("PIC scrapbook tag: {error:#}"); }
                     dashboard_for_response.refresh_tags();
+                    let _ = dashboard_for_response.root.activate_action(crate::window::REFRESH_SMART_ALBUM_COUNTS_ACTION, None);
                 }
             });
             let parent = button.root().and_then(|root| root.downcast::<gtk::Window>().ok());

@@ -504,7 +504,7 @@ impl Editor {
             _ => "Value",
         };
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let mut entry = |min: bool| {
+        let entry = |min: bool| {
             let entry = gtk::Entry::new();
             entry.set_placeholder_text(Some(placeholder));
             entry.set_width_chars(10);

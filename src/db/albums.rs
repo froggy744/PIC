@@ -94,6 +94,16 @@ pub fn albums(connection: &Connection) -> Result<Vec<Album>> {
     Ok(albums)
 }
 
+/// Whether any Smart Album exists, so photo changes can skip recounting
+/// album rows in libraries that have none.
+pub fn has_smart_albums(connection: &Connection) -> Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM albums WHERE rules IS NOT NULL)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 /// Albums photos can be added to by hand: Smart Albums are read-only photo
 /// sources and never destinations.
 pub fn manual_albums(connection: &Connection) -> Result<Vec<Album>> {

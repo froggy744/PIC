@@ -27,6 +27,96 @@ fn refresh_album_ui(context: &PhotoActionContext) {
     (context.refresh_albums_home)(&albums);
 }
 
+thread_local! {
+    /// Only the newest Smart Album recount is applied.
+    static SMART_ALBUM_COUNT_GENERATION: Cell<u64> = const { Cell::new(0) };
+    /// A recount already waiting covers every change made before it runs.
+    static SMART_ALBUM_COUNT_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Window action that recounts Smart Albums, for code without a
+/// `PhotoActionContext` (metadata indexing, Library Home tags).
+pub(crate) const REFRESH_SMART_ALBUM_COUNTS_ACTION: &str = "win.refresh-smart-album-counts";
+
+/// Smart Album membership follows photo changes (marks, tags, edits, trash,
+/// imports, metadata indexing), so their counts are recounted after each.
+/// Event-driven, never polled: a library without Smart Albums skips it,
+/// bursts of changes share one recount, and the counts run on a worker so
+/// a rating keypress never waits for them. The Albums overview is rebuilt
+/// only while it is shown; opening it reloads its albums anyway.
+fn refresh_smart_album_counts(context: &PhotoActionContext) {
+    if SMART_ALBUM_COUNT_PENDING.with(Cell::get)
+        || !db::has_smart_albums(&context.connection.borrow()).unwrap_or(false)
+    {
+        return;
+    }
+    SMART_ALBUM_COUNT_PENDING.with(|pending| pending.set(true));
+    let context = context.clone();
+    glib::timeout_add_local_once(Duration::from_millis(150), move || {
+        SMART_ALBUM_COUNT_PENDING.with(|pending| pending.set(false));
+        recount_smart_albums(&context);
+    });
+}
+
+fn recount_smart_albums(context: &PhotoActionContext) {
+    let generation = SMART_ALBUM_COUNT_GENERATION.with(|current| {
+        current.set(current.get() + 1);
+        current.get()
+    });
+    let apply = {
+        let context = context.clone();
+        move |albums: Vec<db::Album>| {
+            if let Some(sidebar) = context.sidebar.borrow().as_ref() {
+                sidebar::refresh_album_rows(sidebar, &albums, &context.delete_album);
+            }
+            if context.filter.get() == sidebar::SidebarFilter::Albums {
+                (context.refresh_albums_home)(&albums);
+            }
+        }
+    };
+    let Ok(path) = db::connection_path(&context.connection.borrow()) else {
+        // No file behind the connection (tests): count in place.
+        apply(db::albums(&context.connection.borrow()).unwrap_or_default());
+        return;
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker_path = path.clone();
+    std::thread::spawn(move || {
+        let albums = db::open_existing(&worker_path).and_then(|connection| db::albums(&connection));
+        let _ = sender.send(albums.ok());
+    });
+    let connection = context.connection.clone();
+    glib::timeout_add_local(Duration::from_millis(25), move || match receiver.try_recv() {
+        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Ok(Some(albums))
+            if SMART_ALBUM_COUNT_GENERATION.with(Cell::get) == generation
+                && db::connection_path(&connection.borrow()).ok().as_ref() == Some(&path) =>
+        {
+            apply(albums);
+            glib::ControlFlow::Break
+        }
+        _ => glib::ControlFlow::Break,
+    });
+}
+
+/// A photo change to `field` (tags, edits) that can move photos in or out of
+/// Smart Albums: recount them and, when the open album is a Smart Album with
+/// a rule on `field`, rebuild its photos. Returns whether it rebuilt them.
+fn smart_albums_changed(context: &PhotoActionContext, field: db::filters::Field) -> bool {
+    refresh_smart_album_counts(context);
+    let sidebar::SidebarFilter::Album(album_id) = context.filter.get() else {
+        return false;
+    };
+    let uses_field = db::album_rules(&context.connection.borrow(), album_id)
+        .ok()
+        .flatten()
+        .is_some_and(|rules| rules.categories.contains_key(&field));
+    if uses_field {
+        refresh_photo_actions_grid(context);
+    }
+    uses_field
+}
+
 fn configure_infobar_album_menu(button: &gtk::MenuButton, context: PhotoActionContext) {
     let selection_context = context.clone();
     let selected_ids: Rc<dyn Fn() -> Vec<i64>> = Rc::new(move || {

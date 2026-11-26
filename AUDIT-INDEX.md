@@ -226,7 +226,7 @@
 | `history.rs` | 223 | Edit history, collage project storage. |
 | `library_home.rs` | 256 | Home dashboard aggregate queries. |
 | `path_migration.rs` | 190 | Stored path rewrite after relocating application storage. |
-| `albums.rs` | 190 | Album CRUD + cover frames/photos. |
+| `albums.rs` | 443 | Album CRUD + cover frames/photos; Smart Album rules (`create_smart_album`, `set_album_rules`, `album_rules`), the one membership predicate `album_membership`, `manual_albums` (destinations only). |
 | `metadata.rs` | 155 | photo_metadata store/normalize/backfill. |
 | `scrapbook.rs` | 101 | Scrapbook tags/notes. |
 | `overlay_assets.rs` | 69 | Overlay asset persistence. |
@@ -352,6 +352,7 @@ After a Folder scroll settles, a 16 ms timer prefetches ahead, capped by `Galler
 | Settings window | `src/settings.rs` (`SettingsWindow`) | `settings/database.rs`, `settings/menus.rs`; generic store `db/settings.rs` |
 | Themes (new/edit theme) | `docs/THEMES.md`, `src/css/theme_discovery.rs` | `themes/<id>/` folder (CSS); application logic in `window/theme.rs` |
 | Albums views | `src/albums_view.rs`, `src/albums/view.rs` | `albums/bookshelf.rs`, `albums/card.rs`, `albums/coverflow.rs`; data in `db/albums.rs` |
+| Smart Albums (rules, dialog, membership, recounts) | `src/db/albums.rs` (`album_membership`), `src/db/filters.rs` (`AlbumRules`) | rules dialog + condition model `src/albums/rules.rs`; New Album / Save as Smart Album / Edit Rules / recount in `window/albums.rs`; actions `win.edit-album-rules`, `win.save-filters-as-smart-album`, `win.refresh-smart-album-counts` registered in `window/build.rs`; docs `docs/metadata-filters.md` |
 | Collage | `src/collage/mod.rs` (exports) | `collage/editor.rs`, `collage/layout.rs`, `collage/model.rs`; CI `collage-sidebar-check.yml` |
 | Screensaver | `src/screensaver/style.rs` (`Style::spec`, `Stage`), `src/screensaver.rs` | `screensaver/gpu.rs` + `gpu/{pile,flying,cinema,coverflow}.rs` |
 | Print | `src/window/print.rs` | renders via `edit::render` |

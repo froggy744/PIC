@@ -1677,6 +1677,8 @@ impl MetadataPanel {
                     panel.revision.set(panel.revision.get() + 1);
                     panel.sync();
                     (panel.changed)();
+                    // Newly indexed metadata can change Smart Album members.
+                    let _ = panel.root.activate_action(REFRESH_SMART_ALBUM_COUNTS_ACTION, None);
                     if p.error.is_none() {
                         let status_text = panel.status.text();
                         let weak_panel = Rc::downgrade(&panel);

@@ -288,6 +288,9 @@ fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
     if work.refresh_grid_when_done || work.context.filter.get() == sidebar::SidebarFilter::History
         || !db::filters::Filters::load(&work.context.connection.borrow()).is_empty() {
         refresh_photo_actions_grid(&work.context);
+        refresh_smart_album_counts(&work.context);
+    } else {
+        smart_albums_changed(&work.context, db::filters::Field::Edited);
     }
     let succeeded = total.saturating_sub(work.failed);
     let summary = if work.failed == 0 {
@@ -1529,6 +1532,7 @@ fn show_delete_confirmation(
         }
         context.info.clear_photo();
         refresh_photo_actions_grid(&context);
+        refresh_smart_album_counts(&context);
     });
     dialog.present(Some(parent));
 }
@@ -1863,6 +1867,7 @@ fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContex
                 if let Some(rows) = rows_for_refresh.upgrade() {
                     populate_properties_tags(&rows, &context_for_refresh, photo_id);
                 }
+                smart_albums_changed(&context_for_refresh, db::filters::Field::Tags);
             }
         });
         tag_rows.insert(&chip, -1);
@@ -1920,6 +1925,7 @@ fn properties_add_tag_button(
                         if let Some(rows) = rows_for_response.upgrade() {
                             populate_properties_tags(&rows, &context_for_response, photo_id);
                         }
+                        smart_albums_changed(&context_for_response, db::filters::Field::Tags);
                     }
                 }
             });

@@ -901,6 +901,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
     });
     window.add_action(&save_smart_album);
+    let recount_context = action_context.clone();
+    let recount = gio::SimpleAction::new(
+        REFRESH_SMART_ALBUM_COUNTS_ACTION.trim_start_matches("win."),
+        None,
+    );
+    recount.connect_activate(move |_, _| refresh_smart_album_counts(&recount_context));
+    window.add_action(&recount);
     let delete_context = action_context.clone();
     let delete_parent = window.clone();
     delete_album_slot.replace(Some(Rc::new(move |album_id| {
@@ -3825,6 +3832,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
 
     let edit_editor: Rc<RefCell<Option<crate::edit::EditEditor>>> = Rc::new(RefCell::new(None));
+    let smart_edit_context = action_context.clone();
     // InfoBar Draw: open the editor straight on its Draw tab. In the editor
     // it switches to Draw, or closes like Edit when Draw is already showing.
     {
@@ -4094,10 +4102,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let gallery = gallery.clone();
                 let info = info.clone();
                 let trace_uri = trace_uri.clone();
+                let smart_context = smart_edit_context.clone();
                 Rc::new(move |photo: crate::photo_object::PhotoObject| {
                     crate::thumbnail_trace::event(&trace_uri, "editor", "saved");
                     gallery.update_edit_recipe(photo.id(), &photo.edit_recipe());
                     info.photo_updated(&photo);
+                    smart_albums_changed(&smart_context, db::filters::Field::Edited);
                 }) as Rc<dyn Fn(crate::photo_object::PhotoObject)>
             };
             let editor = crate::edit::build_editor(
@@ -4660,6 +4670,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let edit_editor_for_rotate = edit_editor.clone();
     let front_for_rotate = front.clone();
 
+    let smart_rotate_context = action_context.clone();
     let rotate_photo: Rc<dyn Fn(bool)> = Rc::new(move |counter_clockwise| {
         let Some(photo) = info_rotate.current_photo() else {
             return;
@@ -4677,6 +4688,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         properties_for_rotate.show_photo(PropertiesSurface::Gallery, Some(&photo));
         gallery_for_rotate.refresh_rotated_photo(&photo.path());
         lightbox_for_rotate.refresh_current();
+        // Rotation counts as an edit for the Edited rule.
+        smart_albums_changed(&smart_rotate_context, db::filters::Field::Edited);
         if front_for_rotate.current() == Front::Editor {
             if let Some(editor) = edit_editor_for_rotate.borrow().as_ref() {
                 if editor.photo_id() == photo.id() {
@@ -6271,6 +6284,7 @@ fn start_photo_export_single(
     });
 
     let onboarding_for_switch = onboarding.clone();
+    let smart_scan_context = action_context.clone();
     let gallery_for_events = gallery.clone();
     let lightbox_for_events = lightbox.clone();
     let connection_for_events = connection.clone();
@@ -6601,6 +6615,7 @@ fn start_photo_export_single(
                 }
 
                 scanner::ScanEvent::PhotosRemoved { ids } => {
+                    refresh_smart_album_counts(&smart_scan_context);
                     pending_photos.retain(|photo| !ids.contains(&photo.id));
                     gallery_for_events.remove_photos(ids);
                     for id in ids {
@@ -6608,6 +6623,7 @@ fn start_photo_export_single(
                     }
                 }
                 scanner::ScanEvent::FoldersRemoved => {
+                    refresh_smart_album_counts(&smart_scan_context);
                     availability_refresh_for_events();
                     if let sidebar::SidebarFilter::Folder(id) = filter_for_events.get() {
                         if !db::folder_exists(&connection_for_events.borrow(), id).unwrap_or(true) {
@@ -6637,6 +6653,8 @@ fn start_photo_export_single(
                 }
 
                 scanner::ScanEvent::IndexingFinished { imported } => {
+                    // Imported and refreshed photos can join Smart Albums.
+                    refresh_smart_album_counts(&smart_scan_context);
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
                             "PIC_SCAN_UI indexing_finished queued_ms={} imported={} filter={:?}",

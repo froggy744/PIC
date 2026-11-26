@@ -13,7 +13,7 @@ use super::photo_marks::{
     self, MarkChange, MarkFront, MarkIntent, MarkPlan, MarkRequest, MarkView, Membership,
     PhotoMarks,
 };
-use super::{refresh_grid, Front, PhotoActionContext, PropertiesSurface};
+use super::{refresh_grid, refresh_smart_album_counts, Front, PhotoActionContext, PropertiesSurface};
 use crate::db;
 use crate::photo_object::PhotoObject;
 use crate::sidebar;
@@ -85,6 +85,13 @@ fn plan_for(
         _ => Vec::new(),
     };
     let metadata = db::filters::Filters::load(&context.connection.borrow());
+    let album_rules = match context.filter.get() {
+        sidebar::SidebarFilter::Album(id) => db::album_rules(&context.connection.borrow(), id)
+            .ok()
+            .flatten()
+            .map(|rules| rules.to_filters()),
+        _ => None,
+    };
     let request = MarkRequest {
         intent,
         front,
@@ -95,6 +102,7 @@ fn plan_for(
             rating: context.rating_filter.get(),
             sort: context.sort.get().field,
             metadata: &metadata,
+            album_rules: album_rules.as_ref(),
         },
     };
     photo_marks::plan(&request).map(|plan| (plan, front))
@@ -213,6 +221,7 @@ fn show_updated(context: &PhotoActionContext, shown: &PhotoObject, lightbox_show
 }
 
 fn update_counts(context: &PhotoActionContext) {
+    refresh_smart_album_counts(context);
     let Some(sidebar) = context.sidebar.borrow().as_ref().cloned() else {
         return;
     };
@@ -227,6 +236,90 @@ mod tests {
     use super::run;
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn marks_recount_smart_albums_once_per_burst() {
+        gtk::init().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "pic-smart-recount-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connection = Rc::new(RefCell::new(
+            db::open(&directory.join("library.db")).unwrap(),
+        ));
+        connection
+            .borrow()
+            .execute_batch("INSERT INTO photos (id, path) VALUES (1, '/s/a.jpg'), (2, '/s/b.jpg');")
+            .unwrap();
+        let mut rules = db::filters::AlbumRules::default();
+        rules.categories.insert(
+            db::filters::Field::Favorite,
+            db::filters::Selection { values: vec!["1".into()], ..Default::default() },
+        );
+        db::create_smart_album(&connection.borrow(), "Loved", &rules).unwrap();
+        let photos = (1..=2)
+            .map(|id| db::photo(&connection.borrow(), id).unwrap().unwrap())
+            .collect::<Vec<_>>();
+        let gallery = Rc::new(grid::Gallery::new(
+            &photos, 148, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {},
+        ));
+        let select = |id: i64| {
+            gallery.set_selected_photo_ids(&[id]);
+            gallery.selected_photos().into_iter().find(|photo| photo.id() == id).unwrap()
+        };
+        let applied: Rc<RefCell<Vec<i64>>> = Rc::default();
+        let applied_in = applied.clone();
+        let context = PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(Rc::downgrade(&gallery))),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: Rc::new(InfoBar::new()),
+            lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
+            sidebar: Rc::new(RefCell::new(None)),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            refresh_albums_home: Rc::new(move |albums: &[db::Album]| {
+                applied_in.borrow_mut().push(albums[0].photo_count);
+            }),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
+        };
+        // Two favourites in quick succession share one worker recount, which
+        // sees both.
+        run(&context, MarkIntent::ToggleFavorite, &select(1));
+        run(&context, MarkIntent::ToggleFavorite, &select(2));
+        let main = glib::MainContext::default();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while applied.borrow().is_empty() && std::time::Instant::now() < until {
+            main.iteration(false);
+        }
+        let settle = std::time::Instant::now() + std::time::Duration::from_millis(300);
+        while std::time::Instant::now() < settle {
+            main.iteration(false);
+        }
+        assert_eq!(*applied.borrow(), vec![2]);
+    }
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]

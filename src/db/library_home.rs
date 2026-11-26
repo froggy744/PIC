@@ -40,25 +40,17 @@ pub fn library_home_data_for_album(
         let rows = query.query_map([HOME_PREVIEW_LIMIT], photo_from_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
-    let mut query = connection.prepare(
+    let mut query = connection.prepare(&format!(
         "WITH preview AS (SELECT * FROM albums ORDER BY name COLLATE NOCASE,id LIMIT ?1)
-         SELECT a.id,a.name,a.created_at,COUNT(p.id),a.cover_frame,a.cover_photo_id
+         SELECT {ALBUM_COLUMNS}
          FROM preview a LEFT JOIN album_photos ap ON ap.album_id=a.id
          LEFT JOIN photos p ON p.id=ap.photo_id AND p.trashed=0
-         GROUP BY a.id ORDER BY a.name COLLATE NOCASE,a.id",
-    )?;
-    let albums = query
-        .query_map([HOME_PREVIEW_LIMIT], |row| {
-            Ok(Album {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                created_at: row.get(2)?,
-                photo_count: row.get(3)?,
-                cover_frame: row.get(4)?,
-                cover_photo_id: row.get(5)?,
-            })
-        })?
+         GROUP BY a.id ORDER BY a.name COLLATE NOCASE,a.id"
+    ))?;
+    let mut albums = query
+        .query_map([HOME_PREVIEW_LIMIT], album_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    fill_smart_album_counts(connection, &mut albums, &filters::Filters::default())?;
     let albums =
         albums
             .into_iter()
@@ -72,15 +64,7 @@ pub fn library_home_data_for_album(
                 let cover =
                     match chosen {
                         Some(photo) => Some(photo),
-                        None => {
-                            let id = connection.query_row(
-                    "SELECT p.id FROM album_photos ap JOIN photos p ON p.id=ap.photo_id
-                     WHERE ap.album_id=?1 AND p.trashed=0
-                     ORDER BY p.taken_at IS NULL,p.taken_at DESC,p.path COLLATE NOCASE LIMIT 1",
-                    [album.id], |row| row.get::<_,i64>(0),
-                ).optional()?;
-                            id.map(|id| photo(connection, id)).transpose()?.flatten()
-                        }
+                        None => album_photos_page(connection, album.id, 1)?.into_iter().next(),
                     };
                 Ok((album, cover))
             })
@@ -100,15 +84,7 @@ pub fn library_home_data_for_album(
         let cover = if cover.is_some() {
             cover
         } else {
-            let id = connection.query_row(
-                "SELECT p.id FROM album_photos ap JOIN photos p ON p.id=ap.photo_id
-                 WHERE ap.album_id=?1 AND p.trashed=0
-                 ORDER BY p.taken_at IS NULL,p.taken_at DESC,p.path COLLATE NOCASE
-                 LIMIT 1",
-                [album.id],
-                |row| row.get::<_, i64>(0),
-            ).optional()?;
-            id.map(|id| photo(connection, id)).transpose()?.flatten()
+            album_photos_page(connection, album.id, 1)?.into_iter().next()
         };
         scrapbook_albums.push((album, cover));
     }
@@ -121,16 +97,7 @@ pub fn library_home_data_for_album(
     let scrapbook_album_id = featured.as_ref().map(|(id, _, _)| *id);
     let (scrapbook_photos, scrapbook_title, scrapbook_total) =
         if let Some((album_id, title, count)) = featured {
-            let mut query = connection.prepare(
-                "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
-                 FROM album_photos ap JOIN photos p ON p.id=ap.photo_id
-                 LEFT JOIN folders f ON f.id=p.folder_id
-                 WHERE ap.album_id=?1 AND p.trashed=0
-                 ORDER BY p.taken_at IS NULL,p.taken_at DESC,p.path COLLATE NOCASE
-                 LIMIT ?2",
-            )?;
-            let rows = query.query_map(params![album_id, SCRAPBOOK_STRIP_LIMIT], photo_from_row)?;
-            (rows.collect::<rusqlite::Result<Vec<_>>>()?, title, count)
+            (album_photos_page(connection, album_id, SCRAPBOOK_STRIP_LIMIT)?, title, count)
         } else {
             (added.clone(), "Recently Added".to_string(), added.len() as i64)
         };

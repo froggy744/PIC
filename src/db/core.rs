@@ -319,6 +319,10 @@ fn migrate_album_schema(connection: &Connection) -> Result<()> {
             [],
         )?;
     }
+    // Smart Albums: NULL keeps every existing album manual.
+    if !columns.iter().any(|column| column == "rules") {
+        connection.execute("ALTER TABLE albums ADD COLUMN rules TEXT", [])?;
+    }
 
     let foreign_key_count: i64 = connection.query_row(
         "SELECT COUNT(*) FROM pragma_foreign_key_list('album_photos')",

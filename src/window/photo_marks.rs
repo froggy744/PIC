@@ -61,6 +61,9 @@ pub(super) struct MarkView<'a> {
     pub(super) sort: SortField,
     /// The Photo filters (metadata) panel's saved filters.
     pub(super) metadata: &'a Filters,
+    /// The open Smart Album's rules, which decide its membership like
+    /// filters do. `None` outside a Smart Album.
+    pub(super) album_rules: Option<&'a Filters>,
 }
 
 /// What the change does to the photos being browsed.
@@ -119,11 +122,16 @@ pub(super) fn plan(request: &MarkRequest) -> Option<MarkPlan> {
 
 fn membership(change: MarkChange, view: &MarkView) -> Membership {
     let metadata_on = |field| {
-        view.metadata
-            .categories
-            .get(&field)
-            .is_some_and(|selection| !selection.is_empty())
+        std::iter::once(view.metadata)
+            .chain(view.album_rules)
+            .any(|filters| {
+                filters
+                    .categories
+                    .get(&field)
+                    .is_some_and(|selection| !selection.is_empty())
+            })
     };
+    let album_rating_rule = view.album_rules.is_some_and(|rules| !rules.rating.is_empty());
     match change {
         MarkChange::Favorite(false) if view.sidebar == SidebarFilter::Favorites => {
             Membership::Remove
@@ -138,7 +146,8 @@ fn membership(change: MarkChange, view: &MarkView) -> Membership {
                     SidebarFilter::Ratings | SidebarFilter::Rating(_)
                 )
                 || view.sort == SortField::Rating
-                || metadata_on(Field::Rating) =>
+                || metadata_on(Field::Rating)
+                || album_rating_rule =>
         {
             Membership::Rebuild
         }
@@ -181,6 +190,42 @@ mod tests {
             rating: RatingFilter::All,
             sort: SortField::DateTaken,
             metadata: &NO_FILTERS,
+            album_rules: None,
+        }
+    }
+
+    #[test]
+    fn smart_album_rules_on_marks_rebuild_the_album() {
+        let favourites = Filters {
+            categories: [(Field::Favorite, Selection { values: vec!["1".into()], ..Default::default() })]
+                .into_iter()
+                .collect(),
+            rating: String::new(),
+        };
+        let rated = Filters { rating: "stars".into(), ..Default::default() };
+        let camera = Filters {
+            categories: [(Field::Camera, Selection { values: vec!["x".into()], ..Default::default() })]
+                .into_iter()
+                .collect(),
+            rating: String::new(),
+        };
+        let cases: [(&str, MarkIntent, &Filters, Membership); 5] = [
+            ("favourite rule, heart", MarkIntent::ToggleFavorite, &favourites, Membership::Rebuild),
+            ("favourite rule, stars", MarkIntent::SetRating(3), &favourites, Membership::Keep),
+            ("rating rule, stars", MarkIntent::SetRating(3), &rated, Membership::Rebuild),
+            ("rating rule, heart", MarkIntent::ToggleFavorite, &rated, Membership::Keep),
+            ("camera rule, stars", MarkIntent::SetRating(2), &camera, Membership::Keep),
+        ];
+        for (name, intent, rules, expected) in cases {
+            let anchor = marks(1, false, 5);
+            let request = MarkRequest {
+                intent,
+                front: MarkFront::Gallery,
+                anchor,
+                selection: &[anchor],
+                view: MarkView { sidebar: SidebarFilter::Album(7), album_rules: Some(rules), ..view() },
+            };
+            assert_eq!(plan(&request).map(|plan| plan.membership), Some(expected), "case: {name}");
         }
     }
 
@@ -569,6 +614,7 @@ mod tests {
                     rating,
                     sort,
                     metadata: filters,
+                    album_rules: None,
                 },
             };
             assert_eq!(

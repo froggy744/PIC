@@ -7,6 +7,8 @@ use std::sync::{
 };
 
 const VISIBLE_FILTERS_SETTING: &str = "photo-metadata-visible-filters";
+/// Window action behind the filter row's Save as Smart Album… button.
+pub(super) const SAVE_FILTERS_AS_SMART_ALBUM_ACTION: &str = "win.save-filters-as-smart-album";
 const EXPLORER_COLUMNS_SETTING: &str = "photo-metadata-explorer-columns";
 const EXPLORER_WIDTHS_SETTING: &str = "photo-metadata-explorer-widths";
 const DEFAULT_VISIBLE_FILTERS: &[Field] = &[
@@ -183,6 +185,8 @@ pub(super) struct MetadataPanel {
     operation_progress: RefCell<Option<Rc<super::OperationProgressUi>>>,
     index_button: gtk::Button,
     pin_button: gtk::ToggleButton,
+    /// Save as Smart Album…: copies the active filters into a new album.
+    save_smart_album: gtk::Button,
     cancel_button: gtk::Button,
     cancel: RefCell<Option<Arc<AtomicBool>>>,
     database: RefCell<Option<std::path::PathBuf>>,
@@ -303,6 +307,21 @@ impl MetadataPanel {
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         summary.append(&clear);
+        let save_smart_album = gtk::Button::from_icon_name("pic-smart-album-symbolic");
+        save_smart_album.add_css_class("metadata-filter-utility");
+        save_smart_album.add_css_class("metadata-filter-save-smart-album");
+        save_smart_album.set_tooltip_text(Some("Save as Smart Album…"));
+        save_smart_album
+            .update_property(&[gtk::accessible::Property::Label("Save as Smart Album…")]);
+        // Activated by hand rather than as an actionable widget, so its
+        // sensitivity follows the active filters, not just the action.
+        save_smart_album.connect_clicked(|button| {
+            if let Err(error) = button.activate_action(SAVE_FILTERS_AS_SMART_ALBUM_ACTION, None) {
+                eprintln!("Could not open Save as Smart Album: {error}");
+            }
+        });
+        save_smart_album.set_sensitive(false);
+        summary.append(&save_smart_album);
         let index_button = gtk::Button::from_icon_name("network-transmit-receive-symbolic");
         index_button.add_css_class("metadata-filter-utility");
         index_button.set_tooltip_text(Some("Index missing metadata"));
@@ -387,6 +406,7 @@ impl MetadataPanel {
             operation_progress: RefCell::new(None),
             index_button,
             pin_button,
+            save_smart_album,
             cancel_button,
             cancel: RefCell::new(None),
             database: RefCell::new(database),
@@ -1046,6 +1066,7 @@ impl MetadataPanel {
         let state = self.state.borrow().clone();
         let rating = (self.scope)().rating;
         let active = state.categories.len() + usize::from(!matches!(rating.as_str(), "" | "all"));
+        self.save_smart_album.set_sensitive(active > 0);
         for (field, button) in self.filter_buttons.borrow().iter() {
             let selected = if *field == Field::Rating {
                 matches!(rating.as_str(), "stars" | "unrated" | "1" | "2" | "3" | "4" | "5")
@@ -1656,6 +1677,8 @@ impl MetadataPanel {
                     panel.revision.set(panel.revision.get() + 1);
                     panel.sync();
                     (panel.changed)();
+                    // Newly indexed metadata can change Smart Album members.
+                    let _ = panel.root.activate_action(REFRESH_SMART_ALBUM_COUNTS_ACTION, None);
                     if p.error.is_none() {
                         let status_text = panel.status.text();
                         let weak_panel = Rc::downgrade(&panel);
@@ -1763,6 +1786,65 @@ mod tests {
         }
         panel.button.set_active(false);
     }
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn save_as_smart_album_copies_the_active_filters() {
+        adw::init().unwrap();
+        crate::register_bundled_icons();
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(db::SCHEMA).unwrap();
+        c.execute_batch(
+            "INSERT INTO photos(id,path,favorite,rating) VALUES (1,'/a.jpg',1,4),(2,'/b.jpg',0,4),(3,'/c.jpg',1,0);",
+        )
+        .unwrap();
+        let c = Rc::new(RefCell::new(c));
+        let rating = Rc::new(RefCell::new(String::new()));
+        let scope_rating = rating.clone();
+        let panel = MetadataPanel::new(
+            c.clone(),
+            Rc::new(move || Scope { rating: scope_rating.borrow().clone(), ..Scope::default() }),
+            Rc::new(|| {}),
+            Rc::new(|_| {}),
+        );
+        let window = gtk::Window::builder().default_width(1200).default_height(600).build();
+        let activations = Rc::new(Cell::new(0));
+        let group = gio::SimpleActionGroup::new();
+        let action = gio::SimpleAction::new(
+            SAVE_FILTERS_AS_SMART_ALBUM_ACTION.trim_start_matches("win."),
+            None,
+        );
+        let counted = activations.clone();
+        action.connect_activate(move |_, _| counted.set(counted.get() + 1));
+        group.add_action(&action);
+        window.insert_action_group("win", Some(&group));
+        window.set_child(Some(&panel.root));
+        window.present();
+        settle();
+        // Nothing to save until a filter is active.
+        assert!(!panel.save_smart_album.is_sensitive());
+        panel.state.borrow_mut().toggle(Field::Favorite, "1".into(), true);
+        rating.replace("4".into());
+        db::set_setting(&c.borrow(), "photo-rating-filter", "4").unwrap();
+        panel.apply();
+        settle();
+        assert!(panel.save_smart_album.is_sensitive());
+        panel.save_smart_album.emit_clicked();
+        assert_eq!(activations.get(), 1);
+
+        // What the action saves: the browsing filters including the rating.
+        let browsing = Filters::for_browsing(&c.borrow());
+        let (rules, unsaved) = db::filters::AlbumRules::capture(&browsing);
+        assert_eq!(unsaved, db::filters::Unsaved::default());
+        let album = db::create_smart_album(&c.borrow(), "Loved", &rules).unwrap();
+        assert_eq!(album.photo_count, 1);
+        // Later browsing changes leave the saved album alone.
+        panel.state.borrow_mut().toggle(Field::Favorite, "1".into(), false);
+        panel.apply();
+        db::set_setting(&c.borrow(), "photo-rating-filter", "").unwrap();
+        assert_eq!(db::album_rules(&c.borrow(), album.id).unwrap(), Some(rules));
+        assert_eq!(db::albums(&c.borrow()).unwrap()[0].photo_count, 1);
+    }
+
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn metadata_panel_theme_layout_and_close_reopen() {

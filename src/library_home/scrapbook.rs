@@ -563,7 +563,9 @@ impl ScrapbookDashboard {
             id.map(SidebarFilter::Album).unwrap_or(SidebarFilter::All),
             navigate,
         ));
-        if let Some(album_id) = id {
+        let featured_smart = snapshot.data.scrapbook_albums.iter()
+            .any(|(album, _)| Some(album.id) == id && album.is_smart());
+        if let Some(album_id) = id.filter(|_| !featured_smart) {
             let add = gtk::Button::with_label("+ Add photos");
             add.add_css_class("scrapbook-section-action");
             add.set_tooltip_text(Some("Choose more photos from your PIC library for this album"));
@@ -673,6 +675,7 @@ impl ScrapbookDashboard {
                 );
                 if let Err(error) = result { eprintln!("PIC scrapbook tag: {error:#}"); }
                 dashboard.refresh_tags();
+                let _ = dashboard.root.activate_action(crate::window::REFRESH_SMART_ALBUM_COUNTS_ACTION, None);
             });
             self.selected_tags.insert(&chip, -1);
         }
@@ -718,6 +721,7 @@ impl ScrapbookDashboard {
                     );
                     if let Err(error) = result { eprintln!("PIC scrapbook tag: {error:#}"); }
                     dashboard_for_response.refresh_tags();
+                    let _ = dashboard_for_response.root.activate_action(crate::window::REFRESH_SMART_ALBUM_COUNTS_ACTION, None);
                 }
             });
             let parent = button.root().and_then(|root| root.downcast::<gtk::Window>().ok());
@@ -780,8 +784,8 @@ impl ScrapbookDashboard {
         let dashboard_for_album = self.clone();
         album.connect_clicked(move |button| {
             let Ok(connection) = db::open_existing(&database) else { return; };
-            let Ok(albums) = db::albums(&connection) else { return; };
-            let albums: Vec<_> = albums.into_iter().collect();
+            // Smart Albums choose their own photos and are never destinations.
+            let Ok(albums) = db::manual_albums(&connection) else { return; };
             let dialog = libadwaita::AlertDialog::new(
                 Some("Add Photo to Album"),
                 Some("Choose the album for this photo. The original file is unchanged."),

@@ -54,6 +54,7 @@ fn rewrite_stored_paths(connection: &Connection, old: &Path, new: &Path) -> Resu
         ("folders", "path"),
         ("settings", "value"),
         ("collage_projects", "draft"),
+        ("albums", "rules"),
     ] {
         let query = format!("SELECT rowid, {column} FROM {table} WHERE instr({column}, ?1) > 0 OR instr({column}, ?2) > 0");
         let prefix = old.to_string_lossy();

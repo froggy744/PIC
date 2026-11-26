@@ -24,7 +24,114 @@ fn refresh_album_ui(context: &PhotoActionContext) {
         );
     }
     configure_infobar_album_menu(&context.info.add_to_album, context.clone());
-    (context.refresh_albums_home)(&albums);
+    // The sidebar shows whole albums; the Albums home follows the active
+    // browsing filters, like every other path that refreshes it.
+    let home = db::browse_albums(&context.connection.borrow()).unwrap_or_default();
+    (context.refresh_albums_home)(&home);
+}
+
+thread_local! {
+    /// Only the newest Smart Album recount is applied.
+    static SMART_ALBUM_COUNT_GENERATION: Cell<u64> = const { Cell::new(0) };
+    /// A recount already waiting covers every change made before it runs.
+    static SMART_ALBUM_COUNT_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Window action that recounts Smart Albums, for code without a
+/// `PhotoActionContext` (metadata indexing, Library Home tags).
+pub(crate) const REFRESH_SMART_ALBUM_COUNTS_ACTION: &str = "win.refresh-smart-album-counts";
+
+/// Smart Album membership follows photo changes (marks, tags, edits, trash,
+/// imports, metadata indexing), so their counts are recounted after each.
+/// Event-driven, never polled: a library without Smart Albums skips it,
+/// bursts of changes share one recount, and the counts run on a worker so
+/// a rating keypress never waits for them. The Albums overview is rebuilt
+/// only while it is shown; opening it reloads its albums anyway.
+fn refresh_smart_album_counts(context: &PhotoActionContext) {
+    if SMART_ALBUM_COUNT_PENDING.with(Cell::get)
+        || !db::has_smart_albums(&context.connection.borrow()).unwrap_or(false)
+    {
+        return;
+    }
+    SMART_ALBUM_COUNT_PENDING.with(|pending| pending.set(true));
+    let context = context.clone();
+    glib::timeout_add_local_once(Duration::from_millis(150), move || {
+        SMART_ALBUM_COUNT_PENDING.with(|pending| pending.set(false));
+        recount_smart_albums(&context);
+    });
+}
+
+fn recount_smart_albums(context: &PhotoActionContext) {
+    let generation = SMART_ALBUM_COUNT_GENERATION.with(|current| {
+        current.set(current.get() + 1);
+        current.get()
+    });
+    // The sidebar gets whole-album counts; the Albums home, when shown, gets
+    // counts narrowed by the browsing filters as they were when the recount
+    // started, and drops them if the filters have changed since.
+    let filters = db::filters::Filters::for_browsing(&context.connection.borrow());
+    let wants_home = context.filter.get() == sidebar::SidebarFilter::Albums;
+    let apply = {
+        let context = context.clone();
+        move |albums: Vec<db::Album>, home: Option<Vec<db::Album>>| {
+            if let Some(sidebar) = context.sidebar.borrow().as_ref() {
+                sidebar::refresh_album_rows(sidebar, &albums, &context.delete_album);
+            }
+            let current = db::filters::Filters::for_browsing(&context.connection.borrow());
+            if let Some(home) = home.filter(|_| {
+                context.filter.get() == sidebar::SidebarFilter::Albums && current == filters
+            }) {
+                (context.refresh_albums_home)(&home);
+            }
+        }
+    };
+    let count = move |connection: &rusqlite::Connection| -> anyhow::Result<(Vec<db::Album>, Option<Vec<db::Album>>)> {
+        let home = if wants_home { Some(db::browse_albums(connection)?) } else { None };
+        Ok((db::albums(connection)?, home))
+    };
+    let Ok(path) = db::connection_path(&context.connection.borrow()) else {
+        // No file behind the connection (tests): count in place.
+        if let Ok((albums, home)) = count(&context.connection.borrow()) {
+            apply(albums, home);
+        }
+        return;
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker_path = path.clone();
+    std::thread::spawn(move || {
+        let counted = db::open_existing(&worker_path).and_then(|connection| count(&connection));
+        let _ = sender.send(counted.ok());
+    });
+    let connection = context.connection.clone();
+    glib::timeout_add_local(Duration::from_millis(25), move || match receiver.try_recv() {
+        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Ok(Some((albums, home)))
+            if SMART_ALBUM_COUNT_GENERATION.with(Cell::get) == generation
+                && db::connection_path(&connection.borrow()).ok().as_ref() == Some(&path) =>
+        {
+            apply(albums, home);
+            glib::ControlFlow::Break
+        }
+        _ => glib::ControlFlow::Break,
+    });
+}
+
+/// A photo change to `field` (tags, edits) that can move photos in or out of
+/// Smart Albums: recount them and, when the open album is a Smart Album with
+/// a rule on `field`, rebuild its photos. Returns whether it rebuilt them.
+fn smart_albums_changed(context: &PhotoActionContext, field: db::filters::Field) -> bool {
+    refresh_smart_album_counts(context);
+    let sidebar::SidebarFilter::Album(album_id) = context.filter.get() else {
+        return false;
+    };
+    let uses_field = db::album_rules(&context.connection.borrow(), album_id)
+        .ok()
+        .flatten()
+        .is_some_and(|rules| rules.categories.contains_key(&field));
+    if uses_field {
+        refresh_photo_actions_grid(context);
+    }
+    uses_field
 }
 
 fn configure_infobar_album_menu(button: &gtk::MenuButton, context: PhotoActionContext) {
@@ -119,7 +226,8 @@ fn build_album_choices(
     });
     menu.append(&new_album);
 
-    let albums = db::albums(&context.connection.borrow()).unwrap_or_default();
+    // Destinations only: Smart Albums are read-only photo sources.
+    let albums = db::manual_albums(&context.connection.borrow()).unwrap_or_default();
     if !albums.is_empty() {
         menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
@@ -166,6 +274,25 @@ fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: P
     entry.set_placeholder_text(Some("Album name"));
     entry.set_activates_default(true);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    // Album or Smart Album. Opened from Add to Album the photos need a
+    // manual album, so the choice is not offered there.
+    let smart = gtk::ToggleButton::with_label("Smart Album");
+    if photo_ids.is_empty() {
+        let kind = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        kind.add_css_class("linked");
+        kind.add_css_class("new-album-kind");
+        kind.set_halign(gtk::Align::Center);
+        kind.set_margin_bottom(4);
+        let manual = gtk::ToggleButton::with_label("Album");
+        manual.set_active(true);
+        smart.set_group(Some(&manual));
+        manual.set_hexpand(true);
+        smart.set_hexpand(true);
+        kind.set_homogeneous(true);
+        kind.append(&manual);
+        kind.append(&smart);
+        content.append(&kind);
+    }
     content.append(&gtk::Label::new(Some("Enter a name for the album:")));
     content.append(&entry);
     let dialog = adw::AlertDialog::builder()
@@ -177,9 +304,29 @@ fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: P
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("create", "Create");
     dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+    let weak_dialog = dialog.downgrade();
+    smart.connect_toggled(move |smart| {
+        if let Some(dialog) = weak_dialog.upgrade() {
+            dialog.set_response_label("create", if smart.is_active() { "Next" } else { "Create" });
+        }
+    });
     let parent_for_response = parent.clone();
     let entry_for_response = entry.clone();
     dialog.connect_response(Some("create"), move |_, _| {
+        if smart.is_active() {
+            let name = entry_for_response.text().trim().to_string();
+            if let Err(error) = db::check_new_album_name(&context.connection.borrow(), &name) {
+                show_error(&parent_for_response, "Could not create album", &error.to_string());
+                return;
+            }
+            let parent = parent_for_response.clone();
+            let context = context.clone();
+            // Present after the name dialog has closed and released its focus.
+            glib::idle_add_local_once(move || {
+                show_new_smart_album_rules(&parent, name, None, None, context);
+            });
+            return;
+        }
         let album = match db::create_album(
             &context.connection.borrow(),
             entry_for_response.text().as_str(),
@@ -209,6 +356,76 @@ fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: P
     });
     dialog.present(Some(&parent));
     entry.grab_focus();
+}
+
+/// The second step of a new Smart Album (and Save as Smart Album): choose
+/// its rules, then create it. `name` is `None` when the dialog should ask for
+/// one; `rules` prefills the conditions.
+fn show_new_smart_album_rules(
+    parent: &gtk::Widget,
+    name: String,
+    rules: Option<&db::filters::AlbumRules>,
+    notice: Option<String>,
+    context: PhotoActionContext,
+) {
+    let ask_name = rules.is_some();
+    let connection = context.connection.clone();
+    crate::albums_view::rules::present_rules_dialog(
+        parent,
+        connection,
+        crate::albums_view::rules::RulesDialogSpec {
+            title: if ask_name { "Save as Smart Album".into() } else { "New Smart Album".into() },
+            subtitle: (!ask_name).then(|| name.clone()),
+            name: ask_name.then(|| name.clone()),
+            accept_label: if ask_name { "Save" } else { "Create" },
+            notice,
+        },
+        rules,
+        Rc::new(move |entered, rules| {
+            let name = if ask_name { entered } else { name.as_str() };
+            db::create_smart_album(&context.connection.borrow(), name, rules)?;
+            refresh_album_ui(&context);
+            Ok(())
+        }),
+    );
+}
+
+/// Save as Smart Album… from the metadata filter row: an independent copy of
+/// the active supported filters (including the rating filter) to name and
+/// review. Online, Offline and Corrupt are not stored metadata; when one is
+/// active the dialog says it was left out.
+fn show_save_filters_as_smart_album(parent: &gtk::Widget, context: PhotoActionContext) {
+    let browsing = db::filters::Filters::for_browsing(&context.connection.borrow());
+    let (rules, unsaved) = db::filters::AlbumRules::capture(&browsing);
+    let notice = unsaved.files.map(|files| {
+        format!("The “{files}” filter cannot be saved in a Smart Album and was left out.")
+    });
+    show_new_smart_album_rules(parent, String::new(), Some(&rules), notice, context);
+}
+
+/// Open a Smart Album's rules from the sidebar or album card menu
+/// (`sidebar::EDIT_ALBUM_RULES_ACTION`). Saving refreshes album counts and,
+/// when that album is open, its photos.
+fn show_edit_album_rules(parent: &gtk::Widget, album_id: i64, context: PhotoActionContext) {
+    let Some(album) = db::albums(&context.connection.borrow())
+        .unwrap_or_default()
+        .into_iter()
+        .find(|album| album.id == album_id && album.is_smart())
+    else {
+        return;
+    };
+    let connection = context.connection.clone();
+    crate::albums_view::rules::present_edit_rules(
+        parent,
+        connection,
+        &album,
+        Rc::new(move || {
+            refresh_album_ui(&context);
+            if context.filter.get() == sidebar::SidebarFilter::Album(album_id) {
+                refresh_photo_actions_grid(&context);
+            }
+        }),
+    );
 }
 
 fn show_delete_album_confirmation(parent: gtk::Widget, album_id: i64, context: PhotoActionContext) {

@@ -165,6 +165,17 @@ fn show_album_context_menu(
         );
     });
     menu.append(&rename);
+    if album.is_smart() {
+        let edit_rules = gtk::Button::with_label("Edit Rules…");
+        edit_rules.set_halign(gtk::Align::Fill);
+        edit_rules.add_css_class("flat");
+        edit_rules.add_css_class("edit-album-rules-action");
+        edit_rules.set_action_name(Some(crate::sidebar::EDIT_ALBUM_RULES_ACTION));
+        edit_rules.set_action_target_value(Some(&album.id.to_variant()));
+        let popover_for_rules = popover.clone();
+        edit_rules.connect_clicked(move |_| popover_for_rules.popdown());
+        menu.append(&edit_rules);
+    }
     menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     if allow_custom_cover {

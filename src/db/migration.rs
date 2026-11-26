@@ -107,6 +107,7 @@ pub fn migrate_gvfs_paths_in(connection: &Connection, backup_dir: &Path) -> Resu
             "UPDATE folders SET path = ?2 WHERE id = ?1",
             params![id, rewrite.new],
         )?;
+        rewrite_album_rule_folders(&transaction, &rewrite.old, &rewrite.new)?;
     }
     for (id, rewrite, _, _) in &photo_rewrites {
         transaction.execute(

@@ -96,6 +96,14 @@ fn build_inner(
     header.append(&heading);
 
     let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let kind = gtk::DropDown::from_strings(&["All types", "Albums", "Smart Albums"]);
+    kind.add_css_class("albums-type");
+    kind.set_tooltip_text(Some("Album type"));
+    kind.set_selected(index_setting(&connection.borrow(), ALBUM_TYPE_KEY, 0, 2));
+    let kind_label = gtk::Label::new(Some("Type"));
+    kind_label.set_mnemonic_widget(Some(&kind));
+    controls.append(&kind_label);
+    controls.append(&kind);
     let layout = gtk::DropDown::from_strings(&["Grid", "Bookshelf", "Cover Flow"]);
     layout.add_css_class("albums-layout");
     layout.set_tooltip_text(Some("Album layout"));
@@ -211,7 +219,7 @@ fn build_inner(
             }
         });
     }
-    for (control, key) in [(sort, ALBUM_SORT_KEY), (size, ALBUM_SIZE_KEY)] {
+    for (control, key) in [(kind, ALBUM_TYPE_KEY), (sort, ALBUM_SORT_KEY), (size, ALBUM_SIZE_KEY)] {
         let weak_view = scrolled.downgrade();
         let connection = connection.clone();
         let on_album = on_album.clone();
@@ -294,6 +302,20 @@ pub fn connect_create_album(scrolled: &gtk::ScrolledWindow, create_album: Rc<dyn
     {
         button.connect_clicked(move |_| create_album());
     }
+}
+
+/// The overview's Type choice: 0 all types (the default), 1 manual albums,
+/// 2 Smart Albums. Both kinds share one list, sort and presentation.
+fn albums_of_type(albums: &[Album], kind: u32) -> Vec<Album> {
+    albums
+        .iter()
+        .filter(|album| match kind {
+            1 => !album.is_smart(),
+            2 => album.is_smart(),
+            _ => true,
+        })
+        .cloned()
+        .collect()
 }
 
 fn index_setting(connection: &Connection, key: &str, default: u32, max: u32) -> u32 {
@@ -518,6 +540,10 @@ fn populate(
     clear_bookshelf_layout(bookshelf_runtime);
     bookshelf_runtime.selected_theme.replace(None);
 
+    let any_albums = !albums.is_empty();
+    let kind = index_setting(&connection.borrow(), ALBUM_TYPE_KEY, 0, 2);
+    let albums = albums_of_type(albums, kind);
+    let albums = albums.as_slice();
     count.set_text(&format!(
         "{} album{}",
         albums.len(),
@@ -634,9 +660,11 @@ fn populate(
     });
 
     if albums.is_empty() {
-        let empty = gtk::Label::new(Some(
-            "Your albums start here\nChoose New Album to organise your photos into a collection.",
-        ));
+        let empty = gtk::Label::new(Some(match (any_albums, kind) {
+            (true, 2) => "No Smart Albums yet\nChoose New Album, then Smart Album, to collect photos by their details.",
+            (true, _) => "No albums yet\nChoose New Album to organise your photos into a collection.",
+            (false, _) => "Your albums start here\nChoose New Album to organise your photos into a collection.",
+        }));
         empty.set_xalign(0.0);
         empty.add_css_class("dim-label");
         if row_theme.is_some() {

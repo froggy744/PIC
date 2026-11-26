@@ -67,4 +67,28 @@ Facet counts describe catalog matches before existing format visibility, RAW/JPE
 
 Cancellation takes effect after the current source read; an already-blocked network read cannot be interrupted by the indexer. The existing bounded remote EXIF reader can leave fields unavailable when metadata lies outside its header budget. Proprietary MakerNote-only lens identifiers are not invented or decoded by a new dependency. RAW coverage here uses synthetic standards-based NEF/TIFF containers; no new real-camera RAW corpus or manual Wayland smoke run was available.
 
-Smart Albums are intentionally outside this feature. No branch was merged into main or force-pushed.
+Smart Albums build on these filters; see below.
+
+## Smart Albums
+
+A Smart Album is an album whose photos are chosen by saved filter rules instead of being added by hand. Both kinds are one feature: they share the Albums sidebar section, the Albums overview (Grid, Bookshelf, Cover Flow), sorting, covers and context menus. A small symbolic icon (`pic-smart-album-symbolic`) marks Smart Albums; the overview's **Type** dropdown (All types by default) shows one kind or both.
+
+- **Create:** New Album → **Smart Album** → **Next** opens the rules dialog. Opened from Add to Album with photos selected, the dialog offers manual albums only.
+- **Save as Smart Album…:** the filter row button (beside Clear) copies the active metadata filters and the toolbar rating filter into a new Smart Album, after a name and a review of the conditions. The copy is independent: later browsing changes never alter it. Online, Offline and Corrupt are not stored metadata; an active one is left out and named in the dialog.
+- **Rules:** one condition per field, AND between conditions, OR between the values chosen for one condition, inclusive ranges, exactly as the filter panel. Every filter field except Files is available; each offers only the comparisons the filter predicate supports (value fields: *is any of*; numbers and capture date: also *between*, *at least*, *at most*). An album needs at least one valid rule; zero matching photos is allowed.
+- **Edit Rules…** (sidebar and album card menus) changes the rules in place: id, name, cover and presentation settings stay. Rename, cover actions and Delete Album are the existing album actions. Deleting a Smart Album removes only its definition and presentation settings, never photos.
+- **Read-only sources:** Smart Albums can be opened, browsed, filtered and used by the Screensaver and Scrapbook, but they are never manual destinations (Add to Album, Scrapbook Add Photo to Album and + Add photos, Remove from Album).
+- **Browsing filters narrow** a Smart Album like any album, without changing its rules. Searching photos by album name covers manual albums only; Smart Albums are found by name in the album search suggestions.
+
+### Implementation
+
+- `albums.rules` (nullable TEXT, additive migration in `migrate_album_schema`): `NULL` is a manual album, otherwise `filters::AlbumRules` JSON. Unlike `Filters`, `AlbumRules` serializes the rating choice.
+- `db::album_membership` is the single membership predicate every album consumer uses: `album_photos` for manual albums, the existing `Filters::predicate` for Smart Albums. There is no stored Smart Album membership. Missing, unreadable or unsupported rules match no photos, never the whole library.
+- Counts and membership follow photo changes through existing events: photo mark commands, Properties and Library Home tags, editor saves, bulk edit/reset, rotation, trash, scanner imports/removals and metadata indexing. `refresh_smart_album_counts` (`window/albums.rs`) recounts on a worker, coalesces bursts, does nothing in libraries without Smart Albums, and never runs while scrolling. Inside an open Smart Album whose rules use the changed field, the gallery is rebuilt. Source-folder rules follow the storage and GVFS path migrations.
+- Rules dialog and condition model: `src/albums/rules.rs`.
+
+### Downgrade limitation
+
+Earlier PIC versions ignore `albums.rules` and show a Smart Album as an empty manual album. Photos added to it there are stored as manual members, which this version ignores for Smart Albums. Back on this version the album keeps its rules.
+
+No branch was merged into main or force-pushed.

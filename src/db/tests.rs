@@ -1573,4 +1573,256 @@ mod tests {
         assert_eq!(stored, "");
         assert!(!any_edited(&connection, &[id]).unwrap());
     }
+
+    fn smart_album_catalog() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.pragma_update(None, "foreign_keys", "ON").unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        migrate_album_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO folders(id,path) VALUES (1,'/a'),(2,'/b');
+                 INSERT INTO photos(id,path,folder_id,rating,favorite,taken_at) VALUES
+                    (1,'/a/one.jpg',1,5,1,'2024-01-03'),
+                    (2,'/a/two.jpg',1,3,0,'2024-01-02'),
+                    (3,'/b/three.jpg',2,0,1,'2024-01-01');",
+            )
+            .unwrap();
+        connection
+    }
+
+    fn rated(rating: &str) -> filters::AlbumRules {
+        filters::AlbumRules {
+            rating: rating.into(),
+            ..Default::default()
+        }
+    }
+
+    fn album_ids(connection: &Connection, album_id: i64) -> Vec<i64> {
+        photos_in_album(connection, album_id, None)
+            .unwrap()
+            .into_iter()
+            .map(|photo| photo.id)
+            .collect()
+    }
+
+    #[test]
+    fn smart_album_membership_follows_rules_and_marks() {
+        let connection = smart_album_catalog();
+        let mut rules = rated("stars");
+        rules.categories.insert(
+            filters::Field::SourceFolder,
+            filters::Selection { values: vec!["/a".into()], ..Default::default() },
+        );
+        let album = create_smart_album(&connection, "Rated in A", &rules).unwrap();
+        assert!(album.is_smart());
+        assert_eq!(album.photo_count, 2);
+        assert_eq!(album_ids(&connection, album.id), vec![1, 2]);
+
+        // Membership is dynamic: a rating change moves the photo out.
+        connection.execute("UPDATE photos SET rating=0 WHERE id=2", []).unwrap();
+        assert_eq!(album_ids(&connection, album.id), vec![1]);
+        let listed = albums(&connection).unwrap();
+        assert_eq!(listed[0].photo_count, 1);
+        // Trashed photos leave Smart Albums like manual ones.
+        connection.execute("UPDATE photos SET trashed=1 WHERE id=1", []).unwrap();
+        assert!(album_ids(&connection, album.id).is_empty());
+
+        // A Smart Album is a source, never a destination.
+        assert!(add_photos_to_album(&connection, album.id, &[3]).is_err());
+        assert!(manual_albums(&connection).unwrap().is_empty());
+        let stored: i64 = connection
+            .query_row("SELECT COUNT(*) FROM album_photos", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored, 0);
+    }
+
+    #[test]
+    fn smart_albums_allow_zero_matches_but_need_a_valid_rule() {
+        let connection = smart_album_catalog();
+        let empty = create_smart_album(&connection, "Four stars", &rated("4")).unwrap();
+        assert_eq!(empty.photo_count, 0);
+        assert!(create_smart_album(&connection, "Nothing", &filters::AlbumRules::default()).is_err());
+        assert!(create_smart_album(&connection, "Offline", &rated("offline")).is_err());
+        assert!(create_smart_album(&connection, "four stars", &rated("5")).is_err());
+    }
+
+    #[test]
+    fn unusable_smart_album_rules_match_no_photos() {
+        let connection = smart_album_catalog();
+        let album = create_smart_album(&connection, "Broken", &rated("5")).unwrap();
+        for rules in [
+            "not json",
+            "{}",
+            r#"{"rating":"corrupt"}"#,
+            r#"{"categories":{"NoSuchField":{"values":["x"]}}}"#,
+            r#"{"categories":{"Iso":{"values":[],"min":"NaN"}}}"#,
+        ] {
+            connection
+                .execute("UPDATE albums SET rules=?1 WHERE id=?2", params![rules, album.id])
+                .unwrap();
+            assert!(album_ids(&connection, album.id).is_empty(), "{rules}");
+            assert_eq!(albums(&connection).unwrap()[0].photo_count, 0, "{rules}");
+            let scope = filters::Scope { album: Some(album.id), ..Default::default() };
+            assert_eq!(
+                filters::count_matching(&connection, &scope, &filters::Filters::default()).unwrap(),
+                0,
+                "{rules}"
+            );
+            assert!(album_rules(&connection, album.id).is_err());
+        }
+    }
+
+    #[test]
+    fn captured_rules_keep_rating_and_drop_files_choices() {
+        let mut browsing = filters::Filters::default();
+        browsing.toggle(filters::Field::Favorite, "1".into(), true);
+        browsing.rating = "stars".into();
+        let (rules, unsaved) = filters::AlbumRules::capture(&browsing);
+        assert_eq!(unsaved, filters::Unsaved::default());
+        let saved = filters::AlbumRules::parse(&rules.to_json().unwrap()).unwrap();
+        assert_eq!(saved.rating, "stars");
+        // An independent copy: later browsing changes do not reach it.
+        browsing.toggle(filters::Field::Favorite, "1".into(), false);
+        assert!(saved.categories.contains_key(&filters::Field::Favorite));
+
+        browsing.rating = "corrupt".into();
+        let (rules, unsaved) = filters::AlbumRules::capture(&browsing);
+        assert_eq!(unsaved.files, Some("Corrupt photos"));
+        assert!(rules.rating.is_empty());
+    }
+
+    #[test]
+    fn editing_rules_keeps_identity_cover_and_presentation() {
+        let connection = smart_album_catalog();
+        let album = create_smart_album(&connection, "Best", &rated("5")).unwrap();
+        set_album_cover_photo(&connection, album.id, 3).unwrap();
+        set_album_cover_frame(&connection, album.id, "frame.png").unwrap();
+        set_album_rules(&connection, album.id, &rated("3")).unwrap();
+        let edited = albums(&connection).unwrap().remove(0);
+        assert_eq!((edited.id, edited.name.as_str()), (album.id, "Best"));
+        assert_eq!(edited.cover_photo_id, Some(3));
+        assert_eq!(edited.cover_frame.as_deref(), Some("frame.png"));
+        assert_eq!(album_ids(&connection, album.id), vec![2]);
+        assert_eq!(album_rules(&connection, album.id).unwrap(), Some(rated("3")));
+        rename_album(&connection, album.id, "Good").unwrap();
+        assert!(albums(&connection).unwrap()[0].is_smart());
+
+        let manual = create_album(&connection, "Manual").unwrap();
+        assert!(set_album_rules(&connection, manual.id, &rated("5")).is_err());
+        assert_eq!(album_rules(&connection, manual.id).unwrap(), None);
+    }
+
+    #[test]
+    fn deleting_a_smart_album_keeps_every_photo() {
+        let connection = smart_album_catalog();
+        let album = create_smart_album(&connection, "All rated", &rated("stars")).unwrap();
+        delete_album(&connection, album.id).unwrap();
+        assert!(albums(&connection).unwrap().is_empty());
+        let photos: i64 = connection
+            .query_row("SELECT COUNT(*) FROM photos", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(photos, 3);
+    }
+
+    #[test]
+    fn browsing_filters_narrow_smart_albums_without_changing_rules() {
+        let connection = smart_album_catalog();
+        let album = create_smart_album(&connection, "Favourites", &{
+            let mut rules = filters::AlbumRules::default();
+            rules.categories.insert(
+                filters::Field::Favorite,
+                filters::Selection { values: vec!["1".into()], ..Default::default() },
+            );
+            rules
+        })
+        .unwrap();
+        let mut browsing = filters::Filters::default();
+        browsing.toggle(filters::Field::SourceFolder, "/b".into(), true);
+        browsing.save(&connection).unwrap();
+        assert_eq!(
+            browse_photos_in_album(&connection, album.id, None)
+                .unwrap()
+                .iter()
+                .map(|photo| photo.id)
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+        assert_eq!(browse_albums(&connection).unwrap()[0].photo_count, 1);
+        assert_eq!(albums(&connection).unwrap()[0].photo_count, 2);
+        let scope = filters::Scope { album: Some(album.id), ..Default::default() };
+        let facets = filters::facets(
+            &connection,
+            &scope,
+            &filters::Filters::default(),
+            filters::Field::SourceFolder,
+        )
+        .unwrap();
+        assert_eq!(
+            facets.iter().map(|f| (f.value.as_str(), f.count)).collect::<Vec<_>>(),
+            [("/a", 1), ("/b", 1)]
+        );
+        // Album names remain searchable in the Albums interface.
+        assert_eq!(search_albums(&connection, "favour", 8).unwrap()[0].id, album.id);
+    }
+
+    #[test]
+    fn home_and_scrapbook_use_smart_album_membership() {
+        let connection = smart_album_catalog();
+        let album = create_smart_album(&connection, "Rated", &rated("stars")).unwrap();
+        let data = library_home_data_for_album(&connection, Some(album.id)).unwrap();
+        let (_, cover) = data.scrapbook_albums.iter().find(|(a, _)| a.id == album.id).unwrap();
+        assert_eq!(cover.as_ref().map(|photo| photo.id), Some(1));
+        assert_eq!(data.scrapbook_album_id, Some(album.id));
+        assert_eq!(
+            data.scrapbook_photos.iter().map(|photo| photo.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn moved_folder_paths_follow_into_smart_album_rules() {
+        let connection = smart_album_catalog();
+        let mut rules = filters::AlbumRules::default();
+        rules.categories.insert(
+            filters::Field::SourceFolder,
+            filters::Selection { values: vec!["/a".into(), "/b".into()], ..Default::default() },
+        );
+        let album = create_smart_album(&connection, "Folders", &rules).unwrap();
+        rewrite_album_rule_folders(&connection, "/a", "/moved/a").unwrap();
+        let saved = album_rules(&connection, album.id).unwrap().unwrap();
+        assert_eq!(
+            saved.categories[&filters::Field::SourceFolder].values,
+            vec!["/moved/a".to_string(), "/b".to_string()]
+        );
+    }
+
+    #[test]
+    fn existing_albums_stay_manual_after_the_rules_migration() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE photos (id INTEGER PRIMARY KEY, trashed INTEGER DEFAULT 0);
+                 CREATE TABLE albums (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                   created_at INTEGER NOT NULL DEFAULT 1, cover_frame TEXT, cover_photo_id INTEGER);
+                 CREATE TABLE album_photos (
+                   album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+                   photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+                   PRIMARY KEY(album_id, photo_id));
+                 INSERT INTO photos(id) VALUES (1);
+                 INSERT INTO albums(id, name) VALUES (1, 'Existing');
+                 INSERT INTO album_photos VALUES (1, 1);",
+            )
+            .unwrap();
+        migrate_album_schema(&connection).unwrap();
+        migrate_album_schema(&connection).unwrap();
+        let (rules, members): (Option<String>, i64) = connection
+            .query_row(
+                "SELECT rules, (SELECT COUNT(*) FROM album_photos) FROM albums WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((rules, members), (None, 1));
+    }
 }

@@ -4030,15 +4030,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }) as Rc<dyn Fn()>
             };
             let saved = {
-                let gallery = gallery.clone();
-                let info = info.clone();
                 let trace_uri = trace_uri.clone();
-                let smart_context = smart_edit_context.clone();
+                let change_context = smart_edit_context.clone();
                 Rc::new(move |photo: crate::photo_object::PhotoObject| {
                     crate::thumbnail_trace::event(&trace_uri, "editor", "saved");
-                    gallery.update_edit_recipe(photo.id(), &photo.edit_recipe());
-                    info.photo_updated(&photo);
-                    smart_albums_changed(&smart_context, db::filters::Field::Edited);
+                    photo_changed(
+                        &change_context,
+                        PhotoChange::Recipes {
+                            updates: &[(photo.id(), photo.edit_recipe())],
+                            more_coming: false,
+                        },
+                    );
                 }) as Rc<dyn Fn(crate::photo_object::PhotoObject)>
             };
             let editor = crate::edit::build_editor(
@@ -6198,7 +6200,6 @@ fn start_photo_export_single(
     let onboarding_for_switch = onboarding.clone();
     let smart_scan_context = action_context.clone();
     let gallery_for_events = gallery.clone();
-    let lightbox_for_events = lightbox.clone();
     let connection_for_events = connection.clone();
     let info_for_events = info.clone();
     let availability_refresh_for_events = availability_refresh.clone();
@@ -6457,12 +6458,8 @@ fn start_photo_export_single(
                 scanner::ScanEvent::PhotosUpdated {photos} => {
                     for photo in photos {
                         if let Some(queued)=pending_photos.iter_mut().find(|queued|queued.id==photo.id) { *queued=photo.clone(); }
-                        gallery_for_events.update_photo(photo);
-                        if let Some(current)=info_for_events.current_photo().filter(|current|current.id()==photo.id) {
-                            current.set_from_photo(photo);
-                            info_for_events.photo_updated(&current);
-                        }
                     }
+                    photo_changed(&smart_scan_context, PhotoChange::Indexed(photos));
                 }
 
                 scanner::ScanEvent::PhotosIndexed { photos, counts } => {
@@ -6502,6 +6499,7 @@ fn start_photo_export_single(
                         );
                     }
                     if !search_active && !filters_active {
+                        let mut reread = Vec::new();
                         for indexed in photos {
                             let photo = &indexed.photo;
                             if indexed.newly_discovered
@@ -6515,18 +6513,13 @@ fn start_photo_export_single(
                             {
                                 pending_photos.push_back(photo.clone());
                             } else if !indexed.newly_discovered {
-                                gallery_for_events.update_photo(photo);
                                 // Folder refreshes deliberately avoid a full
-                                // gallery rebuild. Keep an independently held
-                                // current object up to date as well.
-                                if let Some(current) = info_for_events
-                                    .current_photo()
-                                    .filter(|current| current.id() == photo.id)
-                                {
-                                    current.set_from_photo(photo);
-                                    info_for_events.photo_updated(&current);
-                                }
+                                // gallery rebuild: update the shown photos in place.
+                                reread.push(photo.clone());
                             }
+                        }
+                        if !reread.is_empty() {
+                            photo_changed(&smart_scan_context, PhotoChange::Indexed(&reread));
                         }
                     }
 
@@ -6539,12 +6532,8 @@ fn start_photo_export_single(
                 }
 
                 scanner::ScanEvent::PhotosRemoved { ids } => {
-                    refresh_smart_album_counts(&smart_scan_context);
                     pending_photos.retain(|photo| !ids.contains(&photo.id));
-                    gallery_for_events.remove_photos(ids);
-                    for id in ids {
-                        lightbox_for_events.remove_photo(*id);
-                    }
+                    photo_changed(&smart_scan_context, PhotoChange::Removed(ids));
                 }
                 scanner::ScanEvent::FoldersRemoved => {
                     refresh_smart_album_counts(&smart_scan_context);

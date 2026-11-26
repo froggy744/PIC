@@ -128,8 +128,6 @@ struct BulkRecipeState {
     ids: Vec<i64>,
     index: usize,
     failed: usize,
-    touched_selected: bool,
-    refresh_grid_when_done: bool,
     last_filename: String,
     notify: bool,
     history_event: Option<i64>,
@@ -145,7 +143,6 @@ fn start_bulk_recipe_update(
     context: &PhotoActionContext,
     plan: BulkRecipePlan,
     ids: Vec<i64>,
-    refresh_grid_when_done: bool,
 ) {
     if ids.is_empty() {
         return;
@@ -164,8 +161,6 @@ fn start_bulk_recipe_update(
         ids,
         index: 0,
         failed: 0,
-        touched_selected: false,
-        refresh_grid_when_done,
         last_filename: String::new(),
         notify,
         history_event: None,
@@ -258,18 +253,13 @@ fn run_bulk_recipe_chunk(work: &mut BulkRecipeState) {
             eprintln!("Could not apply bulk edit recipes: {error:#}");
         } else {
             work.history_event = result.unwrap();
-            if let Some(gallery) = work.context.gallery.borrow().upgrade() {
-                gallery.update_edit_recipes_batch(&updates);
-            }
-            if let Some(lightbox) = work.context.lightbox.upgrade() {
-                lightbox.update_edit_recipes_batch(&updates);
-            }
-            if let Some(current) = work.context.info.current_photo() {
-                if let Some((_, recipe)) = updates.iter().find(|(id, _)| *id == current.id()) {
-                    current.set_edit_recipe(recipe.clone());
-                    work.touched_selected = true;
-                }
-            }
+            photo_changed(
+                &work.context,
+                PhotoChange::Recipes {
+                    updates: &updates,
+                    more_coming: true,
+                },
+            );
         }
     }
 
@@ -277,21 +267,14 @@ fn run_bulk_recipe_chunk(work: &mut BulkRecipeState) {
 }
 
 fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
-    if let Some(lightbox) = work.context.lightbox.upgrade() {
-        lightbox.refresh_current_after_edit();
-    }
-    if work.touched_selected {
-        if let Some(current) = work.context.info.current_photo() {
-            work.context.info.photo_updated(&current);
-        }
-    }
-    if work.refresh_grid_when_done || work.context.filter.get() == sidebar::SidebarFilter::History
-        || !db::filters::Filters::load(&work.context.connection.borrow()).is_empty() {
-        refresh_photo_actions_grid(&work.context);
-        refresh_smart_album_counts(&work.context);
-    } else {
-        smart_albums_changed(&work.context, db::filters::Field::Edited);
-    }
+    // Each slice showed its recipes; the end recounts and rebuilds once.
+    photo_changed(
+        &work.context,
+        PhotoChange::Recipes {
+            updates: &[],
+            more_coming: false,
+        },
+    );
     let succeeded = total.saturating_sub(work.failed);
     let summary = if work.failed == 0 {
         match name {
@@ -590,7 +573,6 @@ fn show_photo_context_menu(
                 &paste_context,
                 BulkRecipePlan::Fixed(recipe),
                 paste_selection.clone(),
-                false,
             );
         });
     }
@@ -607,7 +589,6 @@ fn show_photo_context_menu(
                 &paste_context,
                 BulkRecipePlan::LayersOnly(clipboard),
                 paste_selection.clone(),
-                false,
             );
         });
     }
@@ -621,7 +602,6 @@ fn show_photo_context_menu(
                 &reset_context,
                 BulkRecipePlan::Reset,
                 reset_selection.clone(),
-                true,
             );
         });
     }
@@ -1505,7 +1485,7 @@ fn show_rename_dialog(
                 }
             }
         }
-        context.info.photo_updated(&photo);
+        photo_changed(&context, PhotoChange::Renamed(&photo));
     });
     dialog.present(Some(parent));
 }
@@ -1557,8 +1537,8 @@ fn show_delete_confirmation(
     dialog.present(Some(parent));
 }
 
-/// Move the photos to the system Trash and mark them trashed, then show the
-/// change: the grid, the Library and Smart Album counts. Stops at the first
+/// Move the photos to the system Trash and mark them trashed, then report
+/// the photos trashed as one photo change. Stops at the first
 /// failure and returns the heading and message to show; photos trashed
 /// before it are still shown as gone.
 fn trash_photos(
@@ -1566,7 +1546,7 @@ fn trash_photos(
     selection: &[i64],
 ) -> Result<(), (&'static str, String)> {
     let mut result = Ok(());
-    let mut trashed = 0;
+    let mut trashed = Vec::new();
     for id in selection {
         // Resolve the on-disk path from the database instead of trusting
         // grid tiles: menu actions must not depend on tile recycling.
@@ -1589,25 +1569,19 @@ fn trash_photos(
             result = Err(("Could not move photo to Trash", error.to_string()));
             break;
         }
-        trashed += 1;
+        trashed.push(*id);
     }
 
-    if result.is_ok() || trashed > 0 {
-        if let Some(lightbox) = context.lightbox.upgrade() {
-            lightbox.close();
-        }
-        context.info.clear_photo();
-        refresh_photo_actions_grid(context);
-        // Smart Album and Library counts, as photo marks refresh them.
-        photo_mark_commands::update_counts(context);
+    if result.is_ok() || !trashed.is_empty() {
+        photo_changed(context, PhotoChange::Trashed(&trashed));
     }
     result
 }
 
-/// Rotate the current photo a quarter turn and show it everywhere it is on
-/// screen: the InfoBar, Properties, the gallery tile, the viewer and the
-/// Smart Albums' Edited rule. Returns the photo and its new rotation, for
-/// the editor; `None` when there is no current photo or saving failed.
+/// Rotate the current photo a quarter turn and report it as one photo
+/// change, which shows it everywhere. Returns the photo and its new
+/// rotation, for the editor; `None` when there is no current photo or saving
+/// failed.
 fn rotate_current_photo(
     context: &PhotoActionContext,
     counter_clockwise: bool,
@@ -1619,18 +1593,7 @@ fn rotate_current_photo(
         eprintln!("Could not rotate photo: {error}");
         return None;
     }
-    photo.set_rotation(rotation);
-    // The inspector is a snapshot of the photo's metadata; refresh the
-    // panel in front after the database and PhotoObject rotation are updated.
-    photo_mark_commands::show_changed_photo(context, &photo);
-    if let Some(gallery) = context.gallery.borrow().upgrade() {
-        gallery.refresh_rotated_photo(&photo.path());
-    }
-    if let Some(lightbox) = context.lightbox.upgrade() {
-        lightbox.refresh_current();
-    }
-    // Rotation counts as an edit for the Edited rule.
-    smart_albums_changed(context, db::filters::Field::Edited);
+    photo_changed(context, PhotoChange::Rotated(&photo));
     Some((photo, rotation))
 }
 
@@ -1964,7 +1927,7 @@ fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContex
                 if let Some(rows) = rows_for_refresh.upgrade() {
                     populate_properties_tags(&rows, &context_for_refresh, photo_id);
                 }
-                smart_albums_changed(&context_for_refresh, db::filters::Field::Tags);
+                photo_changed(&context_for_refresh, PhotoChange::Tagged(photo_id));
             }
         });
         tag_rows.insert(&chip, -1);
@@ -2022,7 +1985,7 @@ fn properties_add_tag_button(
                         if let Some(rows) = rows_for_response.upgrade() {
                             populate_properties_tags(&rows, &context_for_response, photo_id);
                         }
-                        smart_albums_changed(&context_for_response, db::filters::Field::Tags);
+                        photo_changed(&context_for_response, PhotoChange::Tagged(photo_id));
                     }
                 }
             });

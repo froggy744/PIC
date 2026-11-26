@@ -3,17 +3,16 @@
 //! Every control that changes a favourite or rating calls [`run`] with what
 //! the user asked for and the photo it acts on. `run` reads the live front,
 //! selection and view, asks the plan what to change, writes it in one
-//! transaction, and only then refreshes the gallery, the lightbox, the
-//! InfoBar, the Properties panel on screen and the sidebar counts. A failed
+//! transaction, and only then reports it as one photo change
+//! (`photo_change_widgets`), which refreshes every surface. A failed
 //! write changes nothing on screen and shows one self-dismissing notice.
 //!
 //! No marks are kept here: they are read from the photo objects each time.
 
 use super::photo_marks::{
-    self, MarkChange, MarkFront, MarkIntent, MarkPlan, MarkRequest, MarkView, Membership,
-    PhotoMarks,
+    self, MarkChange, MarkFront, MarkIntent, MarkPlan, MarkRequest, MarkView, PhotoMarks,
 };
-use super::{refresh_grid, refresh_smart_album_counts, Front, PhotoActionContext, PropertiesSurface};
+use super::{photo_changed, Front, PhotoActionContext, PhotoChange};
 use crate::db;
 use crate::photo_object::PhotoObject;
 use crate::sidebar;
@@ -23,13 +22,6 @@ fn marks_of(photo: &PhotoObject) -> PhotoMarks {
         id: photo.id(),
         favorite: photo.favorite(),
         rating: photo.rating(),
-    }
-}
-
-fn set_marks(photo: &PhotoObject, change: MarkChange) {
-    match change {
-        MarkChange::Favorite(favorite) => photo.set_favorite(favorite),
-        MarkChange::Rating(rating) => photo.set_rating(rating),
     }
 }
 
@@ -114,10 +106,6 @@ pub(super) fn run(context: &PhotoActionContext, intent: MarkIntent, anchor: &Pho
     let Some((plan, front)) = plan_for(context, intent, anchor) else {
         return;
     };
-    let gallery = context.gallery.borrow().upgrade();
-    let lightbox = context.lightbox.upgrade();
-    let lightbox_shown = lightbox_shown(context);
-
     if let Err(error) = write(&context.connection.borrow(), &plan) {
         let what = match plan.change {
             MarkChange::Favorite(_) => "favourite",
@@ -134,54 +122,7 @@ pub(super) fn run(context: &PhotoActionContext, intent: MarkIntent, anchor: &Pho
         return;
     }
 
-    if let Some(gallery) = &gallery {
-        match plan.change {
-            MarkChange::Favorite(favorite) => gallery.update_favorites(&plan.ids, favorite),
-            MarkChange::Rating(rating) => gallery.update_ratings(&plan.ids, rating),
-        }
-    }
-    // The anchor and the shown photo can be objects the gallery does not own
-    // (the lightbox builds its own).
-    let shown = context.info.current_photo();
-    for photo in [Some(anchor), shown.as_ref()].into_iter().flatten() {
-        if plan.ids.contains(&photo.id()) {
-            set_marks(photo, plan.change);
-        }
-    }
-    if let Some(shown) = shown.filter(|photo| plan.ids.contains(&photo.id())) {
-        show_updated(context, &shown, lightbox_shown);
-    }
-    update_counts(context);
-
-    match plan.membership {
-        Membership::Keep => {}
-        Membership::Remove => {
-            if let Some(gallery) = &gallery {
-                gallery.remove_photos(&plan.ids);
-            }
-            if let Some(lightbox) = lightbox.as_ref().filter(|_| lightbox_shown) {
-                for id in &plan.ids {
-                    lightbox.remove_photo(*id);
-                }
-            }
-        }
-        Membership::Rebuild => {
-            if let Some(gallery) = &gallery {
-                refresh_grid(
-                    &context.connection,
-                    context.filter.get(),
-                    &context.search.borrow(),
-                    context.sort.get(),
-                    gallery,
-                );
-                if let Some(lightbox) = lightbox.as_ref().filter(|_| lightbox_shown) {
-                    for id in plan.ids.iter().filter(|id| !gallery.contains_photo(**id)) {
-                        lightbox.remove_photo(*id);
-                    }
-                }
-            }
-        }
-    }
+    photo_changed(context, PhotoChange::Marks { plan: &plan, anchor });
 
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -193,8 +134,8 @@ pub(super) fn run(context: &PhotoActionContext, intent: MarkIntent, anchor: &Pho
     }
 }
 
-/// Marks changed outside [`run`] (a whole folder): reload the shown photo's
-/// marks and refresh what shows them. The caller rebuilds the gallery.
+/// Marks changed outside [`run`] (a whole folder): re-read the shown photo
+/// and show it. The caller rebuilds the gallery.
 pub(super) fn reload_shown_photo(context: &PhotoActionContext) {
     let Some(shown) = context.info.current_photo() else {
         return;
@@ -202,38 +143,7 @@ pub(super) fn reload_shown_photo(context: &PhotoActionContext) {
     let Ok(Some(record)) = db::photo(&context.connection.borrow(), shown.id()) else {
         return;
     };
-    shown.set_favorite(record.favorite);
-    shown.set_rating(record.rating);
-    show_updated(context, &shown, lightbox_shown(context));
-}
-
-/// `shown`'s facts changed (a mark, a rotation): rewrite the InfoBar and the
-/// Properties panel of the surface in front (the viewer's while it is shown).
-pub(super) fn show_changed_photo(context: &PhotoActionContext, shown: &PhotoObject) {
-    show_updated(context, shown, lightbox_shown(context));
-}
-
-fn show_updated(context: &PhotoActionContext, shown: &PhotoObject, lightbox_shown: bool) {
-    context.info.photo_updated(shown);
-    if let Some(properties) = context.properties.upgrade() {
-        let surface = if lightbox_shown {
-            PropertiesSurface::Lightbox
-        } else {
-            PropertiesSurface::Gallery
-        };
-        properties.show_photo(surface, Some(shown));
-    }
-}
-
-/// Refresh the Smart Album and sidebar Library counts after photos change.
-pub(super) fn update_counts(context: &PhotoActionContext) {
-    refresh_smart_album_counts(context);
-    let Some(sidebar) = context.sidebar.borrow().as_ref().cloned() else {
-        return;
-    };
-    if let Ok(counts) = db::sidebar_counts(&context.connection.borrow()) {
-        sidebar::update_library_counts(&sidebar, counts);
-    }
+    photo_changed(context, PhotoChange::Indexed(&[record]));
 }
 
 #[cfg(test)]

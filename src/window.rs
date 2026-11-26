@@ -25,6 +25,8 @@ use layout_settle::{
     should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
 };
 
+mod photo_change;
+mod photo_change_widgets;
 mod photo_mark_commands;
 mod photo_marks;
 mod photo_list;
@@ -32,6 +34,7 @@ mod album_list;
 mod album_list_widgets;
 use album_list::AlbumChange;
 use album_list_widgets::AlbumList;
+use photo_change_widgets::{photo_changed, PhotoChange};
 use photo_list::{photo_list, photo_list_has_photos, PhotoList, PhotoListRequest};
 mod front_surface;
 mod front_mirrors;

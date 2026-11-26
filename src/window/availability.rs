@@ -15,6 +15,13 @@ fn changed_folder_availability(
         .collect()
 }
 
+fn folder_availability_states(folders: &[db::Folder]) -> Vec<(i64, bool)> {
+    folders
+        .iter()
+        .map(|folder| (folder.id, folder.available))
+        .collect()
+}
+
 fn publish_before_network_probe(publish: impl FnOnce(), probe: impl FnOnce()) {
     publish();
     probe();
@@ -64,6 +71,17 @@ mod availability_tests {
         ];
 
         assert_eq!(changed_folder_availability(&previous, &folders), vec![(2, false)]);
+    }
+
+    #[test]
+    fn gallery_reconciles_every_folder_even_when_sidebar_cache_already_matches() {
+        // A cancelled badge pass leaves the sidebar cache saying "online" while
+        // photo objects still say "offline"; the next refresh must still carry
+        // the folder's state to the gallery.
+        let previous = std::collections::HashMap::from([(1, true), (2, false)]);
+        let folders = vec![folder(1, true), folder(2, false)];
+        assert!(changed_folder_availability(&previous, &folders).is_empty());
+        assert_eq!(folder_availability_states(&folders), vec![(1, true), (2, false)]);
     }
 
     fn folder(id: i64, available: bool) -> db::Folder {
@@ -285,14 +303,28 @@ fn refresh_availability_ui(
             if result_generation == AVAILABILITY_GENERATION.load(AtomicOrdering::Relaxed) {
                 match sidebar_data {
                     Ok((gallery_updates, folder_order, folders, albums, counts)) => {
+                        if std::env::var_os("PICASA_TRACE").is_some() {
+                            eprintln!(
+                                "PICASA_TRACE availability_refresh generation={result_generation} network_done={done} changed_vs_sidebar={} offline_folders={}",
+                                gallery_updates.len(),
+                                folders.iter().filter(|folder| !folder.available).count(),
+                            );
+                        }
                         folder_cache.replace(folders.clone());
                         if !gallery_updates.is_empty() {
                             refresh_filtered_gallery();
                         }
                         if let Some(gallery) = gallery_for_result.as_ref() {
                             gallery.set_folder_catalog(&folders, &folder_order);
+                            // Reconcile against the photo objects, not against
+                            // the sidebar cache: the cache is replaced above at
+                            // once, while the badge pass is chunked and can be
+                            // cancelled by a newer refresh. Diffing only the
+                            // cache would then leave stale offline badges after
+                            // a remount. The gallery skips photos whose state
+                            // already matches, so unchanged folders cost nothing.
                             gallery.apply_folder_availability(
-                                &gallery_updates,
+                                &folder_availability_states(&folders),
                                 move || {
                                     AVAILABILITY_GENERATION.load(AtomicOrdering::Relaxed)
                                         == result_generation

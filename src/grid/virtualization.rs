@@ -1820,6 +1820,14 @@ impl Gallery {
                 }));
             }
         }
+        let trace = std::env::var_os("PICASA_TRACE").is_some();
+        if trace {
+            eprintln!(
+                "PICASA_TRACE availability_badges start folders={} photos_to_update={}",
+                updates.len(),
+                photos.len(),
+            );
+        }
         if photos.is_empty() {
             return;
         }
@@ -1833,6 +1841,13 @@ impl Gallery {
         glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
             // Navigation/replacement must not paint an obsolete gallery.
             if current_generation.get() != generation || !is_current() {
+                if trace {
+                    eprintln!(
+                        "PICASA_TRACE availability_badges cancelled applied={offset}/{} gallery_replaced={}",
+                        photos.len(),
+                        current_generation.get() != generation,
+                    );
+                }
                 return glib::ControlFlow::Break;
             }
             let end = (offset + 128).min(photos.len());
@@ -1858,6 +1873,13 @@ impl Gallery {
             }
             if let Some(root) = folder_sectioned_root.upgrade() {
                 collect_tiles(root.upcast_ref(), &mut tiles);
+            }
+            if trace {
+                eprintln!(
+                    "PICASA_TRACE availability_badges done applied={} tiles={}",
+                    photos.len(),
+                    tiles.len(),
+                );
             }
             for tile in tiles {
                 tile.refresh_availability();

@@ -2232,10 +2232,16 @@ mod tests {
                 .unwrap()
                 .downcast::<gtk::Label>()
                 .unwrap();
+                // The shared rule (src/css/components/albums.css) shows the
+                // bookshelf labels in cream (#fff8e7) on the shelf art since
+                // 1cc11bec; a theme may override the count's colour.
                 let count_color = photo_count.color();
-                assert!((count_color.red() - 58.0 / 255.0).abs() < 0.01);
-                assert!((count_color.green() - 33.0 / 255.0).abs() < 0.01);
-                assert!((count_color.blue() - 15.0 / 255.0).abs() < 0.01);
+                assert!(
+                    (count_color.red() - 255.0 / 255.0).abs() < 0.01
+                        && (count_color.green() - 248.0 / 255.0).abs() < 0.01
+                        && (count_color.blue() - 231.0 / 255.0).abs() < 0.01,
+                    "bookshelf photo count colour: {count_color}"
+                );
                 let theme = bookshelf_theme(&connection.borrow()).unwrap();
                 let row = button
                     .ancestor(gtk::Overlay::static_type())
@@ -2264,7 +2270,25 @@ mod tests {
                 // transparent opening, not a single shared rectangle.
                 let root = Path::new(ALBUM_COVER_THEME_DIRECTORY);
                 let frame_paths = album_frame_paths_in(root);
-                let index = selected_frame_index(&album, root, &frame_paths, 0).unwrap();
+                // The frame each layout picks (view.rs): the bookshelf cycles
+                // its own cover theme (4860770b), the other layouts use the
+                // saved album appearance.
+                let index = if style == "bookshelf" {
+                    bookshelf_frame_index(
+                        &album,
+                        root,
+                        &frame_paths,
+                        settings::bookshelf_cover_index(&connection.borrow()),
+                    )
+                } else {
+                    selected_frame_index(
+                        &album,
+                        root,
+                        &frame_paths,
+                        settings::album_appearance(&connection.borrow()).cover_index,
+                    )
+                }
+                .unwrap();
                 let opening = frame_photo_opening(&frame_paths[index]);
                 let cover =
                     find_descendant_with_css_class(button.upcast_ref(), "album-cover").unwrap();
@@ -2314,7 +2338,10 @@ mod tests {
                 .unwrap()
                 .is_visible()
         );
-        assert!(find_descendant_with_css_class(view.upcast_ref(), "album-skin").is_none());
+        // The bookshelf frames its covers whatever the covers setting: it
+        // cycles its own cover designs (album_frame_paths_for_layout,
+        // 1cc11bec); the setting applies to the Grid layout.
+        assert!(find_descendant_with_css_class(view.upcast_ref(), "album-skin").is_some());
 
         window.set_default_size(700, 600);
         settle_gtk_layout();
@@ -2355,13 +2382,37 @@ mod tests {
                 theme.surface_y
             );
         }
+        // Enough albums that the shelves overflow the page: the redesigned
+        // scene (113251c9) fills the viewport, so one album never scrolls.
+        let many: Vec<db::Album> = (0..40)
+            .map(|index| db::Album {
+                id: albums[0].id + 1000 + index,
+                name: format!("Shelf {index}"),
+                ..albums[0].clone()
+            })
+            .collect();
+        refresh(
+            &view,
+            &many,
+            connection.clone(),
+            136,
+            on_album.clone(),
+            Rc::new(|| {}),
+        );
+        settle_gtk_layout();
         let rows =
             find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene").unwrap();
+        let adjustment = view.vadjustment();
+        assert!(
+            adjustment.upper() - adjustment.page_size() >= 50.0,
+            "40 albums must overflow the page: upper {} page {}",
+            adjustment.upper(),
+            adjustment.page_size()
+        );
         let before = rows
             .compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0))
             .unwrap()
             .y();
-        let adjustment = view.vadjustment();
         adjustment.set_value(
             (adjustment.value() + 50.0).min(adjustment.upper() - adjustment.page_size()),
         );

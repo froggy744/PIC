@@ -50,7 +50,7 @@ pub fn library_home_data_for_album(
     let mut albums = query
         .query_map([HOME_PREVIEW_LIMIT], album_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    fill_smart_album_counts(connection, &mut albums, &filters::Filters::default())?;
+    fill_smart_album_counts(connection, &mut albums, None)?;
     let albums =
         albums
             .into_iter()

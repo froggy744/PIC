@@ -88,8 +88,7 @@ fn plan_for(
     let album_rules = match context.filter.get() {
         sidebar::SidebarFilter::Album(id) => db::album_rules(&context.connection.borrow(), id)
             .ok()
-            .flatten()
-            .map(|rules| rules.to_filters()),
+            .flatten(),
         _ => None,
     };
     let request = MarkRequest {

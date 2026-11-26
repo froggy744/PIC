@@ -76,7 +76,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let startup_catalog_started = Instant::now();
     let folders = db::folders(&connection.borrow()).unwrap_or_default();
     let folder_cache = Rc::new(RefCell::new(folders.clone()));
-    let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
+    let albums = db::browse_albums(&connection.borrow(), &albums_home_scope(&connection.borrow()))
+        .unwrap_or_default();
     let initial_filter = session.view(SessionEntry::Startup, &folders, &albums);
     let saved_view_photo_id = session.view_anchor;
     // "Activated" means the photo most recently opened in the viewer. Keep
@@ -126,7 +127,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let photos = startup_photos(
         &connection.borrow(),
         initial_filter,
-        rating_filter.get(),
         sort.get(),
         &folders,
     );
@@ -1123,7 +1123,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
             }),
             Rc::new(move || {
-                let albums = db::browse_albums(&theme_connection.borrow()).unwrap_or_default();
+                let albums = db::browse_albums(
+                    &theme_connection.borrow(),
+                    &albums_home_scope(&theme_connection.borrow()),
+                )
+                .unwrap_or_default();
                 if let Some(refresh) = theme_albums_refresh.borrow().as_ref() {
                     refresh(&albums);
                 }
@@ -1251,8 +1255,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let info_for_collection_nav = info.clone();
     let search_for_collection_nav = search_text.clone();
     let sort_for_collection_nav = sort.clone();
-    let rating_filter_for_collection_nav = rating_filter.clone();
-    let group_mode_for_collection_nav = group_mode.clone();
+        let group_mode_for_collection_nav = group_mode.clone();
     let gallery_for_collection_nav = gallery.clone();
     let lightbox_for_collection_nav = lightbox.clone();
     let front_for_collection_nav = front.clone();
@@ -1272,6 +1275,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             return;
         }
         let search = search_for_collection_nav.borrow().clone();
+        // Candidates are queried under the browse scope as it is now, with
+        // each candidate's own destination (the search kept).
+        let nav_base = db::BrowseScope::load(
+            &connection_for_collection_nav.borrow(),
+            db::Destination::AllPhotos,
+            &search,
+        );
+        let nav_scope = |destination| db::BrowseScope {
+            destination,
+            ..nav_base.clone()
+        };
 
         match current_filter {
             sidebar::SidebarFilter::Folder(current_folder_id) => {
@@ -1301,13 +1315,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     };
                     let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        Some(folder.id),
-                        false,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::Folder(folder.id)),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
 
                     if !photos.is_empty() {
@@ -1349,7 +1361,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
             }
             sidebar::SidebarFilter::Album(current_album_id) => {
-                let albums = db::browse_albums(&connection_for_collection_nav.borrow())
+                let albums = db::browse_albums(&connection_for_collection_nav.borrow(), &nav_base)
                     .unwrap_or_default();
                 let Some(current_index) = albums
                     .iter()
@@ -1358,25 +1370,23 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     return;
                 };
                 let first_available_album = albums.iter().position(|album| {
-                    let mut photos = db::browse_photos_in_album(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        album.id,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::Album(album.id)),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     !photos.is_empty()
                 });
                 let last_available_album = albums.iter().rposition(|album| {
-                    let mut photos = db::browse_photos_in_album(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        album.id,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::Album(album.id)),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     !photos.is_empty()
                 });
 
@@ -1387,9 +1397,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if direction < 0 && Some(current_index) == first_available_album {
                     let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        None,
-                        false,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::AllPhotos),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
@@ -1398,7 +1406,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         sidebar::SidebarFilter::RecentlyAdded,
                         &mut photos,
                     );
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
@@ -1439,13 +1447,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     for folder in folders {
                         let mut photos = db::browse_photos(
                             &connection_for_collection_nav.borrow(),
-                            Some(folder.id),
-                            false,
-                            (!search.is_empty()).then_some(search.as_str()),
+                            &nav_scope(db::Destination::Folder(folder.id)),
                         )
                         .unwrap_or_default();
                         retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                        apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                        apply_files_check(&mut photos, &nav_base);
                         sort_photos(&mut photos, sort_for_collection_nav.get());
                         if photos.is_empty() {
                             continue;
@@ -1489,14 +1495,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let mut candidate = current_index as isize + step;
                 while candidate >= 0 && candidate < albums.len() as isize {
                     let album = &albums[candidate as usize];
-                    let mut photos = db::browse_photos_in_album(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        album.id,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::Album(album.id)),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
 
                     if !photos.is_empty() {
@@ -1541,13 +1546,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if current_filter == sidebar::SidebarFilter::All && direction > 0 {
                     let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        None,
-                        true,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::Favorites),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
@@ -1588,13 +1591,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 {
                     let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        None,
-                        false,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::AllPhotos),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::All;
@@ -1633,9 +1634,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 {
                     let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        None,
-                        false,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::AllPhotos),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
@@ -1644,7 +1643,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         sidebar::SidebarFilter::RecentlyAdded,
                         &mut photos,
                     );
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
@@ -1682,13 +1681,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 {
                     let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        None,
-                        true,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::Favorites),
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
@@ -1726,17 +1723,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 // boundary must win over folder-based navigation, otherwise
                 // the selected photo's folder can jump to an unrelated album.
                 if current_filter == sidebar::SidebarFilter::RecentlyAdded && direction > 0 {
-                    let albums = db::browse_albums(&connection_for_collection_nav.borrow())
+                    let albums = db::browse_albums(&connection_for_collection_nav.borrow(), &nav_base)
                         .unwrap_or_default();
                     for album in albums {
-                        let mut photos = db::browse_photos_in_album(
+                        let mut photos = db::browse_photos(
                             &connection_for_collection_nav.borrow(),
-                            album.id,
-                            (!search.is_empty()).then_some(search.as_str()),
+                            &nav_scope(db::Destination::Album(album.id)),
                         )
                         .unwrap_or_default();
                         retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
-                        apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                        apply_files_check(&mut photos, &nav_base);
                         sort_photos(&mut photos, sort_for_collection_nav.get());
                         if photos.is_empty() {
                             continue;
@@ -1797,18 +1793,21 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let folder = &folders[candidate as usize];
                     let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
-                        Some(folder.id),
-                        favorites_only,
-                        (!search.is_empty()).then_some(search.as_str()),
+                        &nav_scope(db::Destination::Folder(folder.id)),
                     )
                     .unwrap_or_default();
+                    if favorites_only {
+                        // Favourites within this folder: the scope has one
+                        // destination, so the folder is the query's.
+                        photos.retain(|photo| photo.favorite);
+                    }
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
                     limit_recently_added(
                         &connection_for_collection_nav.borrow(),
                         current_filter,
                         &mut photos,
                     );
-                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
+                    apply_files_check(&mut photos, &nav_base);
                     sort_photos(&mut photos, sort_for_collection_nav.get());
 
                     if !photos.is_empty() {
@@ -2867,7 +2866,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let sidebar_slot = sidebar_for_unavailable.clone();
         let on_delete_album = delete_album.clone();
         Rc::new(move || {
-            let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
+            let albums = db::browse_albums(&connection.borrow(), &albums_home_scope(&connection.borrow()))
+                .unwrap_or_default();
             if let Some(sidebar) = sidebar_slot.borrow().as_ref() {
                 let sidebar_albums = db::albums(&connection.borrow()).unwrap_or_default();
                 sidebar::refresh_album_rows(sidebar, &sidebar_albums, &on_delete_album);
@@ -2918,7 +2918,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     return;
                 }
                 let started = Instant::now();
-                let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
+                let albums =
+                    db::browse_albums(&connection.borrow(), &albums_home_scope(&connection.borrow()))
+                        .unwrap_or_default();
                 albums_view::refresh(
                     &albums_home,
                     &albums,
@@ -6545,10 +6547,18 @@ fn start_photo_export_single(
                     pending_sidebar_counts = Some(*counts);
 
                     let search_active = !search_for_events.borrow().is_empty();
-                    let filters_active = !db::filters::Filters::load(&connection_for_events.borrow()).is_empty();
-                    // Updates of shown photos still apply in place below; only
-                    // appending new ones also needs no toolbar rating.
-                    let appends_new = scan_may_append_new_photos(&connection_for_events.borrow());
+                    // One scope snapshot per indexed batch.
+                    let scan_scope = browse_scope(
+                        &connection_for_events.borrow(),
+                        filter_for_events.get(),
+                        &search_for_events.borrow(),
+                    );
+                    // In-place updates of shown photos are skipped only when a
+                    // metadata filter could drop an updated photo; appending
+                    // new ones needs an un-narrowed view (no toolbar rating
+                    // either). The final refresh covers both.
+                    let filters_active = !scan_scope.filters.is_empty();
+                    let appends_new = scan_may_append_new_photos(&scan_scope);
                     if watch_trace {
                         let new = photos.iter().filter(|indexed| indexed.newly_discovered).count();
                         let matching = photos
@@ -6779,7 +6789,12 @@ fn start_photo_export_single(
 
                     let finish_refreshes_grid = matches!(kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh))
                         && (!matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(_))
-                            || !db::filters::Filters::load(&connection_for_events.borrow()).is_empty());
+                            || browse_scope(
+                                &connection_for_events.borrow(),
+                                filter_for_events.get(),
+                                &search_for_events.borrow(),
+                            )
+                            .is_narrowed());
                     // Progressive appends land at the end of the Folder stream,
                     // so new photos would form a second, misplaced section for
                     // their folder. Rebuild the stream in place once the
@@ -7147,7 +7162,8 @@ fn start_photo_export_single(
             crate::startup_trace::mark("switch_database_open", Some(switch_started));
             db::delete_setting(&new_connection,db::filters::SETTING).map_err(|error|error.to_string())?;
             let folders = db::folders(&new_connection).map_err(|error| error.to_string())?;
-            let albums = db::browse_albums(&new_connection).map_err(|error| error.to_string())?;
+            let albums = db::browse_albums(&new_connection, &albums_home_scope(&new_connection))
+                .map_err(|error| error.to_string())?;
             let counts = db::sidebar_counts(&new_connection).unwrap_or_default();
             let new_session = SessionState::load(&new_connection);
             let new_filter = new_session.view(SessionEntry::LibrarySwitch, &folders, &albums);
@@ -7172,23 +7188,20 @@ fn start_photo_export_single(
                     .unwrap_or_default(),
             );
             let switch_photos_started = Instant::now();
+            // The new library opens unfiltered by rating (the setting is
+            // reset below), so its list must not use a stale saved one.
+            let switch_scope = db::BrowseScope {
+                rating: RatingFilter::All,
+                ..browse_scope(&new_connection, new_filter, "")
+            };
             let mut photos = match new_filter {
                 sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
-                sidebar::SidebarFilter::Album(album_id) => {
-                    db::browse_photos_in_album(&new_connection, album_id, None).unwrap_or_default()
-                }
-                sidebar::SidebarFilter::Favorites => {
-                    db::browse_photos(&new_connection, None, true, None).unwrap_or_default()
-                }
-                sidebar::SidebarFilter::History => {
-                    db::browse_history_photos(&new_connection).unwrap_or_default()
-                }
-                _ => db::browse_photos(&new_connection, None, false, None).unwrap_or_default(),
+                _ => db::browse_photos(&new_connection, &switch_scope).unwrap_or_default(),
             };
             crate::startup_trace::mark("switch_photo_query", Some(switch_photos_started));
             retain_enabled_formats(&new_connection, &mut photos);
             limit_recently_added(&new_connection, new_filter, &mut photos);
-            apply_collection_rating_filter(&mut photos, new_filter, RatingFilter::All);
+            apply_files_check(&mut photos, &switch_scope);
             if matches!(new_filter, sidebar::SidebarFilter::Folder(_)) {
                 let display_mode = sidebar::FolderDisplayMode::from_setting(
                     db::setting(&new_connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)

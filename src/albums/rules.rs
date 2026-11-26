@@ -558,12 +558,7 @@ impl Editor {
         button: &gtk::MenuButton,
     ) -> gtk::Popover {
         const SHOWN: usize = 300;
-        let mut choices = filters::facets(
-            &self.connection.borrow(),
-            &filters::Scope::default(),
-            &Filters::default(),
-            field,
-        )
+        let mut choices = filters::facets(&self.connection.borrow(), &db::BrowseScope::default(), field)
         .unwrap_or_default()
         .into_iter()
         .map(|facet| (facet.value, Some(facet.count)))
@@ -682,11 +677,7 @@ impl Editor {
             .map_or(true, |row| !row.text().trim().is_empty());
         match rules_from_conditions(&self.conditions.borrow()) {
             Ok(rules) => {
-                let count = filters::count_matching(
-                    &self.connection.borrow(),
-                    &filters::Scope::default(),
-                    &rules.to_filters(),
-                );
+                let count = filters::count_matching(&self.connection.borrow(), &rules.to_scope());
                 self.status.set_text(&match count {
                     Ok(1) => "1 matching photo".to_string(),
                     Ok(count) => format!("{count} matching photos"),

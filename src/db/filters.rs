@@ -196,8 +196,6 @@ impl Selection {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Filters {
     pub categories: BTreeMap<Field, Selection>,
-    #[serde(skip)]
-    pub rating: String,
 }
 impl Filters {
     pub fn is_empty(&self) -> bool {
@@ -209,14 +207,6 @@ impl Filters {
             .flatten()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default()
-    }
-    pub fn for_browsing(c: &Connection) -> Self {
-        let mut filters = Self::load(c);
-        filters.rating = setting(c, "photo-rating-filter")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        filters
     }
     pub fn save(&self, c: &Connection) -> Result<()> {
         set_setting(c, SETTING, &serde_json::to_string(self)?)
@@ -327,13 +317,15 @@ impl Filters {
             args,
         )
     }
+    /// The metadata filters in terms of `p`, parameters numbered from
+    /// `first`. No rating: that is the browse scope's (`BrowseScope::narrowing`)
+    /// or a Smart Album's (`AlbumRules::predicate`).
     pub fn predicate(&self, first: usize) -> (String, Vec<Value>) {
-        let rating = rating_predicate(&self.rating, "p");
         if self.is_empty() {
-            return (rating, vec![]);
+            return ("1".into(), vec![]);
         }
         let (sql, args) = self.clauses(first);
-        (format!("p.id IN (SELECT mp.id FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id WHERE {sql}) AND {rating}"),args)
+        (format!("p.id IN (SELECT mp.id FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id WHERE {sql})"),args)
     }
 }
 
@@ -360,20 +352,22 @@ pub struct Unsaved {
 }
 
 impl AlbumRules {
-    /// Copy the supported part of the active browsing filters.
-    pub fn capture(filters: &Filters) -> (Self, Unsaved) {
-        let mut categories = filters.categories.clone();
+    /// Copy the supported part of what is being browsed: the metadata
+    /// filters and the rating the view uses (`BrowseScope::effective_rating`).
+    /// The copy is independent: later browsing changes leave it alone.
+    pub fn capture(scope: &super::BrowseScope) -> (Self, Unsaved) {
+        let mut categories = scope.filters.categories.clone();
         categories.remove(&Field::Files);
         categories.retain(|_, selection| !selection.is_empty());
-        let rating = filters.rating.trim();
+        let rating = scope.effective_rating();
         let files = match rating {
-            "online" => Some("Online"),
-            "offline" => Some("Offline"),
-            "corrupt" => Some("Corrupt photos"),
+            super::RatingFilter::Online => Some("Online"),
+            super::RatingFilter::Offline => Some("Offline"),
+            super::RatingFilter::Corrupt => Some("Corrupt photos"),
             _ => None,
         };
-        let rating = if RULE_RATINGS.contains(&rating) {
-            rating.to_owned()
+        let rating = if RULE_RATINGS.contains(&rating.key()) {
+            rating.key().to_owned()
         } else {
             String::new()
         };
@@ -419,64 +413,46 @@ impl AlbumRules {
     pub fn to_json(&self) -> Result<String> {
         Ok(serde_json::to_string(self)?)
     }
+    /// The metadata part of the rules.
     pub fn to_filters(&self) -> Filters {
         Filters {
             categories: self.categories.clone(),
-            rating: self.rating.clone(),
         }
+    }
+    /// The saved rating rule, typed. Saved spellings ("unrated", "stars",
+    /// "0".."5") all read; "" is no rule.
+    pub fn rating_filter(&self) -> super::RatingFilter {
+        super::RatingFilter::from_key(&self.rating)
+    }
+    /// The whole library narrowed by these rules, for the rules editor.
+    pub fn to_scope(&self) -> super::BrowseScope {
+        super::BrowseScope::library(self.to_filters(), self.rating_filter())
+    }
+    /// Membership in terms of `p`, parameters numbered from `first`.
+    pub fn predicate(&self, first: usize) -> (String, Vec<Value>) {
+        let (metadata, args) = self.to_filters().predicate(first);
+        (format!("({metadata}) AND {}", self.rating_filter().sql("p")), args)
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Scope {
-    /// Presentation scope, used to refresh Bookshelf counts when rating changes.
-    pub bookshelf: bool,
-    pub folder: Option<i64>,
-    pub album: Option<i64>,
-    pub favorites: bool,
-    pub search: String,
-    pub rating: String,
-}
 #[derive(Debug, Clone)]
 pub struct Facet {
     pub value: String,
     pub count: i64,
 }
 
-pub fn facets(
-    c: &Connection,
-    scope: &Scope,
-    filters: &Filters,
-    field: Field,
-) -> Result<Vec<Facet>> {
-    let mut other = filters.clone();
+/// Counts per value of `field` over what `scope` browses, ignoring the
+/// scope's own selection for that field (and, for Rating, the toolbar
+/// rating; a Ratings destination keeps its own).
+pub fn facets(c: &Connection, scope: &super::BrowseScope, field: Field) -> Result<Vec<Facet>> {
+    let mut other = scope.filters.clone();
     other.categories.remove(&field);
-    let (predicate, mut args) = other.clauses(5);
-    let search = if scope.search.is_empty() {
-        Value::Null
-    } else {
-        Value::Text(format!(
-            "%{}%",
-            scope
-                .search
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        ))
-    };
-    let mut params = vec![
-        scope.folder.map(Value::Integer).unwrap_or(Value::Null),
-        scope.album.map(Value::Integer).unwrap_or(Value::Null),
-        Value::Integer(i64::from(scope.favorites)),
-        search,
-    ];
-    params.append(&mut args);
-    let album = album_scope(c, scope, params.len() + 1, &mut params)?;
-    let rating = if field == Field::Rating {
-        "1".into()
-    } else {
-        rating_predicate(&scope.rating, "mp")
-    };
+    let mut scope = scope.with_filters(other);
+    if field == Field::Rating {
+        scope.rating = super::RatingFilter::All;
+    }
+    let mut params = Vec::new();
+    let membership = scope.predicate(c, &mut params)?;
     let expr = if field == Field::Tags { "NULLIF(TRIM(jt.value),'')" } else { field.expression() };
     let tags_join = if field == Field::Tags {
         "LEFT JOIN scrapbook_details sd ON sd.photo_id=mp.id
@@ -485,10 +461,7 @@ pub fn facets(
         ""
     };
     let sql=format!("SELECT CAST({expr} AS TEXT),COUNT(DISTINCT mp.id) FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id {tags_join}
-        WHERE mp.trashed=0 AND (?1 IS NULL OR mp.folder_id IN (WITH RECURSIVE descendants(id) AS (
-        SELECT id FROM folders WHERE id=?1 UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants))
-        AND (?2 IS NULL OR mp.id IN (SELECT p.id FROM photos p WHERE {album}))
-        AND (?3=0 OR mp.favorite=1) AND (?4 IS NULL OR mp.path LIKE ?4 ESCAPE '\\') AND {predicate} AND {rating}
+        WHERE mp.trashed=0 AND mp.id IN (SELECT p.id FROM photos p WHERE {membership})
         GROUP BY {expr} ORDER BY {expr}");
     let mut stmt = c.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
@@ -502,68 +475,17 @@ pub fn facets(
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Count photos matching the same browsing scope and filter predicate used by the grid.
-pub fn count_matching(c: &Connection, scope: &Scope, filters: &Filters) -> Result<i64> {
-    let (predicate, mut args) = filters.predicate(5);
-    let search = if scope.search.is_empty() {
-        Value::Null
-    } else {
-        Value::Text(format!(
-            "%{}%",
-            scope
-                .search
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        ))
-    };
-    let mut params = vec![
-        scope.folder.map(Value::Integer).unwrap_or(Value::Null),
-        scope.album.map(Value::Integer).unwrap_or(Value::Null),
-        Value::Integer(i64::from(scope.favorites)),
-        search,
-    ];
-    params.append(&mut args);
-    let album = album_scope(c, scope, params.len() + 1, &mut params)?;
+/// Count the photos `scope` browses, with the same predicate as the grid
+/// query. Files choices (Online, Offline, Corrupt) are not SQL and do not
+/// narrow the count.
+pub fn count_matching(c: &Connection, scope: &super::BrowseScope) -> Result<i64> {
+    let mut params = Vec::new();
+    let membership = scope.predicate(c, &mut params)?;
     Ok(c.query_row(
-        &format!(
-            "SELECT COUNT(*) FROM photos p
-             WHERE p.trashed=0
-               AND (?1 IS NULL OR p.folder_id IN (
-                   WITH RECURSIVE descendants(id) AS (
-                       SELECT id FROM folders WHERE id=?1
-                       UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id
-                   ) SELECT id FROM descendants
-               ))
-               AND (?2 IS NULL OR ({album}))
-               AND (?3=0 OR p.favorite=1)
-               AND (?4 IS NULL OR p.path LIKE ?4 ESCAPE '\\')
-               AND ({predicate})"
-        ),
+        &format!("SELECT COUNT(*) FROM photos p WHERE p.trashed=0 AND {membership}"),
         rusqlite::params_from_iter(params),
         |row| row.get(0),
     )?)
-}
-
-/// The album part of a browsing scope, in terms of `p`: manual membership or
-/// a Smart Album's rules, appending its parameters from `first`.
-fn album_scope(c: &Connection, scope: &Scope, first: usize, params: &mut Vec<Value>) -> Result<String> {
-    let Some(album_id) = scope.album else {
-        return Ok("1".into());
-    };
-    let (sql, mut args) = super::album_membership(c, album_id, first)?;
-    params.append(&mut args);
-    Ok(sql)
-}
-
-// Same persisted legacy rating choices; Corrupt retains its existing JPEG inspection path.
-pub fn rating_predicate(key: &str, alias: &str) -> String {
-    match key {
-        "unrated" => format!("{alias}.rating=0"),
-        "stars" => format!("{alias}.rating BETWEEN 1 AND 5"),
-        "0" | "1" | "2" | "3" | "4" | "5" => format!("{alias}.rating={key}"),
-        _ => "1".into(),
-    }
 }
 
 #[cfg(test)]
@@ -628,8 +550,7 @@ mod tests {
         scrapbook_add_tag(&c, 1, "Family").unwrap();
         scrapbook_add_tag(&c, 1, "Holiday").unwrap();
         scrapbook_add_tag(&c, 2, "Family").unwrap();
-        let rows = facets(&c, &Scope::default(), &Filters::default(), Field::Tags)
-            .unwrap();
+        let rows = facets(&c, &BrowseScope::default(), Field::Tags).unwrap();
         assert!(rows.iter().any(|row| row.value == "Family" && row.count == 2));
         assert!(rows.iter().any(|row| row.value == "Holiday" && row.count == 1));
         let mut f = Filters::default();
@@ -639,7 +560,7 @@ mod tests {
         assert_eq!(ids(&c, &f), vec![1, 2]);
         f.toggle(Field::Tags, "Family".into(), false);
         assert_eq!(ids(&c, &f), vec![1]);
-        assert_eq!(count_matching(&c, &Scope::default(), &f).unwrap(), 1);
+        assert_eq!(count_matching(&c, &BrowseScope::default().with_filters(f.clone())).unwrap(), 1);
     }
 
     #[test]
@@ -655,11 +576,11 @@ mod tests {
                 (103,'/a/five.jpg',1,5);",
             )
             .unwrap();
-        let scope = Scope {
-            rating: "3".into(),
-            ..Scope::default()
+        let scope = BrowseScope {
+            rating: RatingFilter::Three,
+            ..BrowseScope::default()
         };
-        let rows = facets(&connection, &scope, &Filters::default(), Field::Rating).unwrap();
+        let rows = facets(&connection, &scope, Field::Rating).unwrap();
         assert_eq!(
             rows.iter()
                 .map(|row| (row.value.as_str(), row.count))
@@ -668,7 +589,7 @@ mod tests {
         );
     }
     fn ids(c: &Connection, f: &Filters) -> Vec<i64> {
-        let mut ids = photos_limited_filtered(c, None, false, None, -1, f)
+        let mut ids = browse_photos(c, &BrowseScope::default().with_filters(f.clone()))
             .unwrap()
             .into_iter()
             .map(|p| p.id)
@@ -681,23 +602,23 @@ mod tests {
         let c = catalog();
         let mut filters = Filters::default();
         filters.toggle(Field::Iso, "100".into(), true);
-        let scope = Scope::default();
-        assert_eq!(count_matching(&c, &scope, &filters).unwrap(), 2);
+        let scope = BrowseScope::default().with_filters(filters.clone());
+        assert_eq!(count_matching(&c, &scope).unwrap(), 2);
 
-        let folder_scope = Scope {
-            folder: Some(1),
-            ..Scope::default()
+        let folder_scope = BrowseScope {
+            destination: Destination::Folder(1),
+            ..scope.clone()
         };
-        assert_eq!(count_matching(&c, &folder_scope, &filters).unwrap(), 1);
+        assert_eq!(count_matching(&c, &folder_scope).unwrap(), 1);
 
-        let album_scope = Scope {
-            album: Some(1),
-            ..Scope::default()
+        let mut album_scope = BrowseScope {
+            destination: Destination::Album(1),
+            ..scope.clone()
         };
-        assert_eq!(count_matching(&c, &album_scope, &filters).unwrap(), 2);
+        assert_eq!(count_matching(&c, &album_scope).unwrap(), 2);
 
-        filters.rating = "3".into();
-        assert_eq!(count_matching(&c, &album_scope, &filters).unwrap(), 1);
+        album_scope.rating = RatingFilter::Three;
+        assert_eq!(count_matching(&c, &album_scope).unwrap(), 1);
     }
     #[test]
     fn metadata_single_combined_or_clear_and_empty() {
@@ -744,12 +665,7 @@ mod tests {
         )
         .unwrap();
 
-        let facets = facets(
-            &c,
-            &Scope::default(),
-            &Filters::default(),
-            Field::SourceFolder,
-        )
+        let facets = facets(&c, &BrowseScope::default(), Field::SourceFolder)
         .unwrap()
         .into_iter()
         .map(|facet| (facet.value, facet.count))
@@ -788,14 +704,15 @@ mod tests {
         let c = catalog();
         let mut f = Filters::default();
         f.toggle(Field::Camera, "nikon z 5".into(), true);
+        let scope = |destination, search: &str| BrowseScope {
+            destination,
+            search: search.into(),
+            filters: f.clone(),
+            ..BrowseScope::default()
+        };
+        assert_eq!(browse_photos(&c, &scope(Destination::Folder(2), "")).unwrap().len(), 0);
         assert_eq!(
-            photos_limited_filtered(&c, Some(2), false, None, -1, &f)
-                .unwrap()
-                .len(),
-            0
-        );
-        assert_eq!(
-            photos_in_album_filtered(&c, 1, None, &f)
+            browse_photos(&c, &scope(Destination::Album(1), ""))
                 .unwrap()
                 .iter()
                 .map(|p| p.id)
@@ -803,13 +720,13 @@ mod tests {
             vec![1]
         );
         assert_eq!(
-            photos_limited_filtered(&c, None, false, Some("keep2"), -1, &f).unwrap()[0].id,
+            browse_photos(&c, &scope(Destination::AllPhotos, "keep2")).unwrap()[0].id,
             2
         );
         f.save(&c).unwrap();
         set_setting(&c, "photo-rating-filter", "3").unwrap();
         assert_eq!(
-            browse_photos(&c, None, false, None)
+            browse_photos(&c, &BrowseScope::load(&c, Destination::AllPhotos, ""))
                 .unwrap()
                 .iter()
                 .map(|p| p.id)
@@ -824,19 +741,15 @@ mod tests {
         let c = catalog();
         let mut f = Filters::default();
         f.toggle(Field::Camera, "nikon z 5".into(), true);
-        let rows = facets(
-            &c,
-            &Scope {
-                album: Some(1),
-                ..Default::default()
-            },
-            &f,
-            Field::Camera,
-        )
-        .unwrap();
+        let album = BrowseScope {
+            destination: Destination::Album(1),
+            filters: f.clone(),
+            ..BrowseScope::default()
+        };
+        let rows = facets(&c, &album, Field::Camera).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|r| r.count == 1));
-        let rows = facets(&c, &Scope::default(), &f, Field::Iso).unwrap();
+        let rows = facets(&c, &BrowseScope::default().with_filters(f.clone()), Field::Iso).unwrap();
         assert_eq!(rows.len(), 2);
     }
     #[test]

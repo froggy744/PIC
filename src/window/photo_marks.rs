@@ -10,7 +10,7 @@
 //! from the photo objects for every request.
 
 use super::{RatingFilter, SortField};
-use crate::db::filters::{Field, Filters};
+use crate::db::filters::{AlbumRules, Field, Filters};
 use crate::sidebar::SidebarFilter;
 
 /// What the user asked for.
@@ -61,9 +61,9 @@ pub(super) struct MarkView<'a> {
     pub(super) sort: SortField,
     /// The Photo filters (metadata) panel's saved filters.
     pub(super) metadata: &'a Filters,
-    /// The open Smart Album's rules, which decide its membership like
+    /// The open Smart Album's saved rules, which decide its membership like
     /// filters do. `None` outside a Smart Album.
-    pub(super) album_rules: Option<&'a Filters>,
+    pub(super) album_rules: Option<&'a AlbumRules>,
 }
 
 /// What the change does to the photos being browsed.
@@ -122,16 +122,16 @@ pub(super) fn plan(request: &MarkRequest) -> Option<MarkPlan> {
 
 fn membership(change: MarkChange, view: &MarkView) -> Membership {
     let metadata_on = |field| {
-        std::iter::once(view.metadata)
-            .chain(view.album_rules)
-            .any(|filters| {
-                filters
-                    .categories
+        std::iter::once(&view.metadata.categories)
+            .chain(view.album_rules.map(|rules| &rules.categories))
+            .any(|categories| {
+                categories
                     .get(&field)
                     .is_some_and(|selection| !selection.is_empty())
             })
     };
-    let album_rating_rule = view.album_rules.is_some_and(|rules| !rules.rating.is_empty());
+    let album_rating_rule =
+        view.album_rules.is_some_and(|rules| rules.rating_filter() != RatingFilter::All);
     match change {
         MarkChange::Favorite(false) if view.sidebar == SidebarFilter::Favorites => {
             Membership::Remove
@@ -181,7 +181,6 @@ mod tests {
 
     static NO_FILTERS: Filters = Filters {
         categories: std::collections::BTreeMap::new(),
-        rating: String::new(),
     };
 
     fn view() -> MarkView<'static> {
@@ -196,24 +195,27 @@ mod tests {
 
     #[test]
     fn smart_album_rules_on_marks_rebuild_the_album() {
-        let favourites = Filters {
+        let favourites = AlbumRules {
             categories: [(Field::Favorite, Selection { values: vec!["1".into()], ..Default::default() })]
                 .into_iter()
                 .collect(),
             rating: String::new(),
         };
-        let rated = Filters { rating: "stars".into(), ..Default::default() };
-        let camera = Filters {
+        // A saved rule written as "0" (Unrated) is a rating rule too.
+        let rated = AlbumRules { rating: "stars".into(), ..Default::default() };
+        let unrated = AlbumRules { rating: "0".into(), ..Default::default() };
+        let camera = AlbumRules {
             categories: [(Field::Camera, Selection { values: vec!["x".into()], ..Default::default() })]
                 .into_iter()
                 .collect(),
             rating: String::new(),
         };
-        let cases: [(&str, MarkIntent, &Filters, Membership); 5] = [
+        let cases: [(&str, MarkIntent, &AlbumRules, Membership); 6] = [
             ("favourite rule, heart", MarkIntent::ToggleFavorite, &favourites, Membership::Rebuild),
             ("favourite rule, stars", MarkIntent::SetRating(3), &favourites, Membership::Keep),
             ("rating rule, stars", MarkIntent::SetRating(3), &rated, Membership::Rebuild),
             ("rating rule, heart", MarkIntent::ToggleFavorite, &rated, Membership::Keep),
+            ("saved \"0\" rule, stars", MarkIntent::SetRating(2), &unrated, Membership::Rebuild),
             ("camera rule, stars", MarkIntent::SetRating(2), &camera, Membership::Keep),
         ];
         for (name, intent, rules, expected) in cases {

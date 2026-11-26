@@ -480,35 +480,8 @@
             let connection = connection.clone();
             let filter = filter.clone();
             let search = search_text.clone();
-            Rc::new(move || {
-                let search = search.borrow().clone();
-                db::filters::Scope {
-                    bookshelf: filter.get() == sidebar::SidebarFilter::Albums,
-                    // Folder mode is PIC's continuous library stream.
-                    folder: None,
-                    album: if search.is_empty() {
-                        if let sidebar::SidebarFilter::Album(id) = filter.get() {
-                            Some(id)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    },
-                    favorites: search.is_empty()
-                        && filter.get() == sidebar::SidebarFilter::Favorites,
-                    search,
-                    // Match the grid: Ratings and Rating(n) ignore it.
-                    rating: if toolbar_rating_applies(filter.get()) {
-                        db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
-                            .ok()
-                            .flatten()
-                            .unwrap_or_default()
-                    } else {
-                        String::new()
-                    },
-                }
-            })
+            // The panel's facets and photo count browse what the grid shows.
+            Rc::new(move || browse_scope(&connection.borrow(), filter.get(), &search.borrow()))
         },
         {
             let connection = connection.clone();
@@ -526,23 +499,22 @@
                     }
                 } else if filter.get() == sidebar::SidebarFilter::Albums {
                     let path = db::connection_path(&connection.borrow()).ok();
-                    let expected_path = path.clone();
+                    let snapshot =
+                        db::BrowseSnapshot::new(&connection.borrow(), albums_home_scope(&connection.borrow()));
+                    let scope = snapshot.scope.clone();
                     let (tx, rx) = std::sync::mpsc::channel();
                     std::thread::spawn(move || {
                         let result = path
                             .and_then(|path| db::open_existing(&path).ok())
-                            .and_then(|c| db::browse_albums(&c).ok());
+                            .and_then(|c| db::browse_albums(&c, &scope).ok());
                         let _ = tx.send(result);
                     });
                     let slot = album_refresh.clone();
                     let c = connection.clone();
-                    let expected = db::filters::Filters::for_browsing(&c.borrow());
                     glib::timeout_add_local(Duration::from_millis(25), move || {
                         match rx.try_recv() {
                             Ok(Some(albums)) => {
-                                if db::connection_path(&c.borrow()).ok() == expected_path
-                                    && db::filters::Filters::for_browsing(&c.borrow()) == expected
-                                {
+                                if snapshot.is_current(&c.borrow(), &albums_home_scope(&c.borrow())) {
                                     if let Some(refresh) = slot.borrow().as_ref() {
                                         refresh(&albums);
                                     }

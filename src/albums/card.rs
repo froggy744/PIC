@@ -411,8 +411,8 @@ fn album_cover_photo(
             .cloned()
             .or_else(|| {
                 // An explicitly chosen cover must also belong to the filtered result.
-                let filters=db::filters::Filters::for_browsing(connection);
-                (filters.is_empty() && matches!(filters.rating.as_str(),""|"all"))
+                let narrowed = db::BrowseScope::load(connection, db::Destination::Album(album.id), "").is_narrowed();
+                (!narrowed)
                     .then(||db::photo(connection,id).ok().flatten()).flatten()
             });
         if chosen.is_some() {
@@ -514,7 +514,11 @@ fn album_card(
     picture.set_overflow(gtk::Overflow::Hidden);
     picture.add_css_class("thumbnail");
 
-    let photos = db::browse_photos_in_album(connection, album.id, None).unwrap_or_default();
+    let photos = db::browse_photos(
+        connection,
+        &db::BrowseScope::load(connection, db::Destination::Album(album.id), ""),
+    )
+    .unwrap_or_default();
     // The chosen cover wins over the automatic pick, even before its cached
     // thumbnail exists.
     let selected_photo = album_cover_photo(connection, album, &photos);

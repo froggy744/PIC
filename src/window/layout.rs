@@ -176,7 +176,10 @@
             }
             if new_filter == sidebar::SidebarFilter::Albums {
                 main_stack.set_visible_child_name("albums");
-                if let Ok(albums) = db::browse_albums(&connection_for_albums.borrow()) {
+                if let Ok(albums) = db::browse_albums(
+                    &connection_for_albums.borrow(),
+                    &albums_home_scope(&connection_for_albums.borrow()),
+                ) {
                     let on_album = album_home_click_slot
                         .borrow()
                         .as_ref()
@@ -2702,14 +2705,16 @@
                     .current_photo()
                     .map(|photo| photo.folder_id())
                     .filter(|folder_id| *folder_id != 0);
-                let mut photos = db::browse_photos_limited(
+                // Under the browse scope (rating, metadata filters), in the
+                // viewed photo's folder rather than the destination.
+                let viewer_scope = db::BrowseScope::load(
                     &connection_for_search.borrow(),
-                    scope_folder,
-                    false,
-                    Some(&query),
-                    24,
-                )
-                .unwrap_or_default();
+                    scope_folder.map_or(db::Destination::AllPhotos, db::Destination::Folder),
+                    &query,
+                );
+                let mut photos =
+                    db::browse_photos_limited(&connection_for_search.borrow(), &viewer_scope, 24)
+                        .unwrap_or_default();
                 retain_enabled_formats(&connection_for_search.borrow(), &mut photos);
                 update_photo_suggestions(
                     &suggestion_popover_for_search,
@@ -2720,16 +2725,10 @@
                         let lightbox = lightbox_for_search.clone();
                         let clear_search = clear_search_after_photo.clone();
                         let sort = sort_for_search.clone();
-                        let query = query.clone();
+                        let viewer_scope = viewer_scope.clone();
                         move |photo_id| {
-                            let mut photos =
-                                db::browse_photos(
-                                    &connection.borrow(),
-                                    scope_folder,
-                                    false,
-                                    Some(&query),
-                                )
-                                    .unwrap_or_default();
+                            let mut photos = db::browse_photos(&connection.borrow(), &viewer_scope)
+                                .unwrap_or_default();
                             retain_enabled_formats(&connection.borrow(), &mut photos);
                             sort_photos(&mut photos, sort.get());
                             if let Some(index) = photos.iter().position(|photo| photo.id == photo_id) {
@@ -2745,7 +2744,12 @@
                 );
             } else {
                 let albums_for_search =
-                    db::search_albums(&connection_for_search.borrow(), &query, 8)
+                    db::search_albums(
+                        &connection_for_search.borrow(),
+                        &albums_home_scope(&connection_for_search.borrow()),
+                        &query,
+                        8,
+                    )
                         .unwrap_or_default();
                 update_folder_suggestions(
                     &suggestion_popover_for_search,

@@ -104,6 +104,8 @@ CREATE INDEX IF NOT EXISTS idx_recently_edited_time ON recently_edited(edited_at
 CREATE INDEX IF NOT EXISTS idx_editing_event_items_photo ON editing_event_items(photo_id);
 CREATE INDEX IF NOT EXISTS idx_photos_taken_at ON photos(taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder_id);
+-- RAW+JPEG twin lookups during a scan (image_format::has_raw_jpeg_twin).
+CREATE INDEX IF NOT EXISTS idx_photos_path_nocase ON photos(path COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_album_photos_photo ON album_photos(photo_id);
 CREATE TABLE IF NOT EXISTS network_import_jobs (
   root TEXT PRIMARY KEY REFERENCES folders(path) ON DELETE CASCADE,

@@ -241,13 +241,9 @@ pub fn set_raw_jpeg_pair_mode(connection: &Connection, mode: RawJpegPairMode) ->
 /// The pairing rule of [`retain_raw_jpeg_pair_mode`], asked for one photo
 /// while a scan runs.
 ///
-/// Reads only the file's own siblings through the `path` UNIQUE index: one
-/// range `dir/stem.` to `dir/stem/` per letter-case spelling of the stem.
-/// The index compares case, so every spelling is tried for a stem of up to
-/// [`TWIN_CASE_LETTERS`] letters (camera names such as `DSC_1240`); a longer
-/// stem tries it as written, in lower case and in upper case, so a twin
-/// spelled in some other mixed case is not found here (the full list still
-/// pairs it).
+/// One range `dir/stem.` to `dir/stem/` of the case-insensitive path index
+/// (`idx_photos_path_nocase`): only the file's own siblings are read. SQLite's
+/// NOCASE folds exactly the ASCII letters the full list lower-cases.
 pub fn has_raw_jpeg_twin(connection: &Connection, photo: &crate::db::Photo) -> bool {
     let Some(format) = for_path(&photo.path) else {
         return false;
@@ -263,81 +259,39 @@ pub fn has_raw_jpeg_twin(connection: &Connection, photo: &crate::db::Photo) -> b
     if name_start > dot {
         return false;
     }
-    let directory = &photo.path[..name_start];
-    let stem = &photo.path[name_start..dot];
-    let Ok(mut statement) = connection.prepare_cached(
-        "SELECT path FROM photos
-         WHERE path >= ?1 AND path < ?2 AND id != ?3 AND +folder_id IS ?4 AND trashed = 0",
+    let prefix = &photo.path[..=dot];
+    let upper = format!("{}/", &photo.path[..dot]);
+    let Ok(mut statement) = connection.prepare_cached(TWIN_QUERY) else {
+        return false;
+    };
+    let Ok(rows) = statement.query_map(
+        rusqlite::params![prefix, upper, photo.id, photo.folder_id],
+        |row| row.get::<_, String>(0),
     ) else {
         return false;
     };
-    for spelling in stem_case_spellings(stem) {
-        let prefix = format!("{directory}{spelling}.");
-        let upper = format!("{directory}{spelling}/");
-        let Ok(rows) = statement.query_map(
-            rusqlite::params![prefix, upper, photo.id, photo.folder_id],
-            |row| row.get::<_, String>(0),
-        ) else {
-            continue;
+    let siblings: Vec<String> = rows.flatten().collect();
+    siblings.into_iter().any(|path| {
+        // Same stem only: `dir/a.jpg` must not pair with `dir/a.b.nef`.
+        // NOCASE folds ASCII only, so the stem has the same length.
+        let Some(extension) = path.get(prefix.len()..) else {
+            return false;
         };
-        let siblings: Vec<String> = rows.flatten().collect();
-        let found = siblings.into_iter().any(|path| {
-            // Same stem only: `dir/a.jpg` must not pair with `dir/a.b.nef`.
-            let extension = &path[prefix.len()..];
-            if extension.contains('.') || extension.contains('/') {
-                return false;
-            }
-            for_path(&path).is_some_and(|twin| {
-                let twin_raw = twin.decoder == DecoderKind::Raw;
-                (if raw { twin.id == "jpeg" } else { twin_raw })
-                    && path_is_enabled(connection, &path)
-            })
-        });
-        if found {
-            return true;
+        if extension.contains('.') || extension.contains('/') {
+            return false;
         }
-    }
-    false
+        for_path(&path).is_some_and(|twin| {
+            let twin_raw = twin.decoder == DecoderKind::Raw;
+            (if raw { twin.id == "jpeg" } else { twin_raw }) && path_is_enabled(connection, &path)
+        })
+    })
 }
 
-/// Stems with at most this many ASCII letters are looked up in every
-/// letter-case spelling (2^n index ranges).
-pub const TWIN_CASE_LETTERS: u32 = 6;
-
-/// The spellings of `stem` a twin lookup tries, without repeats: every
-/// letter-case combination up to [`TWIN_CASE_LETTERS`] letters, otherwise as
-/// written, lower case and upper case.
-fn stem_case_spellings(stem: &str) -> Vec<String> {
-    let letters: Vec<usize> = stem
-        .char_indices()
-        .filter(|(_, c)| c.is_ascii_alphabetic())
-        .map(|(index, _)| index)
-        .collect();
-    let mut spellings: Vec<String> = Vec::new();
-    let mut push = |spelling: String| {
-        if !spellings.contains(&spelling) {
-            spellings.push(spelling);
-        }
-    };
-    push(stem.to_owned());
-    if letters.len() as u32 <= TWIN_CASE_LETTERS {
-        for mask in 0u32..(1 << letters.len()) {
-            let mut bytes = stem.as_bytes().to_vec();
-            for (bit, &index) in letters.iter().enumerate() {
-                bytes[index] = if mask & (1 << bit) != 0 {
-                    bytes[index].to_ascii_uppercase()
-                } else {
-                    bytes[index].to_ascii_lowercase()
-                };
-            }
-            push(String::from_utf8(bytes).unwrap_or_default());
-        }
-    } else {
-        push(stem.to_ascii_lowercase());
-        push(stem.to_ascii_uppercase());
-    }
-    spellings
-}
+/// A twin lookup: the photos in `[?1, ?2)` of the case-insensitive path
+/// index, other than photo `?3`, in folder `?4`, not in the Trash.
+const TWIN_QUERY: &str = "SELECT path FROM photos
+     WHERE path >= ?1 COLLATE NOCASE AND path < ?2 COLLATE NOCASE
+       AND id != ?3 AND +folder_id IS ?4 AND trashed = 0";
 
 /// Collapse only true RAW+JPEG capture pairs. JPEG-only and RAW-only photos
 /// remain visible in every mode.
@@ -430,19 +384,6 @@ mod tests {
     }
 
     #[test]
-    fn twin_lookups_try_each_letter_case_spelling_of_short_stems() {
-        let short = stem_case_spellings("Dsc_1");
-        assert_eq!(short.len(), 8);
-        assert!(short.contains(&"dSc_1".to_owned()) && short.contains(&"DSC_1".to_owned()));
-        assert_eq!(stem_case_spellings("1240"), ["1240"]);
-        assert_eq!(
-            stem_case_spellings("Holiday_Beach"),
-            ["Holiday_Beach", "holiday_beach", "HOLIDAY_BEACH"]
-        );
-        assert_eq!(stem_case_spellings("abcdef").len(), 64);
-    }
-
-    #[test]
     fn a_raw_jpeg_twin_is_the_other_kind_with_the_same_stem_in_the_same_folder() {
         let directory = std::env::temp_dir().join(format!(
             "pic-raw-jpeg-twin-{}-{}",
@@ -472,6 +413,9 @@ mod tests {
             (15, "/lib/dSC_9.nef", 1, 0),
             (16, "/lib/HOLIDAY_BEACH.NEF", 1, 0),
             (17, "/lib/holiday_beach.JPG", 1, 0),
+            // A long stem in mixed case (backlog item 1).
+            (18, "/lib/Summer_Party_01.NEF", 1, 0),
+            (19, "/lib/summer_PARTY_01.jpg", 1, 0),
         ] {
             connection
                 .execute(
@@ -534,16 +478,22 @@ mod tests {
             &connection,
             &photo(17, "/lib/holiday_beach.JPG", 1)
         ));
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(18, "/lib/Summer_Party_01.NEF", 1)
+        ));
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(19, "/lib/summer_PARTY_01.jpg", 1)
+        ));
         // A hidden RAW format does not pair.
         set_enabled(&connection, for_path("a.nef").unwrap(), false).unwrap();
         assert!(!has_raw_jpeg_twin(&connection, &photo(2, "/lib/a.jpg", 1)));
 
-        // The lookup reads the path index, not the whole table or folder.
+        // The lookup reads the case-insensitive path index, not the whole
+        // table or folder.
         let plan: Vec<String> = connection
-            .prepare(
-                "EXPLAIN QUERY PLAN SELECT path FROM photos
-                 WHERE path >= ?1 AND path < ?2 AND id != ?3 AND +folder_id IS ?4 AND trashed = 0",
-            )
+            .prepare(&format!("EXPLAIN QUERY PLAN {TWIN_QUERY}"))
             .unwrap()
             .query_map(rusqlite::params!["/lib/a.", "/lib/a/", 2, 1], |row| {
                 row.get::<_, String>(3)
@@ -553,7 +503,7 @@ mod tests {
             .collect();
         assert!(
             plan.iter()
-                .any(|step| step.contains("sqlite_autoindex_photos") && step.contains("path>?")),
+                .any(|step| step.contains("idx_photos_path_nocase") && step.contains("path>?")),
             "{plan:?}"
         );
         drop(connection);

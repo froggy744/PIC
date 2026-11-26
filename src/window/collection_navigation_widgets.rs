@@ -16,7 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use super::collection_navigation::{self, Land, Target};
+use super::collection_navigation::{self, landing, FolderRows, Land, Target};
 use super::{
     apply_gallery_grouping, photo_list, photo_list_has_photos, show_photo_list_now, Front,
     FrontSurface, PhotoList, PhotoListRequest, PhotoSort,
@@ -40,6 +40,8 @@ pub(super) struct CollectionNavigationParts {
     pub(super) sidebar_destinations: Rc<dyn Fn() -> Vec<SidebarFilter>>,
     /// The sidebar click's destination bookkeeping (`enter_destination`).
     pub(super) enter_destination: Rc<dyn Fn(SidebarFilter)>,
+    /// Scroll the sidebar to a folder row the viewer moved to.
+    pub(super) reveal_folder_row: Rc<dyn Fn(i64)>,
 }
 
 pub(super) struct CollectionNavigation {
@@ -61,11 +63,16 @@ struct Request {
     current: SidebarFilter,
     forward: bool,
     sort: PhotoSort,
+    /// In Folder mode: the viewer's photos (the Folder stream), as
+    /// (photo id, folder id) in order, and the shown photo's folder.
+    viewer_stream: Option<(Vec<(i64, i64)>, Option<i64>)>,
 }
 
 struct Outcome {
     target: Target,
-    list: PhotoList,
+    /// The target's list for the gallery; `None` when the viewer already
+    /// holds it (moving between folder rows inside the Folder stream).
+    list: Option<PhotoList>,
     /// The photo the viewer opens on.
     land_id: i64,
 }
@@ -120,12 +127,28 @@ impl Inner {
             return;
         };
         let current = self.parts.filter.get();
+        // In Folder mode the viewer holds the whole Folder stream; where it
+        // is in it decides the current folder row.
+        let viewer_stream = matches!(current, SidebarFilter::Folder(_)).then(|| {
+            let photos = self.parts.lightbox.photos();
+            let stream = photos
+                .iter()
+                .map(|photo| (photo.id(), photo.folder_id()))
+                .collect::<Vec<_>>();
+            let shown = self
+                .parts
+                .lightbox
+                .current_photo()
+                .map(|photo| photo.folder_id());
+            (stream, shown)
+        });
         let request = Request {
             database: database.clone(),
             sidebar: (self.parts.sidebar_destinations)(),
             current,
             forward,
             sort: self.parts.sort.get(),
+            viewer_stream,
         };
         self.running.set(true);
         glib::MainContext::default().spawn_local(async move {
@@ -152,19 +175,24 @@ impl Inner {
         let parts = &self.parts;
         let Target { page, land } = outcome.target;
         trace(&format!(
-            "show target={page:?} land={land:?} photos={}",
-            outcome.list.photos.len()
+            "show target={page:?} land={land:?} photos={:?}",
+            outcome.list.as_ref().map(|list| list.photos.len())
         ));
         (parts.enter_destination)(page);
-        apply_gallery_grouping(
-            &parts.gallery,
-            page,
-            parts.sort.get(),
-            parts.group_mode.get(),
-            true,
-        );
-        parts.gallery.invalidate_folder_cache();
-        show_photo_list_now(&parts.gallery, outcome.list);
+        if let Some(list) = outcome.list {
+            apply_gallery_grouping(
+                &parts.gallery,
+                page,
+                parts.sort.get(),
+                parts.group_mode.get(),
+                true,
+            );
+            parts.gallery.invalidate_folder_cache();
+            show_photo_list_now(&parts.gallery, list);
+        }
+        if let SidebarFilter::Folder(row) = page {
+            (parts.reveal_folder_row)(row);
+        }
         let land_id = outcome.land_id;
         let attempts = Cell::new(0_u32);
         glib::timeout_add_local(std::time::Duration::from_millis(25), move || {
@@ -184,8 +212,15 @@ impl Inner {
                 self.finish(false);
                 return glib::ControlFlow::Break;
             }
-            let objects = parts.gallery.photo_objects();
-            let Some(index) = objects.iter().position(|photo| photo.id() == land_id) else {
+            // The gallery's own objects; inside the Folder stream the
+            // viewer's are the same photos.
+            let objects = [parts.gallery.photo_objects(), parts.lightbox.photos()]
+                .into_iter()
+                .find(|objects| objects.iter().any(|photo| photo.id() == land_id));
+            let Some((objects, index)) = objects.and_then(|objects| {
+                let index = objects.iter().position(|photo| photo.id() == land_id)?;
+                Some((objects, index))
+            }) else {
                 self.finish(false);
                 return glib::ControlFlow::Break;
             };
@@ -215,18 +250,78 @@ fn plan(request: Request) -> Option<Outcome> {
     let connection = db::open_existing(&request.database).ok()?;
     // Prime folder availability before photo objects are built (as the grid
     // refresh does).
-    let _ = db::folders(&connection);
+    let folders = db::folders(&connection).unwrap_or_default();
     let page_request =
         |page: SidebarFilter| PhotoListRequest::for_view(&connection, page, "", request.sort);
-    let target = collection_navigation::next_stop(
-        &request.sidebar,
-        request.current,
-        request.forward,
-        |page| match page {
-            SidebarFilter::Folder(_) => false,
-            page => photo_list_has_photos(&connection, &page_request(page)),
-        },
-    )?;
+    let shown_rows = request
+        .sidebar
+        .iter()
+        .filter_map(|page| match page {
+            SidebarFilter::Folder(id) => Some(*id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let rows = FolderRows::new(
+        &shown_rows,
+        &folders
+            .iter()
+            .map(|folder| (folder.id, folder.parent_id))
+            .collect::<Vec<_>>(),
+    );
+    // The Folder stream as (photo id, folder row), in order: the viewer's
+    // when it holds it, else listed once when the walk first reaches a
+    // folder row.
+    let mut stream: Option<(Vec<(i64, Option<i64>)>, Option<PhotoList>)> =
+        request.viewer_stream.as_ref().map(|(photos, _)| {
+            let photos = photos
+                .iter()
+                .map(|(id, folder)| (*id, rows.row_of(*folder)))
+                .collect();
+            (photos, None)
+        });
+    let load_stream = || {
+        let list =
+            photo_list(&connection, &page_request(SidebarFilter::Folder(0))).unwrap_or_default();
+        let photos = list
+            .photos
+            .iter()
+            .map(|photo| {
+                (
+                    photo.id,
+                    photo.folder_id.and_then(|folder| rows.row_of(folder)),
+                )
+            })
+            .collect();
+        (photos, Some(list))
+    };
+    let current = match &request.viewer_stream {
+        Some((_, Some(folder))) => rows
+            .row_of(*folder)
+            .map(SidebarFilter::Folder)
+            .unwrap_or(request.current),
+        _ => request.current,
+    };
+    let target =
+        collection_navigation::next_stop(&request.sidebar, current, request.forward, |page| {
+            match page {
+                SidebarFilter::Folder(row) => stream
+                    .get_or_insert_with(load_stream)
+                    .0
+                    .iter()
+                    .any(|(_, photo_row)| *photo_row == Some(row)),
+                page => photo_list_has_photos(&connection, &page_request(page)),
+            }
+        })?;
+    if let SidebarFilter::Folder(row) = target.page {
+        let (photos, list) = stream?;
+        let rows_in_order = photos.iter().map(|(_, row)| *row).collect::<Vec<_>>();
+        let index = landing(&rows_in_order, row, target.land)?;
+        return Some(Outcome {
+            target,
+            list,
+            land_id: photos[index].0,
+        });
+    }
     let list = photo_list(&connection, &page_request(target.page))?;
     let land_id = match target.land {
         Land::First => list.photos.first(),
@@ -235,7 +330,7 @@ fn plan(request: Request) -> Option<Outcome> {
     .id;
     Some(Outcome {
         target,
-        list,
+        list: Some(list),
         land_id,
     })
 }
@@ -335,6 +430,7 @@ mod tests {
                     entered.borrow_mut().push(page);
                 })
             },
+            reveal_folder_row: Rc::new(|_| {}),
         });
         Fixture {
             directory,
@@ -471,5 +567,56 @@ mod tests {
         library.idle();
         assert_eq!((library.filter.get(), library.shown()), (All, Some(1)));
         assert!(library.entered.borrow().is_empty());
+    }
+
+    /// Folder rows are sections of the one Folder stream: landing on one
+    /// shows the stream on that row's first (or last) photo, Up/Down inside
+    /// Folder mode moves between rows in the viewer's stream, a photo in a
+    /// folder without a shown row belongs to its nearest shown ancestor, and
+    /// the sequence wraps past the last row.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn viewer_up_and_down_move_through_the_folder_stream() {
+        let library = fixture(
+            "folders",
+            "INSERT INTO folders (id, path, name, parent_id) VALUES
+                (1, '/f/one', 'one', NULL), (2, '/f/two', 'two', NULL),
+                (3, '/f/two/sub', 'sub', 2);
+             INSERT INTO photos (id, path, folder_id) VALUES
+                (1, '/f/one/a.jpg', 1), (2, '/f/one/b.jpg', 1),
+                (3, '/f/two/c.jpg', 2), (4, '/f/two/d.jpg', 2),
+                (5, '/f/two/sub/e.jpg', 3);",
+            vec![All, Album(1), Folder(1), Folder(2)],
+        );
+        let album = db::create_album(&library.connection.borrow(), "Trip").unwrap();
+        db::add_photos_to_album(&library.connection.borrow(), album.id, &[3, 4]).unwrap();
+
+        library.press(1, Album(1), 3);
+        library.press(1, Folder(1), 1);
+        let stream = library
+            .lightbox
+            .photos()
+            .iter()
+            .map(|photo| photo.id())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            stream,
+            [1, 2, 3, 4, 5],
+            "the viewer holds the whole Folder stream"
+        );
+        library.press(1, Folder(2), 3);
+        assert_eq!(
+            library.lightbox.photos().len(),
+            5,
+            "moving inside the stream keeps it"
+        );
+        library.press(-1, Folder(1), 2);
+        library.press(-1, Album(1), 4);
+        library.press(1, Folder(1), 1);
+        library.press(1, Folder(2), 3);
+        // Past the last folder row: back to All Photos.
+        library.press(1, All, 1);
+        // Back into Folder(2): its last photo is in the hidden child folder.
+        library.press(-1, Folder(2), 5);
     }
 }

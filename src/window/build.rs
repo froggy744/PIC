@@ -4699,6 +4699,17 @@ fn start_photo_export_single(
                     }
                 })
             },
+            reveal_folder_row: {
+                let sidebar = sidebar_selection_slot.clone();
+                Rc::new(move |folder_id| {
+                    if let Some(sidebar) = sidebar.borrow().as_ref().cloned() {
+                        // After the row is selected and laid out.
+                        glib::timeout_add_local_once(Duration::from_millis(100), move || {
+                            sidebar::scroll_to_folder(&sidebar, folder_id);
+                        });
+                    }
+                })
+            },
         });
         lightbox.set_collection_navigation_handler(move |direction| navigation.navigate(direction));
     }

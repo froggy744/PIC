@@ -27,6 +27,8 @@ use layout_settle::{
 
 mod photo_mark_commands;
 mod photo_marks;
+mod photo_list;
+use photo_list::{photo_list, photo_list_has_photos, PhotoList, PhotoListRequest};
 mod front_surface;
 mod front_mirrors;
 mod zoom_slider;

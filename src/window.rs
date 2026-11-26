@@ -530,6 +530,49 @@ struct PhotoActionContext {
     properties: Weak<PropertiesWidgets>,
 }
 
+#[cfg(test)]
+impl PhotoActionContext {
+    /// A window-free context for tests: All Photos, no search, newest taken
+    /// first, toolbar rating All, no gallery, viewer, sidebar, window or
+    /// menu host attached, an album list of its own, and no-op callbacks.
+    /// A test overrides only what it checks:
+    /// `PhotoActionContext { info, ..PhotoActionContext::for_tests(&connection) }`.
+    fn for_tests(connection: &Rc<RefCell<Connection>>) -> Self {
+        Self {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: Rc::new(InfoBar::new()),
+            lightbox: Weak::new(),
+            front: Weak::new(),
+            sidebar: Rc::new(RefCell::new(None)),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            albums: AlbumList::new(
+                connection.clone(),
+                Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            ),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: Weak::new(),
+        }
+    }
+}
+
 include!("window/operation_progress.rs");
 include!("window/build.rs");
 include!("window/startup.rs");

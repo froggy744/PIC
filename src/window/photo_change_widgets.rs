@@ -311,49 +311,7 @@ mod tests {
     use super::super::*;
     use super::{photo_changed, PhotoChange};
     use std::cell::{Cell, RefCell};
-    use std::rc::{Rc, Weak};
-
-    fn context(
-        connection: &Rc<RefCell<rusqlite::Connection>>,
-        gallery: Weak<grid::Gallery>,
-        info: Rc<InfoBar>,
-        lightbox: Weak<crate::lightbox::Lightbox>,
-        front: Weak<FrontSurface>,
-        properties: Weak<PropertiesWidgets>,
-    ) -> PhotoActionContext {
-        PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(gallery)),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info,
-            lightbox,
-            front,
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: AlbumList::new(
-                connection.clone(),
-                Rc::new(Cell::new(sidebar::SidebarFilter::All)),
-            ),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties,
-        }
-    }
+    use std::rc::Rc;
 
     fn settle(until: impl Fn() -> bool) {
         let main = glib::MainContext::default();
@@ -405,14 +363,13 @@ mod tests {
         info.photo_updated(&shown);
         let properties = PropertiesWidgets::new(info.clone());
         properties.show_photo(PropertiesSurface::Gallery, Some(&gallery_photo));
-        let context = context(
-            &connection,
-            Weak::new(),
+        let context = PhotoActionContext {
             info,
-            Rc::downgrade(&lightbox),
-            Rc::downgrade(&front),
-            Rc::downgrade(&properties),
-        );
+            lightbox: Rc::downgrade(&lightbox),
+            front: Rc::downgrade(&front),
+            properties: Rc::downgrade(&properties),
+            ..PhotoActionContext::for_tests(&connection)
+        };
 
         let (mut shown_record, mut neighbour_record) = (record(2), record(3));
         shown_record.width = Some(4000);
@@ -479,14 +436,10 @@ mod tests {
             |_, _| {},
             |_| {},
         ));
-        let context = context(
-            &connection,
-            Rc::downgrade(&gallery),
-            Rc::new(InfoBar::new()),
-            Weak::new(),
-            Weak::new(),
-            Weak::new(),
-        );
+        let context = PhotoActionContext {
+            gallery: Rc::new(RefCell::new(Rc::downgrade(&gallery))),
+            ..PhotoActionContext::for_tests(&connection)
+        };
 
         db::scrapbook_remove_tag(&connection.borrow(), 1, "Trip").unwrap();
         photo_changed(&context, PhotoChange::Tagged(1));

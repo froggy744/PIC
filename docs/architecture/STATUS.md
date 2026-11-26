@@ -48,7 +48,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
 | 19 | Scan events as a reducer | Worth exploring | merged | merge `db8d6588` (`refactor/scan-events`) | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
-| 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
+| 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | done on `refactor/photo-action-context-fixture`, not merged (test fixture only) | none | `src/window.rs` (`#[cfg(test)] PhotoActionContext::for_tests`) |
 
 ## Outstanding work
 
@@ -791,6 +791,22 @@ Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q
 - Not run: no display test drives a real scan through the window, and the GUI harness `import` suite needs a release build (not authorised).
 - By hand (owner, 2026-11-26, `cargo run` with `PIC_WATCH_TRACE=1`): import into All Photos appends live; library refresh and Folder refresh run; Stop ends each; after the stop fix the sidebar shows the imported folder tree with real counts. No panic, GTK critical or borrow error in the logs. Not yet seen by hand: an import running to "✓ Previews complete".
 
+### 20 · PhotoActionContext: one test fixture (done on branch, not merged)
+Started 2026-11-26 at `main` @ `b54bc829` on `refactor/photo-action-context-fixture`.
+
+#### Before
+- `PhotoActionContext` (`src/window.rs`): 24 fields, all used. Built once in `build()` and 11 times in tests (9 inline literals and two private helpers, `context` in `photo_change_widgets.rs` and `album_context` in `photo_mark_commands.rs`), each spelling out all 24 fields, about 30 lines each.
+- Every callback in those test contexts was already a no-op stub; no test checked a callback through the context.
+
+#### Decisions (owner, 2026-11-26)
+- Test fixture only: `#[cfg(test)] PhotoActionContext::for_tests(&connection)` (All Photos, no search, date taken newest first, toolbar rating All, nothing attached, its own album list, no-op callbacks). Each test overrides only the fields it checks with struct update syntax (`..PhotoActionContext::for_tests(&connection)`). The two private helpers are removed.
+- `PhotoActionContext` stays a parameter object with all 24 fields: grouping them (`PhotoMenuCallbacks`, a browse handle) only relocates complexity (deletion test). No production code, call site or behaviour changes.
+
+#### Verification (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings. `src/window.rs` gains only the `#[cfg(test)]` block.
+- Display tests that use the fixture (Xvfb, one process each), all pass: `add_to_album_lists_the_open_librarys_manual_albums`, `add_to_album_popover_scrolls_when_the_album_list_is_long`, `album_cover_action_is_only_offered_inside_an_album`, `albums_home_keeps_browsing_filters_after_edits_and_recounts`, `an_older_recount_never_overwrites_a_newer_album_edit`, `a_scan_update_reaches_the_viewer_and_its_properties`, `copy_and_paste_edits_menu_persists_the_recipe_for_export`, `marks_change_a_whole_selection_or_nothing`, `marks_recount_smart_albums_once_per_burst`, `properties_add_to_album_uses_the_shared_album_list`, `rotating_in_the_viewer_refreshes_the_viewer_properties`, `trashing_photos_updates_library_counts`, `untagging_under_a_tag_filter_drops_the_photo`.
+- Tests: 97 lines added, 332 removed.
+
 ### Round three (2026-11-26): deferred, not rejected
 The owner deferred all seven candidates: the bugs the review found are fixed one at a time instead of starting another refactoring cycle. The candidates stay valid; revisit them in this order when a refactor is wanted: 14 → 15 → 17 → 16 → 18, then 19 and 20.
 
@@ -809,8 +825,8 @@ Candidates 14-18 merged; only `main` remains (local and GitHub).
 - 17: pre-existing failure `album_view_modes_preserve_albums_and_click_navigation` (bookshelf photo-count colour), also on `main`; not investigated.
 - 14: `scripts/browse-scope-checks/run.sh` never run.
 - 19: merged 2026-11-26 (merge `db8d6588`); open: the subfolder-admission and RAW+JPEG pairing suspected bugs, a finished import by hand.
-- Not started (deferred): 20 `PhotoActionContext` shrinks.
-Suggested order: 20 next (it follows 14, 16, 17).
+- 20: test fixture only, on `refactor/photo-action-context-fixture` (see its section).
+All round-three candidates are merged or on a branch.
 
 ### Next (updated 2026-11-26)
 Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands. Progress (2026-11-26): all five fixed (`18923e3e`, `24297e1b`, `5d83b50c`, `d3d2252a`, `ab33310c`), each with a test seen red first. Merged into `main` 2026-11-26 (merge `4db4685f`), followed by `feature/album-links` (merge `e2c4b980`: one Add to Album list and New Album dialog, the photo menu's In Albums links; issues #266, #267). Both branches deleted. Round three (14-20) stays deferred.

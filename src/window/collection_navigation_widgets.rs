@@ -91,6 +91,12 @@ impl CollectionNavigation {
         }
     }
 
+    /// Make Up/Down in the viewer go through this adapter.
+    pub(super) fn install(self) {
+        let lightbox = self.inner.parts.lightbox.clone();
+        lightbox.set_collection_navigation_handler(move |direction| self.navigate(direction));
+    }
+
     /// Move the viewer to the previous (`direction < 0`) or next collection.
     pub(super) fn navigate(&self, direction: i32) {
         if direction == 0 {

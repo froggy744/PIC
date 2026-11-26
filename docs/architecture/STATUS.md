@@ -738,7 +738,13 @@ Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. D
 1. Pure `collection_navigation.rs`, table tests first (5, seen red against a stub). Done in the stage 1 commit.
 2. `CollectionNavigation` adapter on a worker with stale-result guards; `enter_destination` extracted; the `build()` closure deleted (library rows and albums). `sidebar::navigation_destinations` replaces `visible_folder_ids`; `Gallery::select_last_photo` and `SectionedFolderView::scroll_to_index` lost their last caller and are deleted. Display tests `viewer_up_and_down_walk_the_sidebar_collections`, `viewer_up_and_down_drop_stale_and_needless_moves` (the stale test seen red with the destination check removed). Folder rows are not stops until stage 3 (dead-code warnings for the folder helpers until then). Done in the stage 2 commit.
 3. Folder rows: the continuous stream, landing within folders, navigation inside Folder mode. The worker lists the stream once when the walk first reaches a folder row (or uses the viewer's photos in Folder mode, with the shown photo's row as the current one); inside the stream only the viewer moves. Display test `viewer_up_and_down_move_through_the_folder_stream`. Done in the stage 3 commit.
-4. Owner rule `collection-navigation`, GLOSSARY, AUDIT-INDEX, verification.
+4. Owner rule `collection-navigation` (`set_collection_navigation_handler` only in the adapter, which installs itself with `install`; one self-test case). Done in the stage 4 commit. Still open: GLOSSARY and AUDIT-INDEX entries; a by-hand check; the library-switch drop is guarded (database path) but not tested.
+
+#### Verification (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings.
+- Unit: `window::collection_navigation` 5 passed (red against a stub first).
+- Display (Xvfb, one process each): `viewer_up_and_down_walk_the_sidebar_collections`, `viewer_up_and_down_drop_stale_and_needless_moves` (red with the destination check removed), `viewer_up_and_down_move_through_the_folder_stream`: pass.
+- `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits; `--self-test` ok.
 
 **Test coverage gap (recorded 2026-11-26, after 15).** Collection navigation (the `collection_navigation` closure in `build()`, `src/window/build.rs`, wired to the viewer through `Lightbox::set_collection_navigation_handler`) has no test of its own: no unit or display test drives it, and the GUI harness has no step for it. 15 moved its lists onto the shared pipeline; what is tested is only the request shape its pages use (`navigation_pages_are_one_folder_sorted_flat_with_favourites_kept` in `window::photo_list`) and the stale-result guard it calls (`a_gallery_shown_now_drops_an_older_refresh`). Untested behaviour:
 - which page comes next in each direction (folders in visible sidebar order, albums in order, the Recently Added ↔ albums ↔ folders boundaries, library views moving by the current photo's folder);

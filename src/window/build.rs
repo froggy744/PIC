@@ -4711,7 +4711,7 @@ fn start_photo_export_single(
                 })
             },
         });
-        lightbox.set_collection_navigation_handler(move |direction| navigation.navigate(direction));
+        navigation.install();
     }
 
     // Window-level photo shortcuts own keys that must work regardless of

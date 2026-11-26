@@ -47,7 +47,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 16 | Photo change: one notification, one fan-out | Strong | merged | merge `41d31b9c` (`refactor/photo-change`) | `src/window/photo_change.rs` (pure: `ChangeKind`, `ChangeView`, `FanOut`), `src/window/photo_change_widgets.rs` (GTK adapter `photo_changed`) |
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
-| 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
+| 19 | Scan events as a reducer | Worth exploring | in progress (`refactor/scan-events`) | none | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
 
 ## Outstanding work
@@ -755,6 +755,30 @@ Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. D
 - what it updates: the sidebar filter and selection, section layout, grouping, gallery, `select_last_photo`, and reopening the viewer on the new page.
 
 Also seen in 15: the `Folder(current_folder_id)` arm is dead (the closure returns early for Folder), and whether its folder pages should be the Folder stream instead of single-folder flat pages is 18's decision (15 decision D3). Moving it out of `build()` into a pure "next page" decision plus a GTK adapter is what makes those testable; write the table tests first.
+
+### 19 · Scan events as a reducer (in progress)
+Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q1-Q5 approved by the owner 2026-11-26; the agent's refinements are marked (agent).
+
+#### Before (at `b8e3dda8`, `build.rs:5697-6417`)
+- One ~720-line 50 ms `timeout_add_local` closure in `build()`, no tests: refresh-prepare events, then the `ScanEvent` match (~430 lines), then the sidebar-count throttle (50 photos or 250 ms), gallery appends (192 per tick) and thumbnail refreshes (128 per tick).
+- Decided inline: generation reset and isolation, the events let through after Stop, which new photo joins the view (no search, no metadata filter, no toolbar rating, enabled format, view All or the photo's own folder), in-place rereads, the `IndexingFinished` / `Finished` rebuild rules (grid refresh, Folder-stream rebuild, next queued folder, Maintenance no-op), and the completion messages per job kind.
+
+#### Decisions (approved 2026-11-26)
+- Q1: a reducer. `ScanView` (`scan_view.rs`, pure) holds the per-generation state (counters, network flag, failure shown, the pending append queue, pending sidebar counts and their throttle, the dirty-thumbnail queue); it returns `ScanEffect` lists the adapter applies in order. Refresh-prepare events stay outside (job startup, not showing a scan). (agent) The reducer takes the job as `&mut ScanJobState`, a plain value, and makes the `Finished` / `Cancelled` job changes itself, instead of returning job effects: the totals it reports are read back in the same step, and effects would repeat the job arithmetic in the adapter.
+- Q2: behaviour-preserving. Suspected drift gets its own test seen red, its own commit, and the owner's approval before behaviour changes (see "Suspected bugs" below).
+- Q3: the reducer sees the view as plain values, never SQLite or GTK. (agent) Through a small `ScanViewFacts` trait (sidebar filter, search active, browse scope, format enabled, folder exists, recovery deferred) that the adapter answers lazily, so the same queries run at the same moments as today (the browse scope once per indexed batch, the format per new photo) and an idle tick does no extra work. The test fake is the second adapter.
+- Q4: `src/window/scan_view.rs` (pure) and `src/window/scan_view_widgets.rs` (GTK adapter); `build()` only wires the timer.
+- Q5: `PIC_WATCH` / `PICASA_TRACE` / `SCAN FAILED` / `SCAN COMPLETE` lines keep their exact text and are printed by the adapter; the reducer returns the numbers.
+- Owner constraints: timer interval, per-tick event and time caps, batch sizes, throttles, cancellation, generation isolation and trace output unchanged; uses the existing `BrowseScope`, `PhotoChange` and album-count refresh.
+
+#### Suspected bugs (read from the code, not fixed; need approval)
+- Subfolder admission: a live append needs `photo.folder_id == id` for `Folder(id)`, but the Folder destination includes subfolders, so a new photo in a subfolder of the open folder appears only at the final rebuild.
+- RAW+JPEG pairing: appended photos skip pairing, so in pair mode the hidden half of a pair may show until the next rebuild.
+
+#### Stages
+1. Pure `scan_view.rs`, table and event-sequence tests first (seen red against a stub).
+2. `scan_view_widgets.rs` adapter; the tick body leaves `build()`.
+3. Docs (GLOSSARY, AUDIT-INDEX) and verification.
 
 ### Round three (2026-11-26): deferred, not rejected
 The owner deferred all seven candidates: the bugs the review found are fixed one at a time instead of starting another refactoring cycle. The candidates stay valid; revisit them in this order when a refactor is wanted: 14 → 15 → 17 → 16 → 18, then 19 and 20.

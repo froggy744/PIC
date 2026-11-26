@@ -2560,38 +2560,15 @@ mod photo_actions_tests {
         settle_gtk_layout();
 
         let context = PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: {
                 // The InfoBar owns the current photo.
                 let info = Rc::new(InfoBar::new());
                 info.photo_updated(&destination);
                 info
             },
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
             window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
+            ..PhotoActionContext::for_tests(&connection)
         };
 
         show_photo_context_menu(source, overlay.clone().upcast(), context.clone(), 10.0, 10.0);
@@ -2661,35 +2638,7 @@ mod photo_actions_tests {
         for index in 1..=30 {
             db::create_album(&connection.borrow(), &format!("Album {index:02}")).unwrap();
         }
-        let context = PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
-        };
+        let context = PhotoActionContext::for_tests(&connection);
 
         let popover =
             build_album_popover(context, Rc::new(Vec::new), Rc::new(|| {}), Rc::new(|| {}));
@@ -2745,33 +2694,11 @@ mod photo_actions_tests {
         settle_gtk_layout();
 
         let context_for = |filter: sidebar::SidebarFilter| PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
             filter: Rc::new(Cell::new(filter)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
             albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(filter))),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
             window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
+            ..PhotoActionContext::for_tests(&connection)
         };
 
         // Inside the album the action targets the album being viewed, with no
@@ -2964,33 +2891,8 @@ mod photo_actions_tests {
         );
         assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "3");
         let context = PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(Some(sidebar.clone()))),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
+            ..PhotoActionContext::for_tests(&connection)
         };
 
         trash_photos(&context, &[1, 3]).unwrap();
@@ -3067,33 +2969,11 @@ mod photo_actions_tests {
         properties.show_photo(PropertiesSurface::Gallery, Some(&gallery_photo));
 
         let context = PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: info.clone(),
             lightbox: Rc::downgrade(&lightbox),
             front: Rc::downgrade(&front),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
             properties: Rc::downgrade(&properties),
+            ..PhotoActionContext::for_tests(&connection)
         };
 
         let (rotated, rotation) = rotate_current_photo(&context, false).unwrap();
@@ -3136,35 +3016,7 @@ mod photo_actions_tests {
         let photo = crate::photo_object::PhotoObject::from_photo(
             &db::photo(&connection.borrow(), 1).unwrap().unwrap(),
         );
-        let context = PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
-        };
+        let context = PhotoActionContext::for_tests(&connection);
         let section = scrapbook_inspector_extra(&photo, &context, PropertiesSurface::Gallery);
         let window = gtk::Window::new();
         window.set_child(Some(&section));

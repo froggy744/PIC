@@ -191,23 +191,8 @@ mod tests {
         let applied: Rc<RefCell<Vec<i64>>> = Rc::default();
         let applied_in = applied.clone();
         let context = PhotoActionContext {
-            connection: connection.clone(),
             gallery: Rc::new(RefCell::new(Rc::downgrade(&gallery))),
             filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
             albums: {
                 let list = AlbumList::new(
                     connection.clone(),
@@ -218,15 +203,7 @@ mod tests {
                 }));
                 list
             },
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
+            ..PhotoActionContext::for_tests(&connection)
         };
         // Two favourites in quick succession share one worker recount, which
         // sees both.
@@ -280,23 +257,7 @@ mod tests {
         let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
         let home_in = home.clone();
         let context = PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
             filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
             albums: {
                 let list = AlbumList::new(
                     connection.clone(),
@@ -309,15 +270,7 @@ mod tests {
                 }));
                 list
             },
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
+            ..PhotoActionContext::for_tests(&connection)
         };
         let filtered = vec![("Loved".to_string(), 1), ("Trips".to_string(), 1)];
         let main = glib::MainContext::default();
@@ -372,52 +325,6 @@ mod tests {
         Rc::new(RefCell::new(db::open(&directory.join("library.db")).unwrap()))
     }
 
-    /// A window-free context whose Albums home records what it is given.
-    fn album_context(
-        connection: Rc<RefCell<rusqlite::Connection>>,
-        home: Rc<RefCell<Vec<Vec<(String, i64)>>>>,
-    ) -> PhotoActionContext {
-        PhotoActionContext {
-            connection: connection.clone(),
-            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
-            info: Rc::new(InfoBar::new()),
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: {
-                let list = AlbumList::new(
-                    connection.clone(),
-                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
-                );
-                list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
-                    home.borrow_mut()
-                        .push(albums.iter().map(|a| (a.name.clone(), a.photo_count)).collect());
-                }));
-                list
-            },
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
-        }
-    }
-
     fn spin_for(millis: u64) {
         let main = glib::MainContext::default();
         let until = std::time::Instant::now() + std::time::Duration::from_millis(millis);
@@ -444,7 +351,23 @@ mod tests {
         );
         db::create_smart_album(&connection.borrow(), "Loved", &rules).unwrap();
         let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
-        let context = album_context(connection.clone(), home.clone());
+        let home_in = home.clone();
+        let context = PhotoActionContext {
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            albums: {
+                let list = AlbumList::new(
+                    connection.clone(),
+                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                );
+                list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
+                    home_in
+                        .borrow_mut()
+                        .push(albums.iter().map(|a| (a.name.clone(), a.photo_count)).collect());
+                }));
+                list
+            },
+            ..PhotoActionContext::for_tests(&connection)
+        };
 
         // A recount is counting on its worker when an album is deleted.
         context.albums.recount_now();
@@ -462,7 +385,24 @@ mod tests {
         gtk::init().unwrap();
         let first = album_library("add-menu-first");
         db::create_album(&first.borrow(), "Old library album").unwrap();
-        let context = album_context(first, Rc::default());
+        let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
+        let home_in = home.clone();
+        let context = PhotoActionContext {
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            albums: {
+                let list = AlbumList::new(
+                    first.clone(),
+                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                );
+                list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
+                    home_in
+                        .borrow_mut()
+                        .push(albums.iter().map(|a| (a.name.clone(), a.photo_count)).collect());
+                }));
+                list
+            },
+            ..PhotoActionContext::for_tests(&first)
+        };
         configure_infobar_album_menu(&context.info.add_to_album, context.clone());
 
         // Another library is opened behind the same window.
@@ -556,38 +496,15 @@ mod tests {
         let second = object(2).unwrap();
         let filter = Rc::new(Cell::new(sidebar::SidebarFilter::All));
         let context = PhotoActionContext {
-            connection: connection.clone(),
             gallery: Rc::new(RefCell::new(Rc::downgrade(&gallery))),
             filter: filter.clone(),
-            search: Rc::new(RefCell::new(String::new())),
-            sort: Rc::new(Cell::new(PhotoSort {
-                field: SortField::DateTaken,
-                direction: SortDirection::Descending,
-            })),
-            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
             info: {
                 // The InfoBar owns the current photo.
                 let info = Rc::new(InfoBar::new());
                 info.photo_updated(&anchor);
                 info
             },
-            lightbox: std::rc::Weak::new(),
-            front: std::rc::Weak::new(),
-            sidebar: Rc::new(RefCell::new(None)),
-            create_album: Rc::new(|| {}),
-            import_folder: Rc::new(|| {}),
-            delete_album: Rc::new(|_| {}),
-            on_unavailable: Rc::new(|| {}),
-            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
-            navigate_to_folder: Rc::new(|_, _| {}),
-            open_collage: Rc::new(|_| {}),
-            open_edit: Rc::new(|_| {}),
-            edit_clipboard: Rc::new(RefCell::new(None)),
-            export: Rc::new(|_| {}),
-            window: glib::WeakRef::new(),
-            context_menu_host: Rc::new(RefCell::new(None)),
-            operation_progress: OperationProgressUi::new(),
-            properties: std::rc::Weak::new(),
+            ..PhotoActionContext::for_tests(&connection)
         };
         let stored = |id| {
             let photo = db::photo(&connection.borrow(), id).unwrap().unwrap();

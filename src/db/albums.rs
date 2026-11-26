@@ -44,7 +44,7 @@ fn smart_membership(
     first: usize,
 ) -> (String, Vec<rusqlite::types::Value>) {
     match filters::AlbumRules::parse(json) {
-        Ok(rules) => rules.to_filters().predicate(first),
+        Ok(rules) => rules.predicate(first),
         Err(error) => {
             eprintln!("Smart Album {album_id} has unusable rules and shows no photos: {error}");
             ("0".into(), Vec::new())
@@ -53,13 +53,14 @@ fn smart_membership(
 }
 
 /// Smart Albums hold no `album_photos` rows; count what their rules match,
-/// narrowed by `browse` when browsing filters apply.
+/// narrowed by `browse` (`None`: whole-album counts).
 fn fill_smart_album_counts(
     connection: &Connection,
     albums: &mut [Album],
-    browse: &filters::Filters,
+    browse: Option<&BrowseScope>,
 ) -> Result<()> {
-    let (browse_sql, browse_args) = browse.predicate(1);
+    let mut browse_args = Vec::new();
+    let browse_sql = browse.map_or_else(|| "1".to_owned(), |scope| scope.narrowing(&mut browse_args));
     for album in albums.iter_mut() {
         let Some(json) = album.rules.as_deref() else {
             continue;
@@ -90,7 +91,7 @@ pub fn albums(connection: &Connection) -> Result<Vec<Album>> {
     let mut albums = statement
         .query_map([], album_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    fill_smart_album_counts(connection, &mut albums, &filters::Filters::default())?;
+    fill_smart_album_counts(connection, &mut albums, None)?;
     Ok(albums)
 }
 
@@ -145,10 +146,11 @@ pub fn manual_albums(connection: &Connection) -> Result<Vec<Album>> {
     Ok(albums)
 }
 
-/// Browsing counts share the photo predicate; administrative album APIs stay unfiltered.
-pub fn browse_albums(connection: &Connection) -> Result<Vec<Album>> {
-    let filters = filters::Filters::for_browsing(connection);
-    let (predicate, args) = filters.predicate(1);
+/// Album counts narrowed by `scope`'s metadata filters and rating
+/// (`BrowseScope::narrowing`); administrative album APIs stay unfiltered.
+pub fn browse_albums(connection: &Connection, scope: &BrowseScope) -> Result<Vec<Album>> {
+    let mut args = Vec::new();
+    let predicate = scope.narrowing(&mut args);
     let mut statement = connection.prepare(&format!(
         "SELECT {ALBUM_COLUMNS}
          FROM albums a LEFT JOIN album_photos ap ON ap.album_id=a.id
@@ -158,20 +160,25 @@ pub fn browse_albums(connection: &Connection) -> Result<Vec<Album>> {
     let mut albums = statement
         .query_map(rusqlite::params_from_iter(args), album_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    fill_smart_album_counts(connection, &mut albums, &filters)?;
+    fill_smart_album_counts(connection, &mut albums, Some(scope))?;
     Ok(albums)
 }
 
 /// Albums whose name contains `query` (case-insensitive), for the search
-/// suggestions. Counts use the browsing filters like `browse_albums`.
+/// suggestions. Counts are narrowed by `scope` like `browse_albums`.
 /// Exact names rank first, then prefix matches, then the rest by name.
-pub fn search_albums(connection: &Connection, query: &str, limit: usize) -> Result<Vec<Album>> {
+pub fn search_albums(
+    connection: &Connection,
+    scope: &BrowseScope,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<Album>> {
     let query = query.trim();
     if query.chars().count() < 2 || limit == 0 {
         return Ok(Vec::new());
     }
-    let filters = filters::Filters::for_browsing(connection);
-    let (predicate, args) = filters.predicate(3);
+    let mut values: Vec<rusqlite::types::Value> = vec![query.to_owned().into(), (limit as i64).into()];
+    let predicate = scope.narrowing(&mut values);
     let mut statement = connection.prepare(&format!(
         "SELECT {ALBUM_COLUMNS}
          FROM albums a LEFT JOIN album_photos ap ON ap.album_id=a.id
@@ -187,12 +194,10 @@ pub fn search_albums(connection: &Connection, query: &str, limit: usize) -> Resu
            a.name COLLATE NOCASE, a.id
          LIMIT ?2"
     ))?;
-    let mut values: Vec<rusqlite::types::Value> = vec![query.to_owned().into(), (limit as i64).into()];
-    values.extend(args);
     let mut albums = statement
         .query_map(rusqlite::params_from_iter(values), album_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    fill_smart_album_counts(connection, &mut albums, &filters)?;
+    fill_smart_album_counts(connection, &mut albums, Some(scope))?;
     Ok(albums)
 }
 
@@ -212,7 +217,7 @@ pub fn create_smart_album(
     fill_smart_album_counts(
         connection,
         std::slice::from_mut(&mut album),
-        &filters::Filters::default(),
+        None,
     )?;
     Ok(album)
 }

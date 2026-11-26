@@ -550,15 +550,16 @@ mod tests {
             )
             .unwrap();
 
-        let results = search_albums(&connection, "HOLIDAY", 10).unwrap();
+        let all = BrowseScope::default();
+        let results = search_albums(&connection, &all, "HOLIDAY", 10).unwrap();
         let ids = results.iter().map(|album| album.id).collect::<Vec<_>>();
         assert_eq!(ids, vec![3, 2, 1]);
         // Trashed photos are not counted.
         assert_eq!(results[1].photo_count, 2);
 
-        assert_eq!(search_albums(&connection, "holiday", 1).unwrap().len(), 1);
-        assert!(search_albums(&connection, "h", 10).unwrap().is_empty());
-        assert!(search_albums(&connection, "beach", 10).unwrap().is_empty());
+        assert_eq!(search_albums(&connection, &all, "holiday", 1).unwrap().len(), 1);
+        assert!(search_albums(&connection, &all, "h", 10).unwrap().is_empty());
+        assert!(search_albums(&connection, &all, "beach", 10).unwrap().is_empty());
     }
 
     #[test]
@@ -1663,9 +1664,9 @@ mod tests {
                 .unwrap();
             assert!(album_ids(&connection, album.id).is_empty(), "{rules}");
             assert_eq!(albums(&connection).unwrap()[0].photo_count, 0, "{rules}");
-            let scope = filters::Scope { album: Some(album.id), ..Default::default() };
+            let scope = BrowseScope { destination: Destination::Album(album.id), ..Default::default() };
             assert_eq!(
-                filters::count_matching(&connection, &scope, &filters::Filters::default()).unwrap(),
+                filters::count_matching(&connection, &scope).unwrap(),
                 0,
                 "{rules}"
             );
@@ -1675,21 +1676,51 @@ mod tests {
 
     #[test]
     fn captured_rules_keep_rating_and_drop_files_choices() {
-        let mut browsing = filters::Filters::default();
-        browsing.toggle(filters::Field::Favorite, "1".into(), true);
-        browsing.rating = "stars".into();
+        let mut browsing = BrowseScope::default();
+        browsing.filters.toggle(filters::Field::Favorite, "1".into(), true);
+        browsing.rating = RatingFilter::AllStars;
         let (rules, unsaved) = filters::AlbumRules::capture(&browsing);
         assert_eq!(unsaved, filters::Unsaved::default());
         let saved = filters::AlbumRules::parse(&rules.to_json().unwrap()).unwrap();
         assert_eq!(saved.rating, "stars");
         // An independent copy: later browsing changes do not reach it.
-        browsing.toggle(filters::Field::Favorite, "1".into(), false);
+        browsing.filters.toggle(filters::Field::Favorite, "1".into(), false);
+        browsing.rating = RatingFilter::Two;
         assert!(saved.categories.contains_key(&filters::Field::Favorite));
+        assert_eq!(saved.rating, "stars");
 
-        browsing.rating = "corrupt".into();
+        browsing.rating = RatingFilter::Corrupt;
         let (rules, unsaved) = filters::AlbumRules::capture(&browsing);
         assert_eq!(unsaved.files, Some("Corrupt photos"));
         assert!(rules.rating.is_empty());
+
+        // In a sidebar rating destination the saved rule is the rating shown.
+        browsing.rating = RatingFilter::Unrated;
+        browsing.destination = Destination::Rating(4);
+        assert_eq!(filters::AlbumRules::capture(&browsing).0.rating, "4");
+    }
+
+    #[test]
+    fn saved_smart_album_rating_spellings_still_match() {
+        // Rules saved before the typed rating: every accepted spelling keeps
+        // its membership, and the stored JSON is not rewritten.
+        let connection = smart_album_catalog();
+        for (saved, expected) in [
+            ("0", vec![3]),
+            ("unrated", vec![3]),
+            ("stars", vec![1, 2]),
+            ("3", vec![2]),
+            ("5", vec![1]),
+        ] {
+            let album = create_smart_album(&connection, saved, &rated(saved)).unwrap();
+            assert_eq!(album_ids(&connection, album.id), expected, "rule {saved}");
+            assert_eq!(album_rules(&connection, album.id).unwrap(), Some(rated(saved)));
+            let json: String = connection
+                .query_row("SELECT rules FROM albums WHERE id=?1", [album.id], |row| row.get(0))
+                .unwrap();
+            assert!(json.contains(&format!("\"rating\":\"{saved}\"")), "{json}");
+            delete_album(&connection, album.id).unwrap();
+        }
     }
 
     #[test]
@@ -1740,30 +1771,26 @@ mod tests {
         let mut browsing = filters::Filters::default();
         browsing.toggle(filters::Field::SourceFolder, "/b".into(), true);
         browsing.save(&connection).unwrap();
+        let scope = BrowseScope::load(&connection, Destination::Album(album.id), "");
         assert_eq!(
-            browse_photos_in_album(&connection, album.id, None)
+            browse_photos(&connection, &scope)
                 .unwrap()
                 .iter()
                 .map(|photo| photo.id)
                 .collect::<Vec<_>>(),
             vec![3]
         );
-        assert_eq!(browse_albums(&connection).unwrap()[0].photo_count, 1);
+        let home = BrowseScope::load(&connection, Destination::Albums, "");
+        assert_eq!(browse_albums(&connection, &home).unwrap()[0].photo_count, 1);
         assert_eq!(albums(&connection).unwrap()[0].photo_count, 2);
-        let scope = filters::Scope { album: Some(album.id), ..Default::default() };
-        let facets = filters::facets(
-            &connection,
-            &scope,
-            &filters::Filters::default(),
-            filters::Field::SourceFolder,
-        )
-        .unwrap();
+        // The facet lists ignore their own field's selection, so both folders show.
+        let facets = filters::facets(&connection, &scope, filters::Field::SourceFolder).unwrap();
         assert_eq!(
             facets.iter().map(|f| (f.value.as_str(), f.count)).collect::<Vec<_>>(),
             [("/a", 1), ("/b", 1)]
         );
         // Album names remain searchable in the Albums interface.
-        assert_eq!(search_albums(&connection, "favour", 8).unwrap()[0].id, album.id);
+        assert_eq!(search_albums(&connection, &home, "favour", 8).unwrap()[0].id, album.id);
     }
 
     #[test]

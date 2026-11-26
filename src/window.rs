@@ -67,7 +67,7 @@ const THEME_SETTING_KEY: &str = "appearance-theme";
 pub(crate) const EDIT_PANEL_CSS: &str = crate::css::BASE;
 const SORT_FIELD_SETTING_KEY: &str = "photo-sort-field";
 const SORT_DIRECTION_SETTING_KEY: &str = "photo-sort-direction";
-const RATING_FILTER_SETTING_KEY: &str = "photo-rating-filter";
+const RATING_FILTER_SETTING_KEY: &str = crate::db::browse_scope::RATING_SETTING;
 const GROUP_MODE_SETTING_KEY: &str = "photo-group-mode";
 const GRID_THUMBNAIL_SIZE_SETTING_KEY: &str = "grid-thumbnail-size";
 const SIDEBAR_MIN_WIDTH: f64 = 200.0;
@@ -147,86 +147,8 @@ struct PhotoSort {
     direction: SortDirection,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RatingFilter {
-    All,
-    AllStars,
-    Unrated,
-    One,
-    Two,
-    Three,
-    Four,
-    Five,
-    Corrupt,
-    Offline,
-    Online,
-}
-
-impl RatingFilter {
-    fn key(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::AllStars => "stars",
-            Self::Unrated => "unrated",
-            Self::One => "1",
-            Self::Two => "2",
-            Self::Three => "3",
-            Self::Four => "4",
-            Self::Five => "5",
-            Self::Corrupt => "corrupt",
-            Self::Offline => "offline",
-            Self::Online => "online",
-        }
-    }
-
-    fn from_key(key: &str) -> Self {
-        match key {
-            "stars" => Self::AllStars,
-            "unrated" | "0" => Self::Unrated,
-            "1" => Self::One,
-            "2" => Self::Two,
-            "3" => Self::Three,
-            "4" => Self::Four,
-            "5" => Self::Five,
-            "corrupt" => Self::Corrupt,
-            "offline" => Self::Offline,
-            "online" => Self::Online,
-            _ => Self::All,
-        }
-    }
-
-    fn rating(self) -> Option<i32> {
-        match self {
-            Self::All => None,
-            Self::AllStars => None,
-            Self::Unrated => Some(0),
-            Self::One => Some(1),
-            Self::Two => Some(2),
-            Self::Three => Some(3),
-            Self::Four => Some(4),
-            Self::Five => Some(5),
-            Self::Corrupt => None,
-            Self::Offline => None,
-            Self::Online => None,
-        }
-    }
-
-    fn tooltip(self) -> &'static str {
-        match self {
-            Self::All => "Filter by rating (clear)",
-            Self::AllStars => "Rating filter: All Stars",
-            Self::Unrated => "Rating filter: Unrated",
-            Self::One => "Rating filter: 1 star",
-            Self::Two => "Rating filter: 2 stars",
-            Self::Three => "Rating filter: 3 stars",
-            Self::Four => "Rating filter: 4 stars",
-            Self::Five => "Rating filter: 5 stars",
-            Self::Corrupt => "Filter: Corrupt photos",
-            Self::Offline => "Filter: Offline photos",
-            Self::Online => "Filter: Online photos",
-        }
-    }
-}
+/// The toolbar rating choice; it belongs to the browse scope (`db::browse_scope`).
+use crate::db::RatingFilter;
 
 fn group_mode_key(mode: grid::GroupMode) -> &'static str {
     match mode {

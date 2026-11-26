@@ -339,5 +339,7 @@ include!("db/tests.rs");
 include!("db/path_migration.rs");
 include!("db/network_import.rs");
 
+pub mod browse_scope;
+pub use browse_scope::{BrowseScope, BrowseSnapshot, Destination, RatingFilter};
 pub mod filters;
 pub mod metadata;

@@ -761,39 +761,34 @@ pub fn photos_limited(
     search: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Photo>> {
-    photos_limited_filtered(
-        connection,
-        folder_id,
-        favorites_only,
-        search,
-        limit,
-        &filters::Filters::default(),
-    )
+    photos_limited_filtered(connection, folder_id, favorites_only, search, limit)
 }
 
-pub fn browse_photos(
-    connection: &Connection,
-    folder_id: Option<i64>,
-    favorites_only: bool,
-    search: Option<&str>,
-) -> Result<Vec<Photo>> {
-    browse_photos_limited(connection, folder_id, favorites_only, search, -1)
+/// The photos `scope` browses: its destination, search, effective rating and
+/// metadata filters, newest first (History: most recently edited first).
+/// Files choices (Online, Offline, Corrupt) are not SQL; callers check them
+/// on the result (`BrowseScope::files_check`).
+pub fn browse_photos(connection: &Connection, scope: &BrowseScope) -> Result<Vec<Photo>> {
+    browse_photos_limited(connection, scope, -1)
 }
 pub fn browse_photos_limited(
     connection: &Connection,
-    folder_id: Option<i64>,
-    favorites_only: bool,
-    search: Option<&str>,
+    scope: &BrowseScope,
     limit: i64,
 ) -> Result<Vec<Photo>> {
-    photos_limited_filtered(
-        connection,
-        folder_id,
-        favorites_only,
-        search,
-        limit,
-        &filters::Filters::for_browsing(connection),
-    )
+    if scope.destination == Destination::History {
+        return history_photos_in_scope(connection, limit, scope);
+    }
+    let mut values: Vec<rusqlite::types::Value> = vec![limit.into()];
+    let membership = scope.predicate(connection, &mut values)?;
+    let mut statement = connection.prepare(&format!(
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
+         FROM photos p LEFT JOIN folders f ON f.id = p.folder_id
+         WHERE p.trashed = 0 AND {membership}
+         ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE LIMIT ?1",
+    ))?;
+    let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 /// `LIKE` pattern for a free-text photo search. Backslash is the escape
 /// character, so the user's own backslash, `%` and `_` match literally.
@@ -905,15 +900,15 @@ fn search_date_pattern(query: &str) -> Option<String> {
     }
 }
 
-pub fn photos_limited_filtered(
+/// Unfiltered photos for administrative and bulk work (screensaver, scans,
+/// Scrapbook pickers): no browse scope applies.
+fn photos_limited_filtered(
     connection: &Connection,
     folder_id: Option<i64>,
     favorites_only: bool,
     search: Option<&str>,
     limit: i64,
-    filters: &filters::Filters,
 ) -> Result<Vec<Photo>> {
-    let (predicate, args) = filters.predicate(6);
     let date = search.and_then(search_date_pattern);
     let search = search.map(search_like_pattern);
     let text = search_text_predicate(3, 5);
@@ -927,17 +922,15 @@ pub fn photos_limited_filtered(
                 SELECT child.id FROM folders child JOIN descendants ON child.parent_id = descendants.id
               ) SELECT id FROM descendants))
            AND (?2 = 0 OR p.favorite = 1) AND {text}
-           AND ({predicate})
          ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE LIMIT ?4",
     ))?;
-    let mut values: Vec<rusqlite::types::Value> = vec![
+    let values: Vec<rusqlite::types::Value> = vec![
         folder_id.into(),
         (favorites_only as i64).into(),
         search.into(),
         limit.into(),
         date.into(),
     ];
-    values.extend(args);
     let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
@@ -965,32 +958,14 @@ pub fn photos_in_album(
     album_id: i64,
     search: Option<&str>,
 ) -> Result<Vec<Photo>> {
-    photos_in_album_filtered(connection,album_id,search,&filters::Filters::default())
-}
-pub fn browse_photos_in_album(connection:&Connection,album_id:i64,search:Option<&str>)->Result<Vec<Photo>> {
-    photos_in_album_filtered(connection,album_id,search,&filters::Filters::for_browsing(connection))
-}
-pub fn photos_in_album_filtered(connection:&Connection,album_id:i64,search:Option<&str>,filters:&filters::Filters)->Result<Vec<Photo>> {
-    let (predicate,mut args)=filters.predicate(3);
-    let (membership, mut member_args) = album_membership(connection, album_id, 3 + args.len())?;
-    let date = search.and_then(search_date_pattern);
-    let search = search.map(search_like_pattern);
-    let text = search_text_predicate(1, 2);
-    let mut statement = connection.prepare(&format!(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
-         FROM photos p
-         LEFT JOIN folders f ON f.id = p.folder_id
-         WHERE p.trashed = 0
-           AND ({membership})
-           AND {text}
-           AND ({predicate})
-         ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE",
-    ))?;
-    let mut values:Vec<rusqlite::types::Value>=vec![search.into(),date.into()];
-    values.append(&mut args);
-    values.append(&mut member_args);
-    let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    browse_photos(
+        connection,
+        &BrowseScope {
+            destination: Destination::Album(album_id),
+            search: search.unwrap_or_default().to_owned(),
+            ..BrowseScope::default()
+        },
+    )
 }
 
 #[cfg(test)]

@@ -98,7 +98,7 @@
 | `photo_marks.rs` | 581 | **Photo mark plan**: pure (no GTK). `plan(MarkRequest) -> Option<MarkPlan>`: which photos a `MarkIntent` changes per `MarkFront` (gallery selection with anchor fallback, lightbox photo only, collage ticks), the new value (favourite: remove only when all are; stars clear a shared rating; digits set) and the `Membership` effect (keep, remove from Favourites, rebuild for rating views and metadata Favourite/Rating filters). Table tests inline. | `window/photo_mark_commands.rs` |
 | `photo_mark_commands.rs` | 356 | **Photo mark commands**: the GTK adapter and only writer of favourites and ratings (`run`, `preview` for the menu label, `reload_shown_photo` after a folder favourite). Writes once (`db::set_favorite_for_photos` / `set_rating_for_photos`), then refreshes gallery objects, lightbox, InfoBar, the Properties panel on screen and sidebar counts (`show_changed_photo` and `update_counts` are shared with rotation and trash); a failed write changes nothing and shows an `OperationProgressUi` notice. Trace: `UI TRACE photo_mark` under `PICASA_TRACE`. | called from `window/build.rs` (heart, stars, digit keys), `window/photo_actions.rs` (menu), `window/layout.rs` (folder favourite) |
 | `metadata_panel.rs` | 2226 | Right-side metadata/facet explorer panel; queries run off-thread. | `db/filters.rs` |
-| `library.rs` | 1563 | Folder navigation, grid refresh, viewport anchoring per `SidebarFilter`. `collection_photos` is the per-destination photo query (grid refresh and `startup_photos`, the startup list); `toolbar_rating_applies` decides where the toolbar rating counts (not on Ratings / Rating(n)); `scan_may_append_new_photos` gates the scan's progressive appends. | `sidebar`, `grid`, `db` |
+| `library.rs` | 1563 | Folder navigation, grid refresh, viewport anchoring per `SidebarFilter`. `browse_destination` / `browse_scope` map a sidebar destination and search onto the **browse scope** (`albums_home_scope` for the Albums home); `collection_photos` is the per-destination photo query (grid refresh and `startup_photos`, the startup list); `apply_files_check` applies Online/Offline/Corrupt; `toolbar_rating_applies` decides where the toolbar rating counts (not on Ratings / Rating(n)); `scan_may_append_new_photos` gates the scan's progressive appends. | `sidebar`, `grid`, `db` |
 | `print.rs` | 1308 | Print dialog + page layout (size presets, extras, oriented paper). | `edit::render` |
 | `navigation.rs` | 972 | Navigation helpers: wheel glide, sidebar crossfade, destination planning, search focus. | `sidebar`, `grid` |
 | `immersive.rs` | 816 | Immersive (chrome-hidden) mode; **`include!`d inside `build.rs`** after the live widgets exist. Presentation-only: chrome edges are `gtk::Revealer` overlays over the gallery, so revealing never reflows Honeycomb/Photo Wall cells. State cells (`immersive_active`, `immersive_sidebar_shown`, toggle/reveal slots) live in `build.rs`. | `window/build.rs` |
@@ -216,7 +216,8 @@
 | File | Lines | What it does |
 |---|---|---|
 | `photos.rs` | 979 | Photo/folder inserts, search, raw+JPEG pairing. |
-| `filters.rs` | 840 | Metadata filter model: `Field`, `Selection`, `Filters`, `Scope`, facets, counts. |
+| `filters.rs` | 854 | Metadata filter model: `Field`, `Selection`, `Filters` (metadata only), Smart Album `AlbumRules` (own saved rating, `predicate`), `facets` and `count_matching` over a `BrowseScope`. |
+| `browse_scope.rs` | 484 | **Browse scope** (candidate 14): `BrowseScope` (destination, search, toolbar rating, metadata filters; `load`, `effective_rating`, `is_narrowed`, `files_check`, `narrowing`, `predicate`), `Destination`, the typed `RatingFilter`, `BrowseSnapshot` for stale async results. The only reader of the session rating setting. |
 | `libraries.rs` | 738 | Multi-library registry, create/open/backup (`automatic_backup_if_due`). |
 | `tests.rs` | 1423 | DB test helpers + tests. |
 | `network_import.rs` | 506 | Network import job state (resumable, pause, catalog). |
@@ -357,6 +358,7 @@ After a Folder scroll settles, a 16 ms timer prefetches ahead, capped by `Galler
 | Screensaver | `src/screensaver/style.rs` (`Style::spec`, `Stage`), `src/screensaver.rs` | `screensaver/gpu.rs` + `gpu/{pile,flying,cinema,coverflow}.rs` |
 | Print | `src/window/print.rs` | renders via `edit::render` |
 | Metadata/facet search | `src/db/filters.rs` (`Field`, `Filters`) | `window/metadata_panel.rs`, `window/search.rs` |
+| What a view browses (rating rule, narrowed check, browse queries) | `src/db/browse_scope.rs` (`BrowseScope`) | sidebar mapping `browse_scope`/`browse_destination` in `window/library.rs`; queries `db::browse_photos`, `browse_albums`, `search_albums`, `filters::facets`, `count_matching`; Files check `apply_files_check` |
 | Onboarding | `src/onboarding.rs` (state) | `onboarding/view.rs`, `onboarding/tour.rs`, `window/onboarding.rs` |
 | Home dashboard | `src/library_home.rs` (`LibraryHome`) | `library_home/scrapbook.rs`; data `db/library_home.rs` |
 | Network shares | `src/network_shares.rs` | `smb_transport.rs`, `private_smb.rs`, `private_nfs.rs`, `native/*.c`, `network_picker.rs` |

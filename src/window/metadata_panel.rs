@@ -1,6 +1,7 @@
 //! Native, theme-inheriting metadata controls. All facet queries run off-thread.
 use super::*;
-use db::filters::{Facet, Field, Filters, Scope};
+use db::filters::{Facet, Field, Filters};
+use db::{BrowseScope, Destination};
 use std::sync::{
     atomic::{AtomicBool, Ordering as AtomicOrdering},
     Arc,
@@ -171,7 +172,7 @@ pub(super) struct MetadataPanel {
     workspace_visible: Cell<bool>,
     navigation_view: RefCell<Option<(String, sidebar::SidebarFilter)>>,
     connection: Rc<RefCell<Connection>>,
-    scope: Rc<dyn Fn() -> Scope>,
+    scope: Rc<dyn Fn() -> BrowseScope>,
     changed: Rc<dyn Fn()>,
     rating: Rc<dyn Fn(&str)>,
     state: RefCell<Filters>,
@@ -202,7 +203,7 @@ pub(super) struct MetadataPanel {
 impl MetadataPanel {
     pub fn new(
         connection: Rc<RefCell<Connection>>,
-        scope: Rc<dyn Fn() -> Scope>,
+        scope: Rc<dyn Fn() -> BrowseScope>,
         changed: Rc<dyn Fn()>,
         rating: Rc<dyn Fn(&str)>,
     ) -> Rc<Self> {
@@ -619,13 +620,15 @@ impl MetadataPanel {
             }
         });
         let weak = Rc::downgrade(&panel);
-        let mut previous = Scope::default();
+        // The browse scope apart from the saved filters (this panel writes
+        // those itself); `None` before the first poll.
+        let mut previous: Option<BrowseScope> = None;
         glib::timeout_add_local(Duration::from_millis(300), move || {
             let Some(panel) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
             let path = db::connection_path(&panel.connection.borrow()).ok();
-            let scope = (panel.scope)();
+            let scope = (panel.scope)().with_filters(Filters::default());
             if path != *panel.database.borrow() {
                 panel.cancel_index();
                 panel.database.replace(path);
@@ -647,14 +650,15 @@ impl MetadataPanel {
                 panel.revision.set(panel.revision.get() + 1);
                 panel.sync();
             }
-            if scope != previous {
+            if previous.as_ref() != Some(&scope) {
                 // The original toolbar's rating control and this panel share state.
                 // Refresh Bookshelf counts as well as the photo grid for either entry point.
-                if scope.bookshelf && scope.rating != previous.rating && !previous.rating.is_empty()
+                if scope.destination == Destination::Albums
+                    && previous.as_ref().is_some_and(|previous| previous.rating != scope.rating)
                 {
                     (panel.changed)();
                 }
-                previous = scope;
+                previous = Some(scope);
                 panel.revision.set(panel.revision.get() + 1);
                 panel.sync();
             }
@@ -1064,14 +1068,14 @@ impl MetadataPanel {
             self.chips.remove(&child);
         }
         let state = self.state.borrow().clone();
-        let rating = (self.scope)().rating;
-        let active = state.categories.len() + usize::from(!matches!(rating.as_str(), "" | "all"));
+        let rating = (self.scope)().toolbar_rating();
+        let active = state.categories.len() + usize::from(rating != RatingFilter::All);
         self.save_smart_album.set_sensitive(active > 0);
         for (field, button) in self.filter_buttons.borrow().iter() {
             let selected = if *field == Field::Rating {
-                matches!(rating.as_str(), "stars" | "unrated" | "1" | "2" | "3" | "4" | "5")
+                rating != RatingFilter::All && !rating.is_files_choice()
             } else if *field == Field::Files {
-                matches!(rating.as_str(), "online" | "offline" | "corrupt")
+                rating.is_files_choice()
             } else {
                 state.categories.contains_key(field)
             };
@@ -1138,13 +1142,9 @@ impl MetadataPanel {
                 self.chips.append(&chip);
             }
         }
-        if !matches!(rating.as_str(), "" | "all") {
-            let category = if matches!(rating.as_str(), "online" | "offline" | "corrupt") {
-                "Files"
-            } else {
-                "Rating"
-            };
-            let chip = gtk::Button::with_label(&format!("{category}: {rating} ×"));
+        if rating != RatingFilter::All {
+            let category = if rating.is_files_choice() { "Files" } else { "Rating" };
+            let chip = gtk::Button::with_label(&format!("{category}: {} ×", rating.key()));
             chip.add_css_class("metadata-active-chip");
             let weak = Rc::downgrade(self);
             chip.connect_clicked(move |_| {
@@ -1170,15 +1170,14 @@ impl MetadataPanel {
             self.photo_count.set_text("— photos");
             return;
         };
-        let mut filters = self.state.borrow().clone();
         let scope = (self.scope)();
-        filters.rating = scope.rating.clone();
-        let scope_for_query = scope.clone();
+        // The panel's own filters, under what the grid browses.
+        let scope_for_query = scope.with_filters(self.state.borrow().clone());
         let expected_path = path.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let result = db::open_existing(&path).and_then(|connection| {
-                db::filters::count_matching(&connection, &scope_for_query, &filters)
+                db::filters::count_matching(&connection, &scope_for_query)
             });
             let _ = sender.send(result);
         });
@@ -1310,7 +1309,7 @@ impl MetadataPanel {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
-            let current = (self.scope)().rating;
+            let current = (self.scope)().toolbar_rating().key();
             for (label, key) in [("Online", "online"), ("Offline", "offline"), ("Corrupt photos", "corrupt")] {
                 let check = gtk::CheckButton::with_label(label);
                 check.set_active(current == key);
@@ -1344,8 +1343,8 @@ impl MetadataPanel {
         let Some(path) = db::connection_path(&self.connection.borrow()).ok() else {
             return;
         };
-        let filters = self.state.borrow().clone();
         let scope = (self.scope)();
+        let query_scope = scope.with_filters(self.state.borrow().clone());
         let revision = self.revision.get();
         self.request.set(self.request.get().wrapping_add(1));
         let request = format!("metadata-request-{}", self.request.get());
@@ -1356,7 +1355,7 @@ impl MetadataPanel {
         std::thread::spawn(move || {
             let start = Instant::now();
             let result = db::open_existing(&path)
-                .and_then(|c| db::filters::facets(&c, &scope, &filters, field));
+                .and_then(|c| db::filters::facets(&c, &query_scope, field));
             if std::env::var_os("PIC_METADATA_TRACE").is_some() {
                 eprintln!(
                     "PIC_METADATA stage=facets field={field:?} elapsed_ms={}",
@@ -1470,12 +1469,11 @@ impl MetadataPanel {
     }
     fn selected_values(&self, field: Field) -> Vec<String> {
         if field == Field::Rating {
-            let rating = (self.scope)().rating;
-            return match rating.as_str() {
-                "unrated" | "0" => vec!["0".into()],
-                "1" | "2" | "3" | "4" | "5" => vec![rating],
-                _ => Vec::new(),
-            };
+            return (self.scope)()
+                .toolbar_rating()
+                .rating()
+                .map(|stars| vec![stars.to_string()])
+                .unwrap_or_default();
         }
         self.state
             .borrow()
@@ -1743,7 +1741,7 @@ mod tests {
         c.execute_batch(db::SCHEMA).unwrap();
         let panel = MetadataPanel::new(
             Rc::new(RefCell::new(c)),
-            Rc::new(Scope::default),
+            Rc::new(BrowseScope::default),
             Rc::new(|| {}),
             Rc::new(|_| {}),
         );
@@ -1802,7 +1800,10 @@ mod tests {
         let scope_rating = rating.clone();
         let panel = MetadataPanel::new(
             c.clone(),
-            Rc::new(move || Scope { rating: scope_rating.borrow().clone(), ..Scope::default() }),
+            Rc::new(move || BrowseScope {
+                rating: db::RatingFilter::from_key(&scope_rating.borrow()),
+                ..BrowseScope::default()
+            }),
             Rc::new(|| {}),
             Rc::new(|_| {}),
         );
@@ -1832,7 +1833,7 @@ mod tests {
         assert_eq!(activations.get(), 1);
 
         // What the action saves: the browsing filters including the rating.
-        let browsing = Filters::for_browsing(&c.borrow());
+        let browsing = BrowseScope::load(&c.borrow(), Destination::AllPhotos, "");
         let (rules, unsaved) = db::filters::AlbumRules::capture(&browsing);
         assert_eq!(unsaved, db::filters::Unsaved::default());
         let album = db::create_smart_album(&c.borrow(), "Loved", &rules).unwrap();
@@ -1859,7 +1860,7 @@ mod tests {
         let calls = changes.clone();
         let panel = MetadataPanel::new(
             c.clone(),
-            Rc::new(Scope::default),
+            Rc::new(BrowseScope::default),
             Rc::new(move || calls.set(calls.get() + 1)),
             Rc::new(|_| {}),
         );
@@ -2002,9 +2003,9 @@ mod app_tests {
         let callback_rating = selected_rating.clone();
         let panel = MetadataPanel::new(
             Rc::new(RefCell::new(connection)),
-            Rc::new(move || Scope {
-                rating: scope_rating.borrow().clone(),
-                ..Scope::default()
+            Rc::new(move || BrowseScope {
+                rating: db::RatingFilter::from_key(&scope_rating.borrow()),
+                ..BrowseScope::default()
             }),
             Rc::new(|| {}),
             Rc::new(move |key| *callback_rating.borrow_mut() = key.to_owned()),
@@ -2222,7 +2223,10 @@ mod app_tests {
         choice.set_active(true);
         popup.popdown();
         let query = db::open_existing(&dir.join("library.db")).unwrap();
-        wait_until(|| db::browse_photos(&query, None, false, None).unwrap().len() == 2);
+        let browsed = |destination| {
+            db::browse_photos(&query, &BrowseScope::load(&query, destination, "")).unwrap().len()
+        };
+        wait_until(|| browsed(Destination::AllPhotos) == 2);
         filter.set_active(false);
         filter.set_active(true);
         assert!(!Filters::load(&query).is_empty());
@@ -2246,14 +2250,10 @@ mod app_tests {
             .unwrap()
             .set_active(true);
         popup.popdown();
-        wait_until(|| db::browse_photos(&query, None, false, None).unwrap().len() == 1);
-        assert_eq!(
-            db::browse_photos_in_album(&query, album.id, None)
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(db::browse_albums(&query).unwrap()[0].photo_count, 1);
+        wait_until(|| browsed(Destination::AllPhotos) == 1);
+        assert_eq!(browsed(Destination::Album(album.id)), 1);
+        let home = BrowseScope::load(&query, Destination::Albums, "");
+        assert_eq!(db::browse_albums(&query, &home).unwrap()[0].photo_count, 1);
         let gallery = Rc::new(crate::grid::Gallery::new(
             &[],
             640,
@@ -2301,7 +2301,7 @@ mod app_tests {
             .find(|b| b.has_css_class("metadata-filter-clear"))
             .unwrap();
         clear.emit_clicked();
-        wait_until(|| db::browse_photos(&query, None, false, None).unwrap().len() == 3);
+        wait_until(|| browsed(Destination::AllPhotos) == 3);
         // Wait for the asynchronous gallery to settle before destroying its surface.
         let start = Instant::now();
         wait_until(|| start.elapsed() > Duration::from_millis(500));

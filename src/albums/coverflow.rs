@@ -85,7 +85,11 @@ fn album_flow_node(state: &AlbumFlowState, album: &Album) -> gsk::RenderNode {
     let full = graphene::Rect::new(0.0, 0.0, 300.0, 300.0);
     let photo = {
         let connection = state.connection.borrow();
-        let photos = db::browse_photos_in_album(&connection, album.id, None).unwrap_or_default();
+        let photos = db::browse_photos(
+            &connection,
+            &db::BrowseScope::load(&connection, db::Destination::Album(album.id), ""),
+        )
+        .unwrap_or_default();
         album_cover_photo(&connection, album, &photos)
     };
     let mut has_cover = false;

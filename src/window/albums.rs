@@ -26,7 +26,11 @@ fn refresh_album_ui(context: &PhotoActionContext) {
     configure_infobar_album_menu(&context.info.add_to_album, context.clone());
     // The sidebar shows whole albums; the Albums home follows the active
     // browsing filters, like every other path that refreshes it.
-    let home = db::browse_albums(&context.connection.borrow()).unwrap_or_default();
+    let home = db::browse_albums(
+        &context.connection.borrow(),
+        &albums_home_scope(&context.connection.borrow()),
+    )
+    .unwrap_or_default();
     (context.refresh_albums_home)(&home);
 }
 
@@ -69,7 +73,11 @@ fn recount_smart_albums(context: &PhotoActionContext) {
     // The sidebar gets whole-album counts; the Albums home, when shown, gets
     // counts narrowed by the browsing filters as they were when the recount
     // started, and drops them if the filters have changed since.
-    let filters = db::filters::Filters::for_browsing(&context.connection.borrow());
+    let snapshot = db::BrowseSnapshot::new(
+        &context.connection.borrow(),
+        albums_home_scope(&context.connection.borrow()),
+    );
+    let home_scope = snapshot.scope.clone();
     let wants_home = context.filter.get() == sidebar::SidebarFilter::Albums;
     let apply = {
         let context = context.clone();
@@ -77,16 +85,17 @@ fn recount_smart_albums(context: &PhotoActionContext) {
             if let Some(sidebar) = context.sidebar.borrow().as_ref() {
                 sidebar::refresh_album_rows(sidebar, &albums, &context.delete_album);
             }
-            let current = db::filters::Filters::for_browsing(&context.connection.borrow());
+            let current = albums_home_scope(&context.connection.borrow());
             if let Some(home) = home.filter(|_| {
-                context.filter.get() == sidebar::SidebarFilter::Albums && current == filters
+                context.filter.get() == sidebar::SidebarFilter::Albums
+                    && snapshot.is_current(&context.connection.borrow(), &current)
             }) {
                 (context.refresh_albums_home)(&home);
             }
         }
     };
     let count = move |connection: &rusqlite::Connection| -> anyhow::Result<(Vec<db::Album>, Option<Vec<db::Album>>)> {
-        let home = if wants_home { Some(db::browse_albums(connection)?) } else { None };
+        let home = if wants_home { Some(db::browse_albums(connection, &home_scope)?) } else { None };
         Ok((db::albums(connection)?, home))
     };
     let Ok(path) = db::connection_path(&context.connection.borrow()) else {
@@ -403,7 +412,11 @@ fn show_new_smart_album_rules(
 /// review. Online, Offline and Corrupt are not stored metadata; when one is
 /// active the dialog says it was left out.
 fn show_save_filters_as_smart_album(parent: &gtk::Widget, context: PhotoActionContext) {
-    let browsing = db::filters::Filters::for_browsing(&context.connection.borrow());
+    let browsing = browse_scope(
+        &context.connection.borrow(),
+        context.filter.get(),
+        &context.search.borrow(),
+    );
     let (rules, unsaved) = db::filters::AlbumRules::capture(&browsing);
     let notice = unsaved.files.map(|files| {
         format!("The “{files}” filter cannot be saved in a Smart Album and was left out.")

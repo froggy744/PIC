@@ -193,12 +193,6 @@ fn refresh_grid_inner(
             gallery.can_restore_folder_cache()
         );
     }
-    let rating_filter = RatingFilter::from_key(
-        &db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
-            .ok()
-            .flatten()
-            .unwrap_or_default(),
-    );
     if filter == sidebar::SidebarFilter::Albums
         || (filter == sidebar::SidebarFilter::Library && search.is_empty())
     {
@@ -226,6 +220,9 @@ fn refresh_grid_inner(
 
     let generation = REFRESH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     PENDING_REFRESH_GENERATION.store(generation, std::sync::atomic::Ordering::Relaxed);
+    // An immutable snapshot for the worker; a later refresh (any scope or
+    // library change) bumps the generation and this result is dropped.
+    let scope = browse_scope(&connection.borrow(), filter, search);
     let search = search.to_owned();
     let (sender, receiver) = std::sync::mpsc::channel();
     let database = db::connection_path(&connection.borrow()).ok();
@@ -247,7 +244,7 @@ fn refresh_grid_inner(
 
         let folder_stream = search.is_empty()
             && matches!(filter, sidebar::SidebarFilter::Folder(_));
-        let Some(mut photos) = collection_photos(&connection, filter, &search) else {
+        let Some(mut photos) = collection_photos(&connection, filter, &scope) else {
             return;
         };
 
@@ -257,7 +254,7 @@ fn refresh_grid_inner(
         if search.is_empty() {
             limit_recently_added(&connection, filter, &mut photos);
         }
-        apply_collection_rating_filter(&mut photos, filter, rating_filter);
+        apply_files_check(&mut photos, &scope);
         if folder_stream {
             let folders = db::folders(&connection).unwrap_or_default();
             let display_mode = sidebar::FolderDisplayMode::from_setting(
@@ -576,52 +573,61 @@ fn scroll_gallery_to_folder_when_ready(
     });
 }
 
-/// The photos the database returns for a sidebar destination (or a search),
-/// before format, RAW+JPEG, Recently Added and collection rating filtering.
-/// `None` for destinations that show no photo grid (Albums, Library).
-fn collection_photos(
+/// The browse scope's destination for a sidebar destination and search:
+/// - an active search is a library-wide view, whatever was selected before
+///   typing began;
+/// - Folder mode is one continuous stream of every folder (the selected
+///   folder is a scroll destination, not a query boundary), so it and
+///   Recently Added (limited later) browse all photos, as do Library and All;
+/// - Ratings and Rating(n) carry their own rating, which replaces the
+///   toolbar's (`BrowseScope::effective_rating`).
+fn browse_destination(filter: sidebar::SidebarFilter, search: &str) -> db::Destination {
+    use sidebar::SidebarFilter as F;
+    if !search.is_empty() {
+        return db::Destination::AllPhotos;
+    }
+    match filter {
+        F::Library | F::All | F::RecentlyAdded | F::Folder(_) => db::Destination::AllPhotos,
+        F::Favorites => db::Destination::Favorites,
+        F::Ratings => db::Destination::Ratings,
+        F::Rating(stars) => db::Destination::Rating(stars),
+        F::History => db::Destination::History,
+        F::Albums => db::Destination::Albums,
+        F::Album(album_id) => db::Destination::Album(album_id),
+    }
+}
+
+/// What the window browses now: `filter` and `search` under the saved
+/// metadata filters and the session's toolbar rating. Take it on the GTK
+/// thread and hand the value to workers.
+fn browse_scope(
     connection: &Connection,
     filter: sidebar::SidebarFilter,
     search: &str,
+) -> db::BrowseScope {
+    db::BrowseScope::load(connection, browse_destination(filter, search), search)
+}
+
+/// The Albums home's scope: album counts narrowed by the metadata filters
+/// and the toolbar rating (`db::browse_albums`).
+fn albums_home_scope(connection: &Connection) -> db::BrowseScope {
+    browse_scope(connection, sidebar::SidebarFilter::Albums, "")
+}
+
+/// The photos the database returns for `scope` (taken for `filter`), before
+/// format, RAW+JPEG, Recently Added and Files filtering. `None` for
+/// destinations that show no photo grid (Albums, Library).
+fn collection_photos(
+    connection: &Connection,
+    filter: sidebar::SidebarFilter,
+    scope: &db::BrowseScope,
 ) -> Option<Vec<db::Photo>> {
-    let photos = if !search.is_empty() {
-        // An active search is a library-wide view, regardless of the
-        // destination that was selected before typing began.
-        db::browse_photos(connection, None, false, Some(search)).unwrap_or_default()
-    } else if filter == sidebar::SidebarFilter::History {
-        db::browse_history_photos(connection).unwrap_or_default()
-    } else if let sidebar::SidebarFilter::Album(album_id) = filter {
-        db::browse_photos_in_album(connection, album_id, None).unwrap_or_default()
-    } else if !toolbar_rating_applies(filter) {
-        // The sidebar rating destinations choose their own ratings
-        // (`apply_collection_rating_filter`), so the toolbar rating must not
-        // narrow the query first; the metadata filters still apply.
-        db::photos_limited_filtered(
-            connection,
-            None,
-            false,
-            None,
-            -1,
-            &db::filters::Filters::load(connection),
-        )
-        .unwrap_or_default()
-    } else {
-        let (folder_id, favorites) = match filter {
-            sidebar::SidebarFilter::All | sidebar::SidebarFilter::RecentlyAdded => (None, false),
-            sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_) => unreachable!(),
-            sidebar::SidebarFilter::Favorites => (None, true),
-            // Picasa-style Folder mode is a single continuous stream.
-            // The selected folder is a scroll destination, not a query
-            // boundary, so load every indexed folder exactly once.
-            sidebar::SidebarFilter::Folder(_) => (None, false),
-            sidebar::SidebarFilter::Albums => return None,
-            sidebar::SidebarFilter::Library => return None,
-            sidebar::SidebarFilter::Album(_) => unreachable!(),
-            sidebar::SidebarFilter::History => unreachable!(),
-        };
-        db::browse_photos(connection, folder_id, favorites, None).unwrap_or_default()
-    };
-    Some(photos)
+    if scope.search.is_empty()
+        && matches!(filter, sidebar::SidebarFilter::Albums | sidebar::SidebarFilter::Library)
+    {
+        return None;
+    }
+    Some(db::browse_photos(connection, scope).unwrap_or_default())
 }
 
 /// The photos the window opens on for the restored destination, filtered
@@ -629,15 +635,15 @@ fn collection_photos(
 fn startup_photos(
     connection: &Connection,
     initial_filter: sidebar::SidebarFilter,
-    rating_filter: RatingFilter,
     sort: PhotoSort,
     folders: &[db::Folder],
 ) -> Vec<db::Photo> {
     // The same per-destination query as a grid refresh (History included).
-    let mut photos = collection_photos(connection, initial_filter, "").unwrap_or_default();
+    let scope = browse_scope(connection, initial_filter, "");
+    let mut photos = collection_photos(connection, initial_filter, &scope).unwrap_or_default();
     retain_enabled_formats(connection, &mut photos);
     limit_recently_added(connection, initial_filter, &mut photos);
-    apply_collection_rating_filter(&mut photos, initial_filter, rating_filter);
+    apply_files_check(&mut photos, &scope);
     if matches!(initial_filter, sidebar::SidebarFilter::Folder(_)) {
         let display_mode = sidebar::FolderDisplayMode::from_setting(
             db::setting(connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
@@ -657,9 +663,8 @@ fn startup_photos(
 /// arrive: neither the metadata filters nor the toolbar rating narrow the
 /// view (a new photo may not match them). Otherwise the scan's final grid
 /// refresh shows the ones that do.
-fn scan_may_append_new_photos(connection: &Connection) -> bool {
-    let filters = db::filters::Filters::for_browsing(connection);
-    filters.is_empty() && matches!(filters.rating.as_str(), "" | "all")
+fn scan_may_append_new_photos(scope: &db::BrowseScope) -> bool {
+    !scope.is_narrowed()
 }
 
 fn limit_recently_added(
@@ -693,38 +698,36 @@ fn retain_enabled_formats(connection: &Connection, photos: &mut Vec<db::Photo>) 
     photos.retain(|photo| crate::image_format::path_is_enabled_in(&enabled, &photo.path));
 }
 
-fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
-    if filter == RatingFilter::Online {
-        photos.retain(|photo| crate::source::folder_available(photo.folder_id));
-        return;
-    }
-    if filter == RatingFilter::Offline {
-        photos.retain(|photo| !crate::source::folder_available(photo.folder_id));
-        return;
-    }
-    if filter == RatingFilter::Corrupt {
-        photos.retain(|photo| crate::photo_object::confirmed_corrupt_local_jpeg(
-            &photo.path, photo.width, photo.height,
-        ));
-        return;
-    }
-    if filter == RatingFilter::AllStars {
-        photos.retain(|photo| (1..=5).contains(&photo.rating));
-        return;
-    }
-    if let Some(rating) = filter.rating() {
-        photos.retain(|photo| photo.rating == rating);
+/// The Files choice (Online, Offline, Corrupt) SQL cannot express, checked on
+/// the loaded photos. Stored ratings are already in the query.
+fn apply_files_check(photos: &mut Vec<db::Photo>, scope: &db::BrowseScope) {
+    match scope.files_check() {
+        Some(RatingFilter::Online) => {
+            photos.retain(|photo| crate::source::folder_available(photo.folder_id));
+        }
+        Some(RatingFilter::Offline) => {
+            photos.retain(|photo| !crate::source::folder_available(photo.folder_id));
+        }
+        Some(RatingFilter::Corrupt) => {
+            photos.retain(|photo| {
+                crate::photo_object::confirmed_corrupt_local_jpeg(
+                    &photo.path, photo.width, photo.height,
+                )
+            });
+        }
+        _ => {}
     }
 }
 
 /// Whether the toolbar rating filter narrows this destination. The sidebar
 /// rating destinations (Ratings, Rating(n)) choose their own ratings and
-/// ignore it, in the query and in `apply_collection_rating_filter`.
+/// ignore it (`BrowseScope::toolbar_rating_applies`).
 fn toolbar_rating_applies(collection: sidebar::SidebarFilter) -> bool {
-    !matches!(
-        collection,
-        sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_)
-    )
+    db::BrowseScope {
+        destination: browse_destination(collection, ""),
+        ..db::BrowseScope::default()
+    }
+    .toolbar_rating_applies()
 }
 
 /// The toolbar rating button's tooltip: the active filter, or why it has no
@@ -734,22 +737,6 @@ fn rating_filter_tooltip(collection: sidebar::SidebarFilter, value: RatingFilter
         value.tooltip()
     } else {
         "Rating filter is not used in Ratings"
-    }
-}
-
-fn apply_collection_rating_filter(
-    photos: &mut Vec<db::Photo>,
-    collection: sidebar::SidebarFilter,
-    toolbar_filter: RatingFilter,
-) {
-    match collection {
-        sidebar::SidebarFilter::Ratings => {
-            photos.retain(|photo| (1..=5).contains(&photo.rating));
-        }
-        sidebar::SidebarFilter::Rating(rating) => {
-            photos.retain(|photo| photo.rating == i32::from(rating));
-        }
-        _ => apply_rating_filter(photos, toolbar_filter),
     }
 }
 
@@ -920,7 +907,7 @@ fn pixel_count(width: Option<i64>, height: Option<i64>) -> Option<i128> {
 #[cfg(test)]
 mod photo_action_tests {
     use super::{
-        apply_collection_rating_filter, apply_rating_filter, folder_navigation_target,
+        apply_files_check, browse_destination, browse_scope, folder_navigation_target,
         folder_stream_order, no_target_refresh, sort_folder_stream, sort_photos, valid_file_name,
         wallpaper_layout, NoTargetRefresh, PhotoSort, RatingFilter, SortDirection, SortField,
         WallpaperLayout,
@@ -1481,18 +1468,21 @@ mod photo_action_tests {
         let mut bad = photo(bad_path.to_str().unwrap(), None, None, None, None);
         bad.id = 2;
         let mut photos = vec![good, bad];
-        apply_rating_filter(&mut photos, RatingFilter::Corrupt);
+        let corrupt = db::BrowseScope { rating: RatingFilter::Corrupt, ..db::BrowseScope::default() };
+        apply_files_check(&mut photos, &corrupt);
         assert_eq!(photos.iter().map(|photo| photo.id).collect::<Vec<_>>(), [2]);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn rating_filter_supports_all_stars_and_clear() {
-        let original = [0, 0, 1, 2, 5].map(|rating| {
-            let mut photo = photo("/photos/test.jpg", None, None, None, None);
-            photo.rating = rating;
-            photo
-        });
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        connection.execute_batch(
+            "INSERT INTO photos(id,path,rating) VALUES
+                (1,'/photos/a.jpg',0),(2,'/photos/b.jpg',0),(3,'/photos/c.jpg',1),
+                (4,'/photos/d.jpg',2),(5,'/photos/e.jpg',5);",
+        ).unwrap();
         for (filter, expected) in [
             (RatingFilter::Unrated, vec![0, 0]),
             (RatingFilter::One, vec![1]),
@@ -1503,12 +1493,15 @@ mod photo_action_tests {
             (RatingFilter::AllStars, vec![1, 2, 5]),
             (RatingFilter::All, vec![0, 0, 1, 2, 5]),
         ] {
-            let mut photos = original.to_vec();
-            apply_rating_filter(&mut photos, filter);
-            assert_eq!(
-                photos.iter().map(|p| p.rating).collect::<Vec<_>>(),
-                expected
-            );
+            // The rating is part of the query, applied once.
+            let scope = db::BrowseScope { rating: filter, ..db::BrowseScope::default() };
+            let mut ratings = db::browse_photos(&connection, &scope)
+                .unwrap()
+                .iter()
+                .map(|p| p.rating)
+                .collect::<Vec<_>>();
+            ratings.sort_unstable();
+            assert_eq!(ratings, expected, "{filter:?}");
             assert_eq!(RatingFilter::from_key(filter.key()), filter);
         }
         assert_eq!(RatingFilter::from_key("0"), RatingFilter::Unrated);
@@ -1518,14 +1511,15 @@ mod photo_action_tests {
     fn scan_appends_new_photos_only_to_an_unfiltered_view() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(db::SCHEMA).unwrap();
-        assert!(crate::window::scan_may_append_new_photos(&connection));
+        let all = sidebar::SidebarFilter::All;
+        assert!(crate::window::scan_may_append_new_photos(&browse_scope(&connection, all, "")));
         for (rating, narrowed) in
-            [("", false), ("all", false), ("unrated", true), ("3", true), ("stars", true)]
+            [("", false), ("all", false), ("unrated", true), ("3", true), ("stars", true), ("online", true)]
         {
             db::set_setting(&connection, crate::window::RATING_FILTER_SETTING_KEY, rating)
                 .unwrap();
             assert_eq!(
-                crate::window::scan_may_append_new_photos(&connection),
+                crate::window::scan_may_append_new_photos(&browse_scope(&connection, all, "")),
                 !narrowed,
                 "toolbar rating {rating:?}"
             );
@@ -1534,7 +1528,7 @@ mod photo_action_tests {
         let mut filters = db::filters::Filters::default();
         filters.toggle(db::filters::Field::Favorite, "1".into(), true);
         filters.save(&connection).unwrap();
-        assert!(!crate::window::scan_may_append_new_photos(&connection));
+        assert!(!crate::window::scan_may_append_new_photos(&browse_scope(&connection, all, "")));
     }
 
     #[test]
@@ -1553,7 +1547,10 @@ mod photo_action_tests {
                 .unwrap();
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let history = db::browse_history_photos(&connection)
+        let history = db::browse_photos(
+            &connection,
+            &browse_scope(&connection, sidebar::SidebarFilter::History, ""),
+        )
             .unwrap()
             .iter()
             .map(|photo| photo.id)
@@ -1564,7 +1561,6 @@ mod photo_action_tests {
         let restored = crate::window::startup_photos(
             &connection,
             sidebar::SidebarFilter::History,
-            RatingFilter::All,
             by_name,
             &db::folders(&connection).unwrap(),
         );
@@ -1595,20 +1591,16 @@ mod photo_action_tests {
             db::set_setting(&connection, crate::window::RATING_FILTER_SETTING_KEY, toolbar_key)
                 .unwrap();
 
-            let mut ratings =
-                crate::window::collection_photos(&connection, sidebar::SidebarFilter::Ratings, "")
-                    .unwrap();
-            apply_collection_rating_filter(&mut ratings, sidebar::SidebarFilter::Ratings, toolbar);
-            let mut rating_ids = ratings.iter().map(|photo| photo.id).collect::<Vec<_>>();
-            rating_ids.sort_unstable();
-            assert_eq!(rating_ids, [2, 3, 4], "Ratings with toolbar {toolbar_key}");
-
-            let mut fives =
-                crate::window::collection_photos(&connection, sidebar::SidebarFilter::Rating(5), "")
-                    .unwrap();
-            apply_collection_rating_filter(&mut fives, sidebar::SidebarFilter::Rating(5), toolbar);
+            let ratings_scope = browse_scope(&connection, sidebar::SidebarFilter::Ratings, "");
+            assert_eq!(ratings_scope.rating, toolbar);
+            assert_eq!(ratings_scope.effective_rating(), RatingFilter::AllStars);
             assert_eq!(
-                fives.iter().map(|photo| photo.id).collect::<Vec<_>>(),
+                grid_ids(&connection, sidebar::SidebarFilter::Ratings),
+                [2, 3, 4],
+                "Ratings with toolbar {toolbar_key}"
+            );
+            assert_eq!(
+                grid_ids(&connection, sidebar::SidebarFilter::Rating(5)),
                 [4],
                 "Rating(5) with toolbar {toolbar_key}"
             );
@@ -1638,21 +1630,59 @@ mod photo_action_tests {
             );
         }
 
-        let mut favourites = db::browse_photos(&connection, None, true, None).unwrap();
-        apply_collection_rating_filter(
-            &mut favourites,
-            sidebar::SidebarFilter::Favorites,
-            RatingFilter::All,
-        );
-        let mut favourite_ids = favourites.iter().map(|photo| photo.id).collect::<Vec<_>>();
-        favourite_ids.sort_unstable();
-        assert_eq!(favourite_ids, [1, 2]);
+        assert_eq!(grid_ids(&connection, sidebar::SidebarFilter::Favorites), [1, 2]);
+        assert_eq!(grid_ids(&connection, sidebar::SidebarFilter::All), [1, 2, 3, 4]);
+    }
 
-        let mut all = db::browse_photos(&connection, None, false, None).unwrap();
-        apply_collection_rating_filter(&mut all, sidebar::SidebarFilter::All, RatingFilter::All);
-        let mut all_ids = all.iter().map(|photo| photo.id).collect::<Vec<_>>();
-        all_ids.sort_unstable();
-        assert_eq!(all_ids, [1, 2, 3, 4]);
+    /// The photo ids a grid refresh queries for `filter` (no search), after
+    /// the Files check, sorted.
+    fn grid_ids(connection: &Connection, filter: sidebar::SidebarFilter) -> Vec<i64> {
+        let scope = browse_scope(connection, filter, "");
+        let mut photos = crate::window::collection_photos(connection, filter, &scope).unwrap();
+        apply_files_check(&mut photos, &scope);
+        let mut ids = photos.iter().map(|photo| photo.id).collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    }
+
+    #[test]
+    fn browse_scope_maps_every_sidebar_destination() {
+        use db::Destination as D;
+        use sidebar::SidebarFilter as F;
+        for (filter, destination) in [
+            (F::Library, D::AllPhotos),
+            (F::All, D::AllPhotos),
+            (F::RecentlyAdded, D::AllPhotos),
+            // The Folder stream holds every folder; the folder is a scroll target.
+            (F::Folder(7), D::AllPhotos),
+            (F::Favorites, D::Favorites),
+            (F::Ratings, D::Ratings),
+            (F::Rating(4), D::Rating(4)),
+            (F::History, D::History),
+            (F::Albums, D::Albums),
+            (F::Album(3), D::Album(3)),
+        ] {
+            assert_eq!(browse_destination(filter, ""), destination, "{filter:?}");
+            // A search is library-wide, whatever was selected.
+            assert_eq!(browse_destination(filter, "beach"), D::AllPhotos, "{filter:?} + search");
+        }
+        // The toolbar rating, the saved metadata filters and the search are loaded with it.
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        db::set_setting(&connection, crate::window::RATING_FILTER_SETTING_KEY, "2").unwrap();
+        let mut filters = db::filters::Filters::default();
+        filters.toggle(db::filters::Field::Camera, "Canon".into(), true);
+        filters.save(&connection).unwrap();
+        let scope = browse_scope(&connection, F::Album(3), "");
+        assert_eq!(
+            scope,
+            db::BrowseScope {
+                destination: D::Album(3),
+                search: String::new(),
+                rating: RatingFilter::Two,
+                filters,
+            }
+        );
     }
 
     #[test]
@@ -1689,7 +1719,7 @@ mod photo_action_tests {
         refresh_grid(&connection, sidebar::SidebarFilter::Albums, "",
             PhotoSort { field: SortField::Name, direction: SortDirection::Ascending }, &gallery);
         assert!(!gallery.can_restore_folder_cache());
-        apply_rating_filter(&mut photos, RatingFilter::Unrated);
+        photos.retain(|photo| photo.rating == 0);
         gallery.set_grouping(grid::GroupMode::Folder, grid::GroupDate::Taken);
         gallery.replace(&photos);
         assert_eq!(gallery.photo_objects().iter().map(|p| p.id()).collect::<Vec<_>>(), [1]);
@@ -1712,8 +1742,14 @@ mod photo_action_tests {
              INSERT INTO album_photos(album_id,photo_id) VALUES (1,1),(1,2);"
         ).unwrap();
         let refresh = || {
-            let mut photos = db::browse_photos(&connection, Some(1), true, Some("keep")).unwrap();
-            apply_rating_filter(&mut photos, RatingFilter::Unrated);
+            let scope = db::BrowseScope {
+                destination: db::Destination::Folder(1),
+                search: "keep".into(),
+                rating: RatingFilter::Unrated,
+                ..db::BrowseScope::default()
+            };
+            let mut photos = db::browse_photos(&connection, &scope).unwrap();
+            photos.retain(|photo| photo.favorite);
             photos.iter().map(|p| p.id).collect::<Vec<_>>()
         };
         assert_eq!(refresh(), [1]);
@@ -1728,8 +1764,15 @@ mod photo_action_tests {
         ids.sort_unstable();
         assert_eq!(ids, [1, 2]);
         db::set_rating_for_photos(&connection, &[1], 3).unwrap();
-        let mut album = db::browse_photos_in_album(&connection, 1, None).unwrap();
-        apply_rating_filter(&mut album, RatingFilter::Unrated);
+        let album = db::browse_photos(
+            &connection,
+            &db::BrowseScope {
+                destination: db::Destination::Album(1),
+                rating: RatingFilter::Unrated,
+                ..db::BrowseScope::default()
+            },
+        )
+        .unwrap();
         assert_eq!(album.iter().map(|p| p.id).collect::<Vec<_>>(), [2]);
     }
 

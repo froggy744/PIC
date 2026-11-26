@@ -1911,8 +1911,11 @@ mod tests {
             focused_index: Rc::new(Cell::new(0)),
         };
         assert_eq!(flow_album.cover_photo_id, Some(2));
-        let flow_photos = db::browse_photos_in_album(&connection.borrow(), flow_album.id, None)
-            .unwrap_or_default();
+        let flow_photos = db::browse_photos(
+            &connection.borrow(),
+            &db::BrowseScope::load(&connection.borrow(), db::Destination::Album(flow_album.id), ""),
+        )
+        .unwrap_or_default();
         assert_eq!(
             album_cover_photo(&connection.borrow(), &flow_album, &flow_photos)
                 .map(|photo| photo.id),

@@ -42,7 +42,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 11 | Window session state | Worth exploring | merged | merge `4f47d674` (`refactor/window-session-state`) | `src/window/session_state.rs` (pure: keys, defaults, clamps, load, record; `SessionStore` seam) |
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
-| 14 | Browse scope: one value for "what am I browsing" | Strong | deferred | none | `src/db/filters.rs`, `src/db/photos.rs`, `src/window/toolbar.rs`, `src/window/library.rs` |
+| 14 | Browse scope: one value for "what am I browsing" | Strong | in progress (`refactor/browse-scope`) | none | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | deferred | none | `src/window/library.rs`, `src/window/build.rs` |
 | 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
 | 17 | Album list: one owner of the albums as shown | Strong | deferred (its count bug fixed, see below) | none | `src/window/albums.rs`, `src/window/layout.rs`, `src/sidebar.rs` |
@@ -537,6 +537,45 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - GUI harness `screensaver`: its report ends at the editing prerequisites (27 PASS, 2 FAIL: the pre-existing editor checks below), so it reached no screensaver step.
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
+
+### 14 · Browse scope (in progress, `refactor/browse-scope`)
+Started 2026-11-26 at `main` @ `8bd8cd7c`. The owner approved the nine decisions below and asked for the agent to decide open questions itself.
+
+#### Decisions
+1. The value holds the destination, the search, the toolbar rating and the saved metadata filters. The sort stays out (it orders, it does not select); photo marks keep taking it.
+2. It lives in `src/db/browse_scope.rs` with its own `Destination`; the window maps `SidebarFilter` onto it in one tested function (`browse_destination` in `library.rs`). Rules there: a search is library-wide; the Folder stream, Recently Added, Library and All browse all photos; Ratings and Rating(n) carry their own rating.
+3. It replaces the facet `filters::Scope`; `facets` and `count_matching` take a `BrowseScope`.
+4. **Revised while implementing.** Planned: the rating cell is the truth, the settings row a write-only mirror. The Albums home, album covers (`albums/card.rs`, `coverflow.rs`) and the search suggestions only hold a connection, and wiring the cell into them belongs to 17 and 20. So `BrowseScope::load` is the single reader of the session rating row (`RATING_SETTING`); the toolbar still writes row and cell together, and the cell still serves photo marks and the offline watch.
+5. `RatingFilter` moved into db as the typed rating. One rating rule: `effective_rating` (the destination's for Ratings / Rating(n), else the toolbar's), applied once, in SQL. Only Corrupt, Online and Offline are checked on loaded photos (`apply_files_check`), at the pipeline step the old rating pass used.
+6. **Revised.** No `admits(photo)`: no caller needs it yet and the metadata fields are not on `db::Photo`. The Files check stays outside db (`apply_files_check`). Candidate 15 can add `admits` when its reducer needs it.
+7. **Revised.** Two questions, not two versions of one: `is_narrowed()` (metadata filters or an applied toolbar rating) answers "may a photo of the destination be missing?" (scan appends, the chosen album cover, the scan's final Folder refresh, which now also rebuilds under a toolbar rating). "Could an edit or a scan's metadata update move a shown photo?" stays metadata-only (in-place scan updates, the History/editor teardown refresh `build.rs`, `photo_actions.rs` after a batch edit): those changes never touch the rating, and refreshing the grid on every editor close under a rating filter would be visible churn.
+8. Scope: the value, the mapping, the predicate, `is_narrowed`, every db reader taking `&BrowseScope` (`Filters::for_browsing` deleted), facets, album counts, the card cover, the stale checks, collection navigation's reads (it stays in `build()` until 18). `collection_photos` takes the scope; formats, RAW+JPEG, the Recently Added limit and sorting are unchanged (15).
+9. Branch `refactor/browse-scope`, one commit per stage; push allowed, merge only on approval.
+
+Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch); workers get immutable scope snapshots and drop stale results (`BrowseSnapshot`: library path plus scope; the grid refresh keeps its generation counter); Smart Album rules keep their own saved rating string (`AlbumRules::predicate`, `rating_filter`), every saved spelling (`0`, `unrated`, `stars`, `1`-`5`) still matches and the JSON is not rewritten; the five round-three fixes kept; sorting, RAW+JPEG and the pipeline untouched.
+
+#### Stages
+1. `BrowseScope`, `Destination`, `RatingFilter`, `BrowseSnapshot` with table tests. Done: `2375d8d8`.
+2. Every browsing query takes the scope; callers build it through the mapping. Done: `e6d38ca1`.
+3. Docs: this section, GLOSSARY (Browse scope), AUDIT-INDEX.
+
+#### Behaviour now aligned (was drift)
+- Facet counts and the photo count use the grid's search (path, date, album name; before: path only) and its destination (History, Ratings and Rating(n) narrow the counts too).
+- A library switch lists the new library's photos without a stale saved toolbar rating (the setting is reset right after; before, the list could be filtered by it while the picker showed Clear).
+- Searching from Ratings / Rating(n) is library-wide under the toolbar rating, as the search rule says; before it also kept only rated photos.
+- Save as Smart Album from a sidebar rating destination saves the rating shown there.
+
+#### Verification (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings. Stage 1 checked alone (`db::browse_scope` 7/7 on the old tree).
+- Unit suite: 1072 passed, 0 failed. New: `db::browse_scope` (effective rating, narrowed, Files choices, rating keys, SQL membership per destination/search/rating, metadata parameters, stale snapshots), `browse_scope_maps_every_sidebar_destination`, `saved_smart_album_rating_spellings_still_match`, a saved `"0"` rule in `smart_album_rules_on_marks_rebuild_the_album`. Tests were written with the module, not seen red first.
+- Round-three fixes: `sidebar_rating_destinations_are_independent_of_toolbar_and_favourites`, `startup_restores_history_in_history_order`, `scan_appends_new_photos_only_to_an_unfiltered_view` (unit), and in Xvfb `toolbar_rating_filter_shows_it_is_off_in_ratings`, `trashing_photos_updates_library_counts`, `rotating_in_the_viewer_refreshes_the_viewer_properties`, `albums_home_keeps_browsing_filters_after_edits_and_recounts`: pass.
+- Xvfb also: `save_as_smart_album_copies_the_active_filters`, `rating_filter_refresh_invalidates_previous_folder_membership`, `metadata_panel_navigation_auto_closes_and_allows_manual_reopen`: pass.
+- `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits.
+- Not run: GUI harness, by-hand check of the rating picker, facets and Albums home.
+
+#### Follow-ups
+- The rating is still held twice (session row for queries, cell for photo marks and the offline watch); one owner when 17/20 give the views a scope.
+- `admits(photo)` for 15's reducer.
 
 ### Round three (2026-11-26): deferred, not rejected
 The owner deferred all seven candidates: the bugs the review found are fixed one at a time instead of starting another refactoring cycle. The candidates stay valid; revisit them in this order when a refactor is wanted: 14 → 15 → 17 → 16 → 18, then 19 and 20.

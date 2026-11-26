@@ -775,6 +775,7 @@ Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q
 #### Suspected bugs (read from the code, not fixed; need approval)
 - Subfolder admission: a live append needs `photo.folder_id == id` for `Folder(id)`, but the Folder destination includes subfolders, so a new photo in a subfolder of the open folder appears only at the final rebuild.
 - RAW+JPEG pairing: appended photos skip pairing, so in pair mode the hidden half of a pair may show until the next rebuild.
+- **Fixed** (approved by the owner 2026-11-26, found by hand on this branch, also on `main`): after Stop, folders an import had found stayed flat top-level rows counted 0 (no folder tree), because only a finished job ran the availability pass that rebuilds the tree and recounts the rows. A stopped job now does the same as a finished one: the availability pass, or for a folder refresh the row redraw. Test: `a_stopped_job_rebuilds_the_folder_rows_like_a_finished_one` (seen red first).
 
 #### Stages
 1. Pure `scan_view.rs`, table and event-sequence tests first: 19 tests, all seen red against a stub (`e39e6d45`).

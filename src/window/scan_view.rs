@@ -458,6 +458,14 @@ impl ScanView {
                     }
                     _ => format!("Import stopped · {imported} photos added"),
                 };
+                // Folders found before Stop were added as flat rows counted
+                // 0; rebuild them as a finished job does (the availability
+                // pass, or for a folder refresh the row redraw).
+                effects.push(if kind == Some(ScanJobKind::FolderRefresh) {
+                    ScanEffect::RedrawFolderRows
+                } else {
+                    ScanEffect::RefreshAvailability
+                });
                 effects.extend([
                     ScanEffect::RebuildFolderWatches,
                     ScanEffect::StopButton(false),
@@ -1912,6 +1920,30 @@ mod tests {
             )));
             assert!(job.pending.is_empty());
             assert_eq!((job.kind, job.imported_total), (None, 14));
+        }
+    }
+
+    /// A stopped job leaves the sidebar as a finished one does: imported
+    /// folders were added as flat rows counted 0, and only the availability
+    /// pass (or, for a folder refresh, the row redraw) rebuilds the tree and
+    /// recounts them.
+    #[test]
+    fn a_stopped_job_rebuilds_the_folder_rows_like_a_finished_one() {
+        let now = Instant::now();
+        let facts = Facts::default();
+        for (kind, rows) in [
+            (ScanJobKind::Import, false),
+            (ScanJobKind::Refresh, false),
+            (ScanJobKind::FolderRefresh, true),
+        ] {
+            let mut view = ScanView::new(now);
+            let mut job = job(kind);
+            job.stop_requested = true;
+            let cancelled = ScanEvent::Cancelled { imported: 2 };
+            let effects = step(&mut view, &mut job, 7, &cancelled, &facts, now);
+            let redraw = has(&effects, |e| matches!(e, ScanEffect::RedrawFolderRows));
+            let availability = has(&effects, |e| matches!(e, ScanEffect::RefreshAvailability));
+            assert_eq!((redraw, availability), (rows, !rows), "{kind:?}");
         }
     }
 

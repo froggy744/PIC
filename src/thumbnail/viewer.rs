@@ -136,8 +136,9 @@ pub fn release_viewer_full_decode() {
     }
 }
 
-/// Bytes currently retained (tests and benchmarks).
-pub fn viewer_retained_bytes() -> usize {
+/// Bytes currently retained (tests).
+#[cfg(test)]
+fn viewer_retained_bytes() -> usize {
     VIEWER_RETAIN
         .lock()
         .unwrap()

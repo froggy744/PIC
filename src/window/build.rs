@@ -76,8 +76,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let startup_catalog_started = Instant::now();
     let folders = db::folders(&connection.borrow()).unwrap_or_default();
     let folder_cache = Rc::new(RefCell::new(folders.clone()));
-    let albums = db::browse_albums(&connection.borrow(), &albums_home_scope(&connection.borrow()))
-        .unwrap_or_default();
+    // The sidebar counts whole albums (never under a rating left saved by
+    // the last session; it is reset below).
+    let albums = AlbumList::sidebar_albums(&connection.borrow());
     let initial_filter = session.view(SessionEntry::Startup, &folders, &albums);
     let saved_view_photo_id = session.view_anchor;
     // "Activated" means the photo most recently opened in the viewer. Keep
@@ -7085,8 +7086,9 @@ fn start_photo_export_single(
             crate::startup_trace::mark("switch_database_open", Some(switch_started));
             db::delete_setting(&new_connection,db::filters::SETTING).map_err(|error|error.to_string())?;
             let folders = db::folders(&new_connection).map_err(|error| error.to_string())?;
-            let albums = db::browse_albums(&new_connection, &albums_home_scope(&new_connection))
-                .map_err(|error| error.to_string())?;
+            // The sidebar's whole albums; the home is counted after the
+            // rating reset (AlbumChange::LibraryOpened below).
+            let albums = db::albums(&new_connection).map_err(|error| error.to_string())?;
             let counts = db::sidebar_counts(&new_connection).unwrap_or_default();
             let new_session = SessionState::load(&new_connection);
             let new_filter = new_session.view(SessionEntry::LibrarySwitch, &folders, &albums);

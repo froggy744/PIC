@@ -897,6 +897,56 @@ fn normal_window_shrinks_like_immersive_by_folding_header_tools() {
 /// destinations, so its button must say so there and come back afterwards.
 #[test]
 #[ignore = "requires a GTK display; run individually"]
+fn sidebar_album_counts_ignore_a_rating_saved_by_the_last_session() {
+    adw::init().unwrap();
+    let app = adw::Application::builder()
+        .application_id("io.pic.SidebarAlbumCountsTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let path =
+        std::env::temp_dir().join(format!("pic-sidebar-album-counts-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let connection = db::open(&path).unwrap();
+    connection
+        .execute_batch("INSERT INTO photos (id, path, rating) VALUES (1, '/s/a.jpg', 0), (2, '/s/b.jpg', 3);")
+        .unwrap();
+    let album = db::create_album(&connection, "Trip").unwrap();
+    db::add_photos_to_album(&connection, album.id, &[1, 2]).unwrap();
+    for (key, value) in [
+        (LAST_VIEW_SETTING_KEY, "all"),
+        ("onboarding-never-show", "true"),
+        (WINDOW_WIDTH_SETTING_KEY, "1400"),
+        (WINDOW_HEIGHT_SETTING_KEY, "900"),
+        // Left behind by the last session; startup clears it.
+        ("photo-rating-filter", "3"),
+    ] {
+        db::set_setting(&connection, key, value).unwrap();
+    }
+    let window = build(&app, connection);
+    window.present();
+    settle();
+    let row = descendants(window.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::ListBoxRow>().ok())
+        .find(|row| {
+            unsafe { row.data::<sidebar::SidebarFilter>("picasa-filter") }
+                .is_some_and(|value| unsafe { *value.as_ref() } == sidebar::SidebarFilter::Album(album.id))
+        })
+        .expect("album row");
+    let count = descendants(row.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+        .find(|label| label.has_css_class("sidebar-count"))
+        .map(|label| label.text().to_string());
+    // The sidebar counts whole albums.
+    assert_eq!(count.as_deref(), Some("2"));
+    window.close();
+    settle();
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run individually"]
 fn toolbar_rating_filter_shows_it_is_off_in_ratings() {
     adw::init().unwrap();
     let app = adw::Application::builder()

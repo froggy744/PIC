@@ -45,7 +45,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 14 | Browse scope: one value for "what am I browsing" | Strong | merged | merge `16fa04e7` (`refactor/browse-scope`) | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | merged | merge `456325ac` (`refactor/photo-list-pipeline`) | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
 | 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
-| 17 | Album list: one owner of the albums as shown | Strong | deferred (its count bug fixed, see below) | none | `src/window/albums.rs`, `src/window/layout.rs`, `src/sidebar.rs` |
+| 17 | Album list: one owner of the albums as shown | Strong | in progress (`refactor/album-list`) | none | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | deferred (test gap recorded, see its section) | none | `src/window/build.rs` |
 | 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
@@ -537,6 +537,38 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - GUI harness `screensaver`: its report ends at the editing prerequisites (27 PASS, 2 FAIL: the pre-existing editor checks below), so it reached no screensaver step.
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
+
+### 17 · Album list (in progress, `refactor/album-list`)
+Started 2026-11-26 at `main` @ `43b42762`. Decisions E1-E8 approved by the owner.
+
+#### Before (at `43b42762`)
+- Albums home: 8 writers (album edits through `refresh_album_ui`, the Smart Album recount, a filter change in Albums, opening Albums, `album_theme_changed`, the Settings theme callback, the startup populate, the library switch), reached through `albums_home_refresh_slot` (6 clones) or `albums_view::refresh` directly; only the recount and the filter change guard stale results.
+- Sidebar album rows: 6 writers; startup (`sidebar::build`) and the library switch gave it the filtered `browse_albums` list.
+- Add to Album: the photo menu and Properties build their list fresh; the InfoBar button's popover was built once and rebuilt only by `refresh_album_ui`.
+
+#### Bugs found (each reproduced by a test seen red first)
+1. Startup's sidebar album counts were narrowed by a toolbar rating left saved by the last session (the list was queried before the session reset). `sidebar_album_counts_ignore_a_rating_saved_by_the_last_session`: count `1` for `2`. The library switch passed the same filtered list (code reading).
+2. After a library switch the InfoBar's Add to Album still listed the old library's manual albums (album ids are per library). `add_to_album_lists_the_open_librarys_manual_albums`: `["Old library album", …]`.
+3. The library switch's Albums home was counted before the switch reset the rating (code reading; same fix as 1).
+4. A recount still running when an album was edited applied its older lists after the edit. `an_older_recount_never_overwrites_a_newer_album_edit`: two home applications for one.
+
+#### Decisions (approved 2026-11-26)
+- E1: pure `album_list.rs` + GTK adapter `AlbumList` (`album_list_widgets.rs`); `PhotoActionContext.albums` replaces `refresh_albums_home`; the home and the sidebar are attached later.
+- E2: change → surfaces: Edited, Appearance, LibraryOpened: sidebar rows + home (if shown), now; PhotosChanged: both, batched worker, skipped without Smart Albums; BrowseChanged: home (if shown), worker; Shown: home, now.
+- E3: album edits refresh the album rows only, not the folder tree and counts; folder removal keeps its full sidebar refresh (unfiltered albums) and tells `AlbumList`.
+- E4: the InfoBar Add to Album list is built each time it opens (`set_create_popup_func`); manual albums only.
+- E5: a hidden home is not refreshed; opening it reloads it.
+- E6: one Appearance rule (the Settings theme callback also refreshes the album rows).
+- E7: bugs 1, 3, 4 (and 2, through E4) fixed here.
+- E8: collection navigation's album order, membership semantics, `manual_albums` and the album views' internals unchanged.
+
+Owner safeguards: a library switch invalidates batched recounts and running results; results counted under older browsing filters are dropped; Albums home layout, sort, Type filter, cover size and position kept; guards kept (ask before changing one).
+
+#### Stages
+1. Pure `album_list.rs`: `AlbumChange`, `plan`, `AlbumListState` (per-surface generations, library epoch, batching) with table tests.
+2. `AlbumList` adapter; every writer moves onto it; slot, field, thread-locals, `refresh_album_ui` deleted.
+3. Startup and library switch (unfiltered sidebar, `LibraryOpened` after the rating reset); InfoBar Add to Album built on open.
+4. Owner rule, docs.
 
 ### 15 · One photo-list pipeline (merged 2026-11-26)
 Merged into `main` 2026-11-26 (merge `456325ac`, branch deleted), approved by the owner. Open: the follow-ups below; collection navigation's test gap is recorded under 18. Next in order: 17.

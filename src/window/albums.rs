@@ -174,26 +174,33 @@ fn build_album_popover(
     popover
 }
 
-fn show_album_chooser(
-    parent: &gtk::Widget,
+/// Window action that opens an album as its sidebar row does (the photo
+/// menu's In Albums links). Its parameter is the album id.
+pub(crate) const OPEN_ALBUM_ACTION: &str = "win.open-album";
+
+/// The one Add to Album list, as a popover on `anchor`, pointing at
+/// `pointing_to` (in `anchor`'s coordinates) when given. It is built fresh,
+/// so it lists the albums as they are now, and unparents itself when closed.
+/// The InfoBar button, the photo menu and the Properties panel all show it.
+fn show_album_popover(
+    anchor: &gtk::Widget,
+    pointing_to: Option<&gtk::gdk::Rectangle>,
     context: PhotoActionContext,
     selected_ids: Rc<dyn Fn() -> Vec<i64>>,
     after_existing_album: Rc<dyn Fn()>,
-) {
-    let dialog = adw::AlertDialog::builder()
-        .heading("Add to Album")
-        .close_response("cancel")
-        .build();
-    dialog.add_response("cancel", "Cancel");
-    let weak_dialog = dialog.downgrade();
-    let dismiss: Rc<dyn Fn()> = Rc::new(move || {
-        if let Some(dialog) = weak_dialog.upgrade() {
-            dialog.close();
-        }
+) -> gtk::Popover {
+    let popover = build_album_popover(context, selected_ids, Rc::new(|| {}), after_existing_album);
+    popover.set_parent(anchor);
+    if let Some(rect) = pointing_to {
+        popover.set_pointing_to(Some(rect));
+        popover.set_position(gtk::PositionType::Right);
+    }
+    popover.connect_closed(|popover| {
+        let popover = popover.clone();
+        glib::idle_add_local_once(move || popover.unparent());
     });
-    let choices = build_album_choices(context, selected_ids, dismiss, after_existing_album);
-    dialog.set_extra_child(Some(&choices));
-    dialog.present(Some(parent));
+    popover.popup();
+    popover
 }
 
 fn build_album_choices(
@@ -274,10 +281,11 @@ fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: P
     entry.set_placeholder_text(Some("Album name"));
     entry.set_activates_default(true);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    // Album or Smart Album. Opened from Add to Album the photos need a
-    // manual album, so the choice is not offered there.
+    // Album or Smart Album: the same choice wherever a new album starts (the
+    // sidebar, Add to Album, the Properties panel). `photo_ids` go into a new
+    // manual album; a Smart Album's rules choose its photos instead.
     let smart = gtk::ToggleButton::with_label("Smart Album");
-    if photo_ids.is_empty() {
+    {
         let kind = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         kind.add_css_class("linked");
         kind.add_css_class("new-album-kind");

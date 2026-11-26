@@ -460,17 +460,76 @@ fn show_photo_context_menu(
     let album_context = context.clone();
     let album_selection = selection_provider.clone();
     let dismiss_for_album = dismiss_menu.clone();
-    add_to_album.connect_clicked(move |_| {
-        dismiss_for_album();
-        let context = album_context.clone();
-        let selected_ids = album_selection.clone();
-        let after_existing_album = restore_album_view.clone();
-        glib::idle_add_local_once(move || {
-            if let Some(window) = context.window.upgrade() {
-                show_album_chooser(window.upcast_ref(), context, selected_ids, after_existing_album);
-            }
+    let album_host = host_widget.clone();
+    add_to_album.connect_clicked(move |button| {
+        // The same Add to Album list as the InfoBar button, beside this row.
+        // Measure the row first: closing the menu unparents it.
+        let row = button.compute_bounds(&album_host).map(|bounds| {
+            gtk::gdk::Rectangle::new(
+                bounds.x().round() as i32,
+                bounds.y().round() as i32,
+                bounds.width().round() as i32,
+                bounds.height().round() as i32,
+            )
         });
+        dismiss_for_album();
+        show_album_popover(
+            &album_host,
+            row.as_ref(),
+            album_context.clone(),
+            album_selection.clone(),
+            restore_album_view.clone(),
+        );
     });
+
+    // The albums and Smart Albums this photo is in, each opening as its
+    // sidebar row does. The album being viewed is not listed.
+    if !outside_library {
+        let viewed = match context.filter.get() {
+            sidebar::SidebarFilter::Album(id) => Some(id),
+            _ => None,
+        };
+        let containing = db::albums_containing_photo(&context.connection.borrow(), photo.id())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|album| Some(album.id) != viewed)
+            .collect::<Vec<_>>();
+        if !containing.is_empty() {
+            let heading = gtk::Label::new(Some("In Albums"));
+            heading.set_xalign(0.0);
+            heading.set_margin_start(12);
+            heading.set_margin_top(4);
+            heading.add_css_class("dim-label");
+            heading.add_css_class("caption-heading");
+            menu.append(&heading);
+        }
+        for album in containing {
+            let row = add_action(&album.name);
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            content.append(&gtk::Image::from_icon_name(if album.is_smart() {
+                sidebar::smart_album_icon_name()
+            } else {
+                sidebar::album_icon_name()
+            }));
+            let label = gtk::Label::new(Some(&album.name));
+            label.set_xalign(0.0);
+            label.set_hexpand(true);
+            content.append(&label);
+            row.set_child(Some(&content));
+            row.set_tooltip_text(Some(if album.is_smart() {
+                "Open this Smart Album"
+            } else {
+                "Open this album"
+            }));
+            let dismiss_for_open = dismiss_menu.clone();
+            let open_host = host_widget.clone();
+            let album_id = album.id;
+            row.connect_clicked(move |_| {
+                dismiss_for_open();
+                let _ = open_host.activate_action(OPEN_ALBUM_ACTION, Some(&album_id.to_variant()));
+            });
+        }
+    }
 
     let collage_ids = selection_ids.clone();
     let collage = add_action("Create Collage…");
@@ -1974,6 +2033,19 @@ fn properties_add_tag_button(
     add_tag
 }
 
+/// "+ Album" beside "+ Add tag": the one Add to Album list, for this photo.
+fn properties_add_to_album_button(context: &PhotoActionContext, photo_id: i64) -> gtk::Button {
+    let add_to_album = gtk::Button::with_label("+ Album");
+    add_to_album.add_css_class("scrapbook-tag-add");
+    add_to_album.set_tooltip_text(Some("Add to Album"));
+    let context = context.clone();
+    add_to_album.connect_clicked(move |button| {
+        let ids: Rc<dyn Fn() -> Vec<i64>> = Rc::new(move || vec![photo_id]);
+        show_album_popover(button.upcast_ref(), None, context.clone(), ids, Rc::new(|| {}));
+    });
+    add_to_album
+}
+
 fn scrapbook_inspector_extra(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
@@ -2003,6 +2075,7 @@ fn scrapbook_inspector_extra(
     tags_header.set_hexpand(true);
     header_row.append(&tags_header);
     header_row.append(&properties_add_tag_button(&tag_rows, context, photo_id));
+    header_row.append(&properties_add_to_album_button(context, photo_id));
     root.append(&header_row);
     root.append(&tag_rows);
 
@@ -2075,7 +2148,7 @@ fn scrapbook_inspector_extra(
     let album_context = context.clone();
     new_album.connect_clicked(move |button| {
         let ids: Rc<dyn Fn() -> Vec<i64>> = Rc::new(move || vec![photo_id]);
-        show_album_chooser(button.upcast_ref(), album_context.clone(), ids, Rc::new(|| {}));
+        show_album_popover(button.upcast_ref(), None, album_context.clone(), ids, Rc::new(|| {}));
     });
     actions.append(&new_album);
     let export = make_action("Export", "document-save-symbolic");
@@ -2434,10 +2507,19 @@ mod photo_actions_tests {
     fn find_action(root: &gtk::Widget, text: &str) -> Option<gtk::Button> {
         if let Some(button) = root.downcast_ref::<gtk::Button>() {
             let label = button.label().map(|label| label.to_string()).or_else(|| {
-                button
-                    .child()
-                    .and_then(|child| child.downcast::<gtk::Label>().ok())
-                    .map(|label| label.text().to_string())
+                let child = button.child()?;
+                // A plain label, or an icon row's label (In Albums).
+                let label = child.clone().downcast::<gtk::Label>().ok().or_else(|| {
+                    let mut item = child.first_child();
+                    while let Some(widget) = item {
+                        if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+                            return Some(label);
+                        }
+                        item = widget.next_sibling();
+                    }
+                    None
+                })?;
+                Some(label.text().to_string())
             });
             if label.as_deref() == Some(text) {
                 return Some(button.clone());
@@ -2780,7 +2862,8 @@ mod photo_actions_tests {
         assert!(find_action(&open_menu, "Remove from Album").is_none());
 
         // Exercise the trigger itself: it must close the context menu and
-        // present a rooted chooser before an album can be selected.
+        // show the InfoBar's Add to Album list as a popover on the menu's
+        // host (no separate dialog) before an album can be selected.
         db::remove_photos_from_album(&connection.borrow(), album.id, &[1]).unwrap();
         let trigger = find_action(&open_menu, "Add to Album").unwrap();
         settle_gtk_layout();
@@ -2791,8 +2874,19 @@ mod photo_actions_tests {
         }
         settle_gtk_layout();
         assert!(ACTIVE_PHOTO_MENU.with(|active| active.borrow().is_none()));
-        let chooser = window.visible_dialog().expect("album chooser is presented");
-        assert!(chooser.is_mapped());
+        assert!(window.visible_dialog().is_none(), "no separate album dialog");
+        let mut child = overlay.first_child();
+        let mut chooser = None;
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if let Ok(popover) = widget.downcast::<gtk::Popover>() {
+                if popover.is_visible() {
+                    chooser = Some(popover);
+                }
+            }
+        }
+        let chooser = chooser.expect("album list popover is shown");
+        assert!(find_action(chooser.upcast_ref(), "New Album…").is_some());
         let album_button = find_action(chooser.upcast_ref(), "Holiday").unwrap();
         if std::env::var_os("PIC_TEST_POINTER").is_some() {
             pointer_click(window.upcast_ref(), album_button.upcast_ref());
@@ -2809,6 +2903,21 @@ mod photo_actions_tests {
             .unwrap();
         assert_eq!(membership, 1);
         assert!(ACTIVE_PHOTO_MENU.with(|active| active.borrow().is_none()));
+        settle_gtk_layout();
+
+        // The menu now links to the album the photo is in.
+        show_photo_context_menu(
+            crate::photo_object::PhotoObject::from_photo(
+                &db::photo(&connection.borrow(), 1).unwrap().unwrap(),
+            ),
+            overlay.clone().upcast(),
+            context_for(sidebar::SidebarFilter::All),
+            10.0,
+            10.0,
+        );
+        let link = find_action(&menu(), "Holiday").expect("In Albums lists Holiday");
+        assert_eq!(link.tooltip_text().as_deref(), Some("Open this album"));
+        dismiss_active_photo_context_menu();
 
         // The lightbox can show a photo that is not the gallery selection.
         // The clicked object must still change, and reopening the menu must
@@ -3037,5 +3146,94 @@ mod photo_actions_tests {
             Some(1),
             "the gallery panel keeps its own photo"
         );
+    }
+
+    /// Properties' "+ Album" opens the one Add to Album list for its photo:
+    /// manual albums as destinations, never a Smart Album.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn properties_add_to_album_uses_the_shared_album_list() {
+        gtk::init().unwrap();
+        let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
+        connection.borrow().execute_batch(db::SCHEMA).unwrap();
+        connection
+            .borrow()
+            .execute_batch(
+                "INSERT INTO folders(id,path,name) VALUES (1,'/photos','photos');
+                 INSERT INTO photos(id,path,folder_id) VALUES (1,'/photos/a.jpg',1);",
+            )
+            .unwrap();
+        let trip = db::create_album(&connection.borrow(), "Trip").unwrap();
+        let mut loved = db::filters::AlbumRules::default();
+        loved.categories.insert(
+            db::filters::Field::Favorite,
+            db::filters::Selection { values: vec!["1".into()], ..Default::default() },
+        );
+        db::create_smart_album(&connection.borrow(), "Loved", &loved).unwrap();
+        let photo = crate::photo_object::PhotoObject::from_photo(
+            &db::photo(&connection.borrow(), 1).unwrap().unwrap(),
+        );
+        let context = PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: Rc::new(InfoBar::new()),
+            lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
+            sidebar: Rc::new(RefCell::new(None)),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            refresh_albums_home: Rc::new(|_| {}),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
+        };
+        let section = scrapbook_inspector_extra(&photo, &context, PropertiesSurface::Gallery);
+        let window = gtk::Window::new();
+        window.set_child(Some(&section));
+        window.present();
+        settle_gtk_layout();
+
+        let add = find_action(section.upcast_ref(), "+ Album").expect("+ Album beside + Add tag");
+        assert!(find_action(section.upcast_ref(), "+ Add tag").is_some());
+        add.emit_clicked();
+        settle_gtk_layout();
+        let mut child = add.first_child();
+        let mut list = None;
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if let Ok(popover) = widget.downcast::<gtk::Popover>() {
+                list = Some(popover);
+            }
+        }
+        let list = list.expect("the Add to Album popover opens on the button");
+        assert!(list.is_visible());
+        assert!(find_action(list.upcast_ref(), "New Album…").is_some());
+        assert!(find_action(list.upcast_ref(), "Loved").is_none(), "no Smart Album destination");
+        find_action(list.upcast_ref(), "Trip").unwrap().emit_clicked();
+        settle_gtk_layout();
+        assert_eq!(
+            db::albums_containing_photo(&connection.borrow(), 1)
+                .unwrap()
+                .into_iter()
+                .map(|album| album.id)
+                .collect::<Vec<_>>(),
+            [trip.id]
+        );
+        window.close();
     }
 }

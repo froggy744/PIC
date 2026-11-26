@@ -105,7 +105,7 @@
 | `onboarding.rs` | 684 | In-app onboarding UI + `ImportTracker` wiring. | `onboarding/`, `scanner` |
 | `operation_progress.rs` | 501 | `OperationProgressUi` - status row (scan/export/import progress). | `window/build.rs` |
 | `availability.rs` | 331 | Folder availability probes, unmount dialogs, thumbnail recovery triggers. | `source.rs`, `thumbnail`, `db` |
-| `albums.rs` | 322 | Album UI actions from the window (create/delete/chooser, cover). | `db/albums.rs`, `infobar` |
+| `albums.rs` | 322 | Album UI actions from the window (create/delete, cover). The one Add to Album list (`show_album_popover`, `build_album_popover`) for the InfoBar, photo menu and Properties **+ Album**; the one New Album dialog (`show_create_album_dialog`, Album or Smart Album) for the sidebar and Add to Album; `OPEN_ALBUM_ACTION` (`win.open-album`) opens an album as its sidebar row does. | `db/albums.rs`, `infobar` |
 | `date_browser.rs` | 406 | Year/month date browser strip. | `grid`, `db` |
 | `photo_layout.rs` | 339 | Per-section layout persistence (view layouts saved by filter; includes Honeycomb). | `sidebar::SidebarFilter` |
 | `search.rs` | 387 | Search entry wiring + folder/photo suggestion popovers. | `db/filters.rs` |
@@ -226,7 +226,7 @@
 | `history.rs` | 223 | Edit history, collage project storage. |
 | `library_home.rs` | 256 | Home dashboard aggregate queries. |
 | `path_migration.rs` | 190 | Stored path rewrite after relocating application storage. |
-| `albums.rs` | 443 | Album CRUD + cover frames/photos; Smart Album rules (`create_smart_album`, `set_album_rules`, `album_rules`), the one membership predicate `album_membership`, `manual_albums` (destinations only). |
+| `albums.rs` | 443 | Album CRUD + cover frames/photos; Smart Album rules (`create_smart_album`, `set_album_rules`, `album_rules`), the one membership predicate `album_membership`, `manual_albums` (destinations only), `albums_containing_photo` (the photo menu's In Albums). |
 | `metadata.rs` | 155 | photo_metadata store/normalize/backfill. |
 | `scrapbook.rs` | 101 | Scrapbook tags/notes. |
 | `overlay_assets.rs` | 69 | Overlay asset persistence. |

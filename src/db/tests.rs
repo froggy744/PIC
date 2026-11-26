@@ -1781,6 +1781,35 @@ mod tests {
     }
 
     #[test]
+    fn albums_containing_a_photo_include_manual_and_smart_albums() {
+        let connection = smart_album_catalog();
+        let trip = create_album(&connection, "Trip").unwrap();
+        add_photos_to_album(&connection, trip.id, &[1]).unwrap();
+        create_smart_album(&connection, "Five stars", &rated("5")).unwrap();
+        let mut loved = filters::AlbumRules::default();
+        loved.categories.insert(
+            filters::Field::Favorite,
+            filters::Selection { values: vec!["1".into()], ..Default::default() },
+        );
+        create_smart_album(&connection, "Loved", &loved).unwrap();
+        let names = |photo_id| {
+            let mut names = albums_containing_photo(&connection, photo_id)
+                .unwrap()
+                .into_iter()
+                .map(|album| album.name)
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+        assert_eq!(names(1), ["Five stars", "Loved", "Trip"]);
+        assert!(names(2).is_empty());
+        assert_eq!(names(3), ["Loved"]);
+        // A trashed photo is in no album, as every album view shows it.
+        connection.execute("UPDATE photos SET trashed = 1 WHERE id = 1", []).unwrap();
+        assert!(names(1).is_empty());
+    }
+
+    #[test]
     fn existing_albums_stay_manual_after_the_rules_migration() {
         let connection = Connection::open_in_memory().unwrap();
         connection

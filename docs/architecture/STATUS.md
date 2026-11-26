@@ -44,7 +44,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 | 14 | Browse scope: one value for "what am I browsing" | Strong | merged | merge `16fa04e7` (`refactor/browse-scope`) | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | merged | merge `456325ac` (`refactor/photo-list-pipeline`) | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
-| 16 | Photo change: one notification, one fan-out | Strong | in progress (`refactor/photo-change`) | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
+| 16 | Photo change: one notification, one fan-out | Strong | merged | merge `41d31b9c` (`refactor/photo-change`) | `src/window/photo_change.rs` (pure: `ChangeKind`, `ChangeView`, `FanOut`), `src/window/photo_change_widgets.rs` (GTK adapter `photo_changed`) |
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | deferred (test gap recorded, see its section) | none | `src/window/build.rs` |
 | 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
@@ -538,8 +538,10 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
 
-### 16 · Photo change: one notification, one fan-out (in progress)
-Started 2026-11-26 at `main` @ `f94fa7e5` on `refactor/photo-change` (pushed, not merged). Design decisions taken by the agent on the owner's standing instruction (closest to today's behaviour, drift fixed).
+### 16 · Photo change: one notification, one fan-out (merged 2026-11-26)
+Merged into `main` 2026-11-26 (merge `41d31b9c`), approved by the owner; branch deleted. Open: the follow-up below (folder favourite Smart Album recount). Next in order: 18.
+
+Started 2026-11-26 at `main` @ `f94fa7e5` on `refactor/photo-change`. Design decisions taken by the agent on the owner's standing instruction (closest to today's behaviour, drift fixed).
 
 #### Before (at `f94fa7e5`)
 Eight change sites, each refreshing its own subset (read from the code):

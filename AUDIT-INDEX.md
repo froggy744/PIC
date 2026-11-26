@@ -178,14 +178,15 @@
 
 ### `src/lightbox/` - full-screen viewer (root `lightbox.rs` + `include!`)
 
-`src/lightbox.rs` (474) holds the `Lightbox` struct, the decode counting semaphore/permits, viewer request queue + leases, zoom state. It `include!`s `lightbox/impl.rs`, `render.rs`, `offline.rs`, `tests.rs`; `mod opening_transition;` and `mod offline_tests;`.
+`src/lightbox.rs` (474) holds the `Lightbox` struct, the decode counting semaphore/permits, viewer request queue + leases (each `ViewerRequest` has a never-reused `id`), zoom state. It `include!`s `lightbox/impl.rs`, `render.rs`, `offline.rs`, `tests.rs`; `mod opening_transition;`, `mod offline_tests;` and `mod bench_tests;`.
 
 | File | Lines | What it does |
 |---|---|---|
 | `impl.rs` | 2936 | Lightbox implementation: navigation, gestures, opening transition glue. |
-| `render.rs` | 2209 | Viewer decode/render: zoom textures, `show_photo`, opening decode results. |
+| `render.rs` | 2209 | Viewer decode/render: zoom textures, `show_photo`, opening decode results. `show_photo` and the zoom render name the photo in front for retained full-size pixels (`set_viewer_retain_front`). |
 | `tests.rs` | 1313 | Viewer tests. |
 | `offline_tests.rs` | 541 | Offline-mode tests. |
+| `bench_tests.rs` | 368 | Ignored large-image benchmark (`bench_lightbox_large_images`, `PIC_BENCH_LIGHTBOX_*`); runner `scripts/bench-lightbox-large-images.sh`. Results: `docs/lightbox-large-image-performance-2026-11-26.md`. |
 | `opening_transition.rs` | 331 | Grid->lightbox open transition paintables. |
 | `offline.rs` | 276 | Offline (unavailable folder) presentation from cache. |
 
@@ -195,7 +196,7 @@
 
 | File | Lines | What it does |
 |---|---|---|
-| `viewer.rs` | 1945 | Decode entry points per format (JPEG/HEIC/RAW/SVG dispatch). |
+| `viewer.rs` | 1945 | Decode entry points per format (JPEG/HEIC/RAW/SVG dispatch). `decode_for_viewer_retaining`: one-slot retained full-size decode (`VIEWER_RETAIN`, ≤ 320 MiB) owned by the lightbox request in front, taken by its 1:1 decode; opaque RGBA resize skips alpha premultiply. Tests `retention_*`, `native_decode_takes_retained_pixels_without_changing_them`. |
 | `color.rs` | 655 | Embedded ICC validation + RGB->sRGB conversion (liblcms). |
 | `nef.rs` | 604 | NEF embedded/uncompressed thumbnail extraction. |
 | `raw_quality.rs` | 588 | RAW decode quality options. |

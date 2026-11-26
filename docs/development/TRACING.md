@@ -31,4 +31,6 @@ A passing display test swallows `stderr`, so add `-- --nocapture` when a trace i
 | `PIC_LIBRARY_MAINTENANCE_TRACE` | `window/build.rs`, `settings/database.rs`, `thumbnail/batch.rs` | Library maintenance. |
 | `PIC_EXPORT_BENCH_ALBUM` | `main.rs` (debug builds only, `cfg(debug_assertions)`), `edit/export_benchmark.rs` | Runs the export benchmark on an album instead of starting the app. |
 
+Lightbox large images under `PICASA_TRACE`: `PIC_DECODE stage=full_decode_retain action=publish|skip_not_owner|skip_limit|take_native|release_navigation|release_close`, `stage=full_decode_reuse`, `stage=rgba_resize opaque=`, `stage=rgba_conversion source=rgba_moved`. `scripts/bench-lightbox-large-images.sh` counts cancellations from `decode_done ... outcome=error` and `display_discard` lines.
+
 Test-only variables (`PIC_TEST_*`, `PICASA_TEST_*`, `PIC_BENCH_*`) are read by `#[ignore]`d tests and benchmarks. Find each one's meaning at its read site with `grep -rn '"PIC_TEST_<NAME>"' src`.

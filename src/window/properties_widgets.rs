@@ -246,6 +246,12 @@ impl PropertiesWidgets {
         }
     }
 
+    /// The photo `surface` presents, for tests outside this module.
+    #[cfg(test)]
+    pub(super) fn photo_for_test(&self, surface: PropertiesSurface) -> Option<PhotoObject> {
+        self.photo(surface)
+    }
+
     fn photo(&self, surface: PropertiesSurface) -> Option<PhotoObject> {
         match surface {
             PropertiesSurface::Gallery => self.gallery_photo.borrow().clone(),

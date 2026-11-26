@@ -4666,34 +4666,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         });
 
-    let db_for_rotate = connection.clone();
-    let info_rotate = info.clone();
-    let gallery_for_rotate = gallery.clone();
-    let lightbox_for_rotate = lightbox.clone();
-    let properties_for_rotate = properties.clone();
     let edit_editor_for_rotate = edit_editor.clone();
     let front_for_rotate = front.clone();
 
-    let smart_rotate_context = action_context.clone();
+    let rotate_context = action_context.clone();
     let rotate_photo: Rc<dyn Fn(bool)> = Rc::new(move |counter_clockwise| {
-        let Some(photo) = info_rotate.current_photo() else {
+        let Some((photo, rotation)) = rotate_current_photo(&rotate_context, counter_clockwise)
+        else {
             return;
         };
-        let rotation = (photo.rotation() + if counter_clockwise { 270 } else { 90 }) % 360;
-
-        if let Err(error) = db::set_rotation(&db_for_rotate.borrow(), photo.id(), rotation) {
-            eprintln!("Could not rotate photo: {error}");
-            return;
-        }
-        photo.set_rotation(rotation);
-        info_rotate.photo_updated(&photo);
-        // The inspector is a snapshot of the selected photo's metadata;
-        // refresh it after the database and PhotoObject rotation are updated.
-        properties_for_rotate.show_photo(PropertiesSurface::Gallery, Some(&photo));
-        gallery_for_rotate.refresh_rotated_photo(&photo.path());
-        lightbox_for_rotate.refresh_current();
-        // Rotation counts as an edit for the Edited rule.
-        smart_albums_changed(&smart_rotate_context, db::filters::Field::Edited);
         if front_for_rotate.current() == Front::Editor {
             if let Some(editor) = edit_editor_for_rotate.borrow().as_ref() {
                 if editor.photo_id() == photo.id() {

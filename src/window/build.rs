@@ -6521,6 +6521,9 @@ fn start_photo_export_single(
 
                     let search_active = !search_for_events.borrow().is_empty();
                     let filters_active = !db::filters::Filters::load(&connection_for_events.borrow()).is_empty();
+                    // Updates of shown photos still apply in place below; only
+                    // appending new ones also needs no toolbar rating.
+                    let appends_new = scan_may_append_new_photos(&connection_for_events.borrow());
                     if watch_trace {
                         let new = photos.iter().filter(|indexed| indexed.newly_discovered).count();
                         let matching = photos
@@ -6536,13 +6539,14 @@ fn start_photo_export_single(
                             scan_job_for_events.borrow().kind,
                             filter_for_events.get(),
                             photos.len(),
-                            if search_active || filters_active { 0 } else { matching },
+                            if search_active || !appends_new { 0 } else { matching },
                         );
                     }
                     if !search_active && !filters_active {
                         for indexed in photos {
                             let photo = &indexed.photo;
                             if indexed.newly_discovered
+                                && appends_new
                                 && crate::image_format::path_is_enabled(
                                     &connection_for_events.borrow(),
                                     &photo.path,

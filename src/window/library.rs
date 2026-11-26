@@ -653,6 +653,15 @@ fn startup_photos(
     photos
 }
 
+/// Whether a scan may append the photos it discovers to the grid as they
+/// arrive: neither the metadata filters nor the toolbar rating narrow the
+/// view (a new photo may not match them). Otherwise the scan's final grid
+/// refresh shows the ones that do.
+fn scan_may_append_new_photos(connection: &Connection) -> bool {
+    let filters = db::filters::Filters::for_browsing(connection);
+    filters.is_empty() && matches!(filters.rating.as_str(), "" | "all")
+}
+
 fn limit_recently_added(
     connection: &Connection,
     filter: sidebar::SidebarFilter,
@@ -1503,6 +1512,29 @@ mod photo_action_tests {
             assert_eq!(RatingFilter::from_key(filter.key()), filter);
         }
         assert_eq!(RatingFilter::from_key("0"), RatingFilter::Unrated);
+    }
+
+    #[test]
+    fn scan_appends_new_photos_only_to_an_unfiltered_view() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        assert!(crate::window::scan_may_append_new_photos(&connection));
+        for (rating, narrowed) in
+            [("", false), ("all", false), ("unrated", true), ("3", true), ("stars", true)]
+        {
+            db::set_setting(&connection, crate::window::RATING_FILTER_SETTING_KEY, rating)
+                .unwrap();
+            assert_eq!(
+                crate::window::scan_may_append_new_photos(&connection),
+                !narrowed,
+                "toolbar rating {rating:?}"
+            );
+        }
+        db::set_setting(&connection, crate::window::RATING_FILTER_SETTING_KEY, "all").unwrap();
+        let mut filters = db::filters::Filters::default();
+        filters.toggle(db::filters::Field::Favorite, "1".into(), true);
+        filters.save(&connection).unwrap();
+        assert!(!crate::window::scan_may_append_new_photos(&connection));
     }
 
     #[test]

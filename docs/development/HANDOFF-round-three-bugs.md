@@ -22,13 +22,17 @@ The bugs were read from the code during the review. None of them has been reprod
 | 1 | Fixed | `18923e3e` | `sidebar_rating_destinations_are_independent_of_toolbar_and_favourites` (extended), `toolbar_rating_filter_shows_it_is_off_in_ratings` (display) |
 | 2 | Fixed | `24297e1b` | `trashing_photos_updates_library_counts` (display) |
 | 3 | Fixed | `5d83b50c` | `rotating_in_the_viewer_refreshes_the_viewer_properties` (display) |
-| 4 | Next | | |
-| 5 | Open | | |
+| 4 | Fixed | `d3d2252a` | `startup_restores_history_in_history_order` |
+| 5 | Fixed | `ab33310c` | `scan_appends_new_photos_only_to_an_unfiltered_view` |
+
+**Done** (2026-11-26): all five fixed. The branch is pushed and waits for the owner's merge.
 
 Notes from the fixes:
 - Bug 1 also covers the display: on Ratings and Rating(n) the toolbar rating button is insensitive with the tooltip "Rating filter is not used in Ratings", and the metadata row's scope drops the rating so its counts match the grid. The per-destination query is now `collection_photos` (`library.rs`); bug 4 can reuse it.
 - Bug 2's display test trashes real files into a private `XDG_DATA_HOME` under `target/` (GIO refuses to trash on tmpfs).
 - Each display test was also checked red with its fix removed.
+- Bug 4: startup's photo list is now `startup_photos` (`library.rs`), querying through `collection_photos`; History keeps its own order. The library switch still builds its own list (candidate 15).
+- Bug 5: only *appending* new photos checks the toolbar rating (`scan_may_append_new_photos`); in-place updates of shown photos keep the metadata-only gate, since a Folder refresh with no new photos has no final rebuild. Its test covers the decision, not the scan handler in `build()`.
 
 ## Bugs, in suggested order
 

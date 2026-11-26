@@ -562,6 +562,9 @@
                     Ok(_) => {
                         refresh_photo_actions_grid(&context);
                         photo_mark_commands::reload_shown_photo(&context);
+                        // Favourite rules can move the folder's photos in or
+                        // out of Smart Albums.
+                        refresh_smart_album_counts(&context);
                         (context.on_unavailable)();
                     }
                     Err(error) => {

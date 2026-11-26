@@ -41,6 +41,10 @@
 #   - src/window/photo_list.rs (photo_list, photo_list_has_photos). Tests of
 #     the steps live there (they are private) and in src/image_format.rs,
 #     which defines and tests the pairing step.
+# The album surfaces (candidate 17: the sidebar's album rows and the Albums
+# home) have one writer, which picks the list for each:
+#   - src/window/album_list_widgets.rs (AlbumList::changed; the decision is
+#     window::album_list).
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -65,6 +69,7 @@ ZOOM_OWNER='src/window/zoom_slider_widgets.rs'
 SESSION_OWNER='src/window/session_state.rs'
 SCROLL_OWNER='src/window/scroll_motion.rs'
 PHOTO_LIST_OWNER='src/window/photo_list.rs'
+ALBUM_LIST_OWNER='src/window/album_list_widgets.rs'
 SESSION_FIXTURES='src/window/immersive_tests.rs src/window/responsive_tests.rs'
 ID='[[:alnum:]_]'
 
@@ -85,6 +90,7 @@ RULES=(
   "session-state~$SESSION_OWNER $SESSION_FIXTURES~(LAST_(VIEW|VIEW_PHOTO_ID|ACTIVATED_PHOTO_ID|VIEW_SCROLL|ALBUMS_SCROLL)|WINDOW_(WIDTH|HEIGHT|MAXIMIZED)|SIDEBAR_WIDTH_FRACTION|SIDEBAR_COLLAPSED_WIDTH|PROPERTIES_WIDTH_FRACTION|COMPACT_SIDEBAR_WIDTH)_SETTING_KEY|\"(last-view|last-view-photo-id|last-activated-photo-id|last-view-scroll|last-albums-scroll|window-width|window-height|window-maximized|sidebar-width-fraction|properties-width-fraction|sidebar-collapsed-width|compact-sidebar-width-v2)\"~window session keys (load and save through window::session_state)"
   "scroll-motion~$SCROLL_OWNER~(^|[^[:alnum:]_])(grid|folder)_(direct_)?scrub_(active|generation|frames|last_queue|sampler)([^[:alnum:]_(]|_for|$)|THUMBNAIL_MOTION_PUMP_FRAMES|ScrollbarScrub~a hand-kept gallery scrub, settle or pump state (ask window::scroll_motion)"
   "photo-list~$PHOTO_LIST_OWNER src/image_format.rs~(^|[^[:alnum:]_])(retain_raw_jpeg_pair_mode|limit_recently_added|apply_files_check|collection_photos)\(~a photo-list pipeline step by hand (build lists with window::photo_list)"
+  "album-list~$ALBUM_LIST_OWNER~(albums_view::refresh|sidebar::refresh_album_rows)\(~the sidebar album rows or the Albums home (say AlbumList::changed)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -178,7 +184,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -257,6 +263,10 @@ RS
         limit_recently_added(connection, request.filter, &mut photos);
     apply_files_check(&mut photos, &request.scope);
 RS
+  cat >"$root/$ALBUM_LIST_OWNER" <<'RS'
+                sidebar::refresh_album_rows(sidebar, albums, &on_delete_album);
+            crate::albums_view::refresh(
+RS
   cat >"$root/$SCROLL_OWNER" <<'RS'
 // The old grid_scrub_active cell and FolderScrollbarScrub live here now.
 pub(super) struct ScrollbarScrubNote;
@@ -329,6 +339,8 @@ self_test() {
     "scrub cell back in build.rs|src/window/build.rs|let grid_scrub_active = Rc::new(Cell::new(false));|scroll-motion"
     "pump constant back in build.rs|src/window/build.rs|const FOLDER_THUMBNAIL_MOTION_PUMP_FRAMES: u8 = 12;|scroll-motion"
     "pairing by hand in build.rs|src/window/build.rs|crate::image_format::retain_raw_jpeg_pair_mode(&mut photos, mode);|photo-list"
+    "Albums home fed in layout.rs|src/window/layout.rs|albums_view::refresh(&albums_home, &albums, connection.clone(), size, on_album, on_change);|album-list"
+    "album rows fed in albums.rs|src/window/albums.rs|sidebar::refresh_album_rows(sidebar, &albums, &context.delete_album);|album-list"
     "Files check by hand in library.rs|src/window/library.rs|apply_files_check(&mut photos, &scope);|photo-list"
     "scrub sampler back in build.rs|src/window/build.rs|let folder_scrub_sampler = Rc::new(RefCell::new(FolderScrollbarScrub::default()));|scroll-motion"
     "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"

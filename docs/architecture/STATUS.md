@@ -565,10 +565,21 @@ Started 2026-11-26 at `main` @ `43b42762`. Decisions E1-E8 approved by the owner
 Owner safeguards: a library switch invalidates batched recounts and running results; results counted under older browsing filters are dropped; Albums home layout, sort, Type filter, cover size and position kept; guards kept (ask before changing one).
 
 #### Stages
-1. Pure `album_list.rs`: `AlbumChange`, `plan`, `AlbumListState` (per-surface generations, library epoch, batching) with table tests.
-2. `AlbumList` adapter; every writer moves onto it; slot, field, thread-locals, `refresh_album_ui` deleted.
-3. Startup and library switch (unfiltered sidebar, `LibraryOpened` after the rating reset); InfoBar Add to Album built on open.
-4. Owner rule, docs.
+1. Pure `album_list.rs`: `AlbumChange`, `plan`, `AlbumListState` (per-surface generations, library epoch, batching) with table tests. Done: `b76ad42f` (dead-code warnings until stage 2).
+2. `AlbumList` adapter; every writer moves onto it; the library switch hands over with `LibraryOpened` after its rating reset (bug 3); the InfoBar Add to Album is built on open (E4, bug 2, moved here from stage 3 so no commit leaves that menu stale); slot, field, thread-locals, `refresh_album_ui`, `recount_smart_albums` deleted. Bugs 4 and 2 tests red first. Done: `eada23c5`.
+3. Startup and library switch give the sidebar whole albums (bug 1, test red first). Done: `8d633499`.
+4. Owner rule `album-list` (`albums_view::refresh`, `sidebar::refresh_album_rows` only in `album_list_widgets.rs`; two self-test cases; no existing rule changed), docs.
+
+#### Verification (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings.
+- Unit (one filtered run): `window::album_list` (4, new), `window::photo_list`, `window::photo_action_tests`, `window::photo_marks`, `db::tests`, `db::browse_scope`: 96 passed.
+- Display (Xvfb, one process each): new `an_older_recount_never_overwrites_a_newer_album_edit`, `add_to_album_lists_the_open_librarys_manual_albums`, `sidebar_album_counts_ignore_a_rating_saved_by_the_last_session`; existing `albums_home_keeps_browsing_filters_after_edits_and_recounts` (now: a home result counted under older filters is dropped after they change), `marks_recount_smart_albums_once_per_burst`, `trashing_photos_updates_library_counts`, `rotating_in_the_viewer_refreshes_the_viewer_properties`, `toolbar_rating_filter_shows_it_is_off_in_ratings`, `save_as_smart_album_copies_the_active_filters`, `a_gallery_shown_now_drops_an_older_refresh`, `smart_albums_share_the_overview_and_its_type_filter`, `album_layout_control_shows_coverflow_and_persists_it`: all pass.
+- **Pre-existing, found 2026-11-26:** `albums_view::tests::album_view_modes_preserve_albums_and_click_navigation` fails on `main` @ `43b42762` too (bookshelf photo-count colour, `albums_view.rs:2236`); not investigated.
+- `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits; `--self-test` ok.
+- Not covered: the library switch's album handover itself (it lives in `build()` and needs a second registered library; its pieces are tested: `another_library_drops_running_results_and_waiting_batches`, the Add to Album list after a connection change). Not run: full suite, GUI harness, by-hand check.
+
+#### Follow-ups
+- 20: `PhotoActionContext` lost `refresh_albums_home`; `sidebar`, `create_album`, `import_folder`, `delete_album`, `on_unavailable` remain for folder removal's full sidebar refresh.
 
 ### 15 · One photo-list pipeline (merged 2026-11-26)
 Merged into `main` 2026-11-26 (merge `456325ac`, branch deleted), approved by the owner. Open: the follow-ups below; collection navigation's test gap is recorded under 18. Next in order: 17.

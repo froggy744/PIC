@@ -46,7 +46,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | merged | merge `456325ac` (`refactor/photo-list-pipeline`) | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
 | 16 | Photo change: one notification, one fan-out | Strong | merged | merge `41d31b9c` (`refactor/photo-change`) | `src/window/photo_change.rs` (pure: `ChangeKind`, `ChangeView`, `FanOut`), `src/window/photo_change_widgets.rs` (GTK adapter `photo_changed`) |
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
-| 18 | Collection navigation out of `build()` | Strong | in progress (`refactor/collection-navigation`) | none | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
+| 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
 | 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
 
@@ -713,7 +713,9 @@ Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch);
 - The rating is still held twice (session row for queries, cell for photo marks and the offline watch); one owner when 17/20 give the views a scope.
 - `admits(photo)` for 15's reducer.
 
-### 18 · Collection navigation out of `build()` (in progress)
+### 18 · Collection navigation out of `build()` (merged 2026-11-26)
+Merged into `main` 2026-11-26 (merge `ecc8e954`), approved by the owner; branch deleted. Open: the by-hand check and a library-switch test.
+
 Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. Decisions N1-N8 approved by the owner 2026-11-26 with the additions below; the agent's own choices are marked (agent).
 
 #### Before (at `5a39d0a7`, `build.rs:1254-1820`)

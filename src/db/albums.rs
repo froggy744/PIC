@@ -1,23 +1,115 @@
+/// Columns `album_from_row` reads, for a query over `albums a` whose fourth
+/// column is the manual membership count.
+const ALBUM_COLUMNS: &str = "a.id,a.name,a.created_at,COUNT(p.id),a.cover_frame,a.cover_photo_id,a.rules";
+
+fn album_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Album> {
+    Ok(Album {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        created_at: row.get(2)?,
+        photo_count: row.get(3)?,
+        cover_frame: row.get(4)?,
+        cover_photo_id: row.get(5)?,
+        rules: row.get(6)?,
+    })
+}
+
+/// SQL condition (over `p`) for the photos an album holds: its manual
+/// members, or the photos its Smart Album rules match. Parameters are
+/// numbered from `first`. A missing album or unreadable rules match nothing,
+/// never the whole library.
+pub fn album_membership(
+    connection: &Connection,
+    album_id: i64,
+    first: usize,
+) -> Result<(String, Vec<rusqlite::types::Value>)> {
+    let rules = connection
+        .query_row("SELECT rules FROM albums WHERE id = ?1", [album_id], |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .optional()?;
+    Ok(match rules {
+        None => ("0".into(), Vec::new()),
+        Some(None) => (
+            format!("p.id IN (SELECT photo_id FROM album_photos WHERE album_id = ?{first})"),
+            vec![album_id.into()],
+        ),
+        Some(Some(json)) => smart_membership(album_id, &json, first),
+    })
+}
+
+fn smart_membership(
+    album_id: i64,
+    json: &str,
+    first: usize,
+) -> (String, Vec<rusqlite::types::Value>) {
+    match filters::AlbumRules::parse(json) {
+        Ok(rules) => rules.to_filters().predicate(first),
+        Err(error) => {
+            eprintln!("Smart Album {album_id} has unusable rules and shows no photos: {error}");
+            ("0".into(), Vec::new())
+        }
+    }
+}
+
+/// Smart Albums hold no `album_photos` rows; count what their rules match,
+/// narrowed by `browse` when browsing filters apply.
+fn fill_smart_album_counts(
+    connection: &Connection,
+    albums: &mut [Album],
+    browse: &filters::Filters,
+) -> Result<()> {
+    let (browse_sql, browse_args) = browse.predicate(1);
+    for album in albums.iter_mut() {
+        let Some(json) = album.rules.as_deref() else {
+            continue;
+        };
+        let (sql, args) = smart_membership(album.id, json, browse_args.len() + 1);
+        let mut values = browse_args.clone();
+        values.extend(args);
+        album.photo_count = connection.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM photos p WHERE p.trashed = 0 AND ({browse_sql}) AND ({sql})"
+            ),
+            rusqlite::params_from_iter(values),
+            |row| row.get(0),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn albums(connection: &Connection) -> Result<Vec<Album>> {
-    let mut statement = connection.prepare(
-        "SELECT a.id, a.name, a.created_at, COUNT(p.id), a.cover_frame, a.cover_photo_id
+    let mut statement = connection.prepare(&format!(
+        "SELECT {ALBUM_COLUMNS}
          FROM albums a
          LEFT JOIN album_photos ap ON ap.album_id = a.id
          LEFT JOIN photos p ON p.id = ap.photo_id AND p.trashed = 0
          GROUP BY a.id
-         ORDER BY a.name COLLATE NOCASE, a.id",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(Album {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            created_at: row.get(2)?,
-            photo_count: row.get(3)?,
-            cover_frame: row.get(4)?,
-            cover_photo_id: row.get(5)?,
-        })
-    })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+         ORDER BY a.name COLLATE NOCASE, a.id"
+    ))?;
+    let mut albums = statement
+        .query_map([], album_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    fill_smart_album_counts(connection, &mut albums, &filters::Filters::default())?;
+    Ok(albums)
+}
+
+/// Albums photos can be added to by hand: Smart Albums are read-only photo
+/// sources and never destinations.
+pub fn manual_albums(connection: &Connection) -> Result<Vec<Album>> {
+    let mut statement = connection.prepare(&format!(
+        "SELECT {ALBUM_COLUMNS}
+         FROM albums a
+         LEFT JOIN album_photos ap ON ap.album_id = a.id
+         LEFT JOIN photos p ON p.id = ap.photo_id AND p.trashed = 0
+         WHERE a.rules IS NULL
+         GROUP BY a.id
+         ORDER BY a.name COLLATE NOCASE, a.id"
+    ))?;
+    let albums = statement
+        .query_map([], album_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(albums)
 }
 
 /// Browsing counts share the photo predicate; administrative album APIs stay unfiltered.
@@ -25,22 +117,16 @@ pub fn browse_albums(connection: &Connection) -> Result<Vec<Album>> {
     let filters = filters::Filters::for_browsing(connection);
     let (predicate, args) = filters.predicate(1);
     let mut statement = connection.prepare(&format!(
-        "SELECT a.id,a.name,a.created_at,COUNT(p.id),a.cover_frame,a.cover_photo_id
+        "SELECT {ALBUM_COLUMNS}
          FROM albums a LEFT JOIN album_photos ap ON ap.album_id=a.id
          LEFT JOIN photos p ON p.id=ap.photo_id AND p.trashed=0 AND ({predicate})
          GROUP BY a.id ORDER BY a.name COLLATE NOCASE,a.id"
     ))?;
-    let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
-        Ok(Album {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            created_at: row.get(2)?,
-            photo_count: row.get(3)?,
-            cover_frame: row.get(4)?,
-            cover_photo_id: row.get(5)?,
-        })
-    })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut albums = statement
+        .query_map(rusqlite::params_from_iter(args), album_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    fill_smart_album_counts(connection, &mut albums, &filters)?;
+    Ok(albums)
 }
 
 /// Albums whose name contains `query` (case-insensitive), for the search
@@ -54,7 +140,7 @@ pub fn search_albums(connection: &Connection, query: &str, limit: usize) -> Resu
     let filters = filters::Filters::for_browsing(connection);
     let (predicate, args) = filters.predicate(3);
     let mut statement = connection.prepare(&format!(
-        "SELECT a.id,a.name,a.created_at,COUNT(p.id),a.cover_frame,a.cover_photo_id
+        "SELECT {ALBUM_COLUMNS}
          FROM albums a LEFT JOIN album_photos ap ON ap.album_id=a.id
          LEFT JOIN photos p ON p.id=ap.photo_id AND p.trashed=0 AND ({predicate})
          WHERE instr(lower(a.name), lower(?1)) > 0
@@ -70,20 +156,35 @@ pub fn search_albums(connection: &Connection, query: &str, limit: usize) -> Resu
     ))?;
     let mut values: Vec<rusqlite::types::Value> = vec![query.to_owned().into(), (limit as i64).into()];
     values.extend(args);
-    let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
-        Ok(Album {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            created_at: row.get(2)?,
-            photo_count: row.get(3)?,
-            cover_frame: row.get(4)?,
-            cover_photo_id: row.get(5)?,
-        })
-    })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut albums = statement
+        .query_map(rusqlite::params_from_iter(values), album_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    fill_smart_album_counts(connection, &mut albums, &filters)?;
+    Ok(albums)
 }
 
 pub fn create_album(connection: &Connection, name: &str) -> Result<Album> {
+    insert_album(connection, name, None)
+}
+
+/// Create a Smart Album whose photos are chosen by `rules`. Zero matching
+/// photos is fine; an album without a valid rule is not.
+pub fn create_smart_album(
+    connection: &Connection,
+    name: &str,
+    rules: &filters::AlbumRules,
+) -> Result<Album> {
+    rules.validate()?;
+    let mut album = insert_album(connection, name, Some(rules.to_json()?))?;
+    fill_smart_album_counts(
+        connection,
+        std::slice::from_mut(&mut album),
+        &filters::Filters::default(),
+    )?;
+    Ok(album)
+}
+
+fn insert_album(connection: &Connection, name: &str, rules: Option<String>) -> Result<Album> {
     let name = name.trim();
     if name.is_empty() {
         anyhow::bail!("album name cannot be blank");
@@ -99,9 +200,9 @@ pub fn create_album(connection: &Connection, name: &str) -> Result<Album> {
         anyhow::bail!("an album named ‘{name}’ already exists");
     }
     connection.execute(
-        "INSERT INTO albums(name, created_at)
-         VALUES (?1, CAST(strftime('%s', 'now') AS INTEGER))",
-        [name],
+        "INSERT INTO albums(name, created_at, rules)
+         VALUES (?1, CAST(strftime('%s', 'now') AS INTEGER), ?2)",
+        params![name, rules],
     )?;
     let id = connection.last_insert_rowid();
     Ok(Album {
@@ -115,7 +216,99 @@ pub fn create_album(connection: &Connection, name: &str) -> Result<Album> {
         photo_count: 0,
         cover_frame: None,
         cover_photo_id: None,
+        rules,
     })
+}
+
+/// A Smart Album's saved rules; `None` for a manual album.
+pub fn album_rules(connection: &Connection, album_id: i64) -> Result<Option<filters::AlbumRules>> {
+    let json = connection
+        .query_row("SELECT rules FROM albums WHERE id = ?1", [album_id], |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .ok_or_else(|| anyhow::anyhow!("album no longer exists"))?;
+    json.map(|json| filters::AlbumRules::parse(&json)).transpose()
+}
+
+/// Replace a Smart Album's rules. The album keeps its id, name, cover and
+/// presentation settings; a manual album cannot gain rules.
+pub fn set_album_rules(
+    connection: &Connection,
+    album_id: i64,
+    rules: &filters::AlbumRules,
+) -> Result<()> {
+    rules.validate()?;
+    let updated = connection.execute(
+        "UPDATE albums SET rules = ?1 WHERE id = ?2 AND rules IS NOT NULL",
+        params![rules.to_json()?, album_id],
+    )?;
+    if updated == 0 {
+        anyhow::bail!("Smart Album no longer exists");
+    }
+    Ok(())
+}
+
+fn ensure_manual_album(connection: &Connection, album_id: i64) -> Result<()> {
+    let smart = connection
+        .query_row(
+            "SELECT rules IS NOT NULL FROM albums WHERE id = ?1",
+            [album_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()?;
+    match smart {
+        None => anyhow::bail!("album no longer exists"),
+        Some(true) => anyhow::bail!("a Smart Album chooses its photos from its rules"),
+        Some(false) => Ok(()),
+    }
+}
+
+/// Photos in an album, newest first, at most `limit` (`-1` for all). Uses the
+/// album's membership, so Smart Albums work for every album consumer.
+pub fn album_photos_page(connection: &Connection, album_id: i64, limit: i64) -> Result<Vec<Photo>> {
+    let (membership, args) = album_membership(connection, album_id, 2)?;
+    let mut statement = connection.prepare(&format!(
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
+         FROM photos p LEFT JOIN folders f ON f.id = p.folder_id
+         WHERE p.trashed = 0 AND ({membership})
+         ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE
+         LIMIT ?1"
+    ))?;
+    let mut values: Vec<rusqlite::types::Value> = vec![limit.into()];
+    values.extend(args);
+    let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Rewrite Smart Album source-folder rules after a folder path moved.
+fn rewrite_album_rule_folders(connection: &Connection, old: &str, new: &str) -> Result<()> {
+    let rows = connection
+        .prepare("SELECT id, rules FROM albums WHERE rules IS NOT NULL")?
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (id, json) in rows {
+        let Ok(mut rules) = serde_json::from_str::<filters::AlbumRules>(&json) else {
+            continue;
+        };
+        let Some(selection) = rules.categories.get_mut(&filters::Field::SourceFolder) else {
+            continue;
+        };
+        let mut changed = false;
+        for value in &mut selection.values {
+            if value == old {
+                *value = new.to_owned();
+                changed = true;
+            }
+        }
+        if changed {
+            connection.execute(
+                "UPDATE albums SET rules = ?1 WHERE id = ?2",
+                params![rules.to_json()?, id],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Rename an album while retaining the same validation as album creation.
@@ -200,6 +393,7 @@ pub fn add_photos_to_album(
     album_id: i64,
     photo_ids: &[i64],
 ) -> Result<usize> {
+    ensure_manual_album(connection, album_id)?;
     let transaction = connection.unchecked_transaction()?;
     let mut added = 0;
     for photo_id in photo_ids {

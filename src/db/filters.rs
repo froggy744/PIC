@@ -337,6 +337,96 @@ impl Filters {
     }
 }
 
+/// Rating choices a Smart Album can save. The Files choices (online, offline,
+/// corrupt) share the rating setting but are not SQL, so they never are.
+pub const RULE_RATINGS: [&str; 8] = ["unrated", "stars", "0", "1", "2", "3", "4", "5"];
+
+/// The saved membership rules of a Smart Album: an independent copy of
+/// supported filter state. Unlike [`Filters`], the rating choice is
+/// serialized, so a saved album keeps it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AlbumRules {
+    #[serde(default)]
+    pub categories: BTreeMap<Field, Selection>,
+    #[serde(default)]
+    pub rating: String,
+}
+
+/// What [`AlbumRules::capture`] could not keep from the browsing filters.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Unsaved {
+    /// The Files choice (Online, Offline or Corrupt photos), when one was active.
+    pub files: Option<&'static str>,
+}
+
+impl AlbumRules {
+    /// Copy the supported part of the active browsing filters.
+    pub fn capture(filters: &Filters) -> (Self, Unsaved) {
+        let mut categories = filters.categories.clone();
+        categories.remove(&Field::Files);
+        categories.retain(|_, selection| !selection.is_empty());
+        let rating = filters.rating.trim();
+        let files = match rating {
+            "online" => Some("Online"),
+            "offline" => Some("Offline"),
+            "corrupt" => Some("Corrupt photos"),
+            _ => None,
+        };
+        let rating = if RULE_RATINGS.contains(&rating) {
+            rating.to_owned()
+        } else {
+            String::new()
+        };
+        (Self { categories, rating }, Unsaved { files })
+    }
+    pub fn is_empty(&self) -> bool {
+        self.rating.is_empty() && self.categories.values().all(Selection::is_empty)
+    }
+    /// A saved album needs at least one rule, and every rule must be one the
+    /// filter predicate supports. Anything else is rejected rather than
+    /// matched loosely, so a damaged album never shows the whole library.
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(!self.is_empty(), "A Smart Album needs at least one rule");
+        anyhow::ensure!(
+            self.rating.is_empty() || RULE_RATINGS.contains(&self.rating.as_str()),
+            "Unsupported rating rule"
+        );
+        for (field, selection) in &self.categories {
+            anyhow::ensure!(*field != Field::Files, "Online, offline and corrupt photos cannot be saved in a Smart Album");
+            anyhow::ensure!(!selection.is_empty(), "The {} rule has no value", field.label());
+            anyhow::ensure!(
+                selection.values.iter().all(|value| !value.trim().is_empty()),
+                "The {} rule has an empty value",
+                field.label()
+            );
+            if selection.min.is_some() || selection.max.is_some() {
+                let mut check = Filters::default();
+                check.range(
+                    *field,
+                    selection.min.as_deref().unwrap_or(""),
+                    selection.max.as_deref().unwrap_or(""),
+                )?;
+            }
+        }
+        Ok(())
+    }
+    /// Read saved rules; invalid or unsupported rules are an error.
+    pub fn parse(json: &str) -> Result<Self> {
+        let rules: Self = serde_json::from_str(json)?;
+        rules.validate()?;
+        Ok(rules)
+    }
+    pub fn to_json(&self) -> Result<String> {
+        Ok(serde_json::to_string(self)?)
+    }
+    pub fn to_filters(&self) -> Filters {
+        Filters {
+            categories: self.categories.clone(),
+            rating: self.rating.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Scope {
     /// Presentation scope, used to refresh Bookshelf counts when rating changes.
@@ -381,6 +471,7 @@ pub fn facets(
         search,
     ];
     params.append(&mut args);
+    let album = album_scope(c, scope, params.len() + 1, &mut params)?;
     let rating = if field == Field::Rating {
         "1".into()
     } else {
@@ -396,7 +487,7 @@ pub fn facets(
     let sql=format!("SELECT CAST({expr} AS TEXT),COUNT(DISTINCT mp.id) FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id {tags_join}
         WHERE mp.trashed=0 AND (?1 IS NULL OR mp.folder_id IN (WITH RECURSIVE descendants(id) AS (
         SELECT id FROM folders WHERE id=?1 UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants))
-        AND (?2 IS NULL OR mp.id IN (SELECT photo_id FROM album_photos WHERE album_id=?2))
+        AND (?2 IS NULL OR mp.id IN (SELECT p.id FROM photos p WHERE {album}))
         AND (?3=0 OR mp.favorite=1) AND (?4 IS NULL OR mp.path LIKE ?4 ESCAPE '\\') AND {predicate} AND {rating}
         GROUP BY {expr} ORDER BY {expr}");
     let mut stmt = c.prepare(&sql)?;
@@ -433,6 +524,7 @@ pub fn count_matching(c: &Connection, scope: &Scope, filters: &Filters) -> Resul
         search,
     ];
     params.append(&mut args);
+    let album = album_scope(c, scope, params.len() + 1, &mut params)?;
     Ok(c.query_row(
         &format!(
             "SELECT COUNT(*) FROM photos p
@@ -443,9 +535,7 @@ pub fn count_matching(c: &Connection, scope: &Scope, filters: &Filters) -> Resul
                        UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id
                    ) SELECT id FROM descendants
                ))
-               AND (?2 IS NULL OR p.id IN (
-                   SELECT photo_id FROM album_photos WHERE album_id=?2
-               ))
+               AND (?2 IS NULL OR ({album}))
                AND (?3=0 OR p.favorite=1)
                AND (?4 IS NULL OR p.path LIKE ?4 ESCAPE '\\')
                AND ({predicate})"
@@ -453,6 +543,17 @@ pub fn count_matching(c: &Connection, scope: &Scope, filters: &Filters) -> Resul
         rusqlite::params_from_iter(params),
         |row| row.get(0),
     )?)
+}
+
+/// The album part of a browsing scope, in terms of `p`: manual membership or
+/// a Smart Album's rules, appending its parameters from `first`.
+fn album_scope(c: &Connection, scope: &Scope, first: usize, params: &mut Vec<Value>) -> Result<String> {
+    let Some(album_id) = scope.album else {
+        return Ok("1".into());
+    };
+    let (sql, mut args) = super::album_membership(c, album_id, first)?;
+    params.append(&mut args);
+    Ok(sql)
 }
 
 // Same persisted legacy rating choices; Corrupt retains its existing JPEG inspection path.

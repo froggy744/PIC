@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS albums (
   name TEXT NOT NULL COLLATE NOCASE UNIQUE,
   created_at INTEGER NOT NULL DEFAULT 0,
   cover_frame TEXT,
-  cover_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL
+  cover_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
+  rules TEXT
 );
 CREATE TABLE IF NOT EXISTS album_photos (
   album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
@@ -176,6 +177,17 @@ pub struct Album {
     pub cover_frame: Option<String>,
     /// Photo the album shows on its card, chosen from the thumbnail menu.
     pub cover_photo_id: Option<i64>,
+    /// Smart Album rules (`filters::AlbumRules` JSON). `None` is a manual
+    /// album with explicit `album_photos` membership.
+    pub rules: Option<String>,
+}
+
+impl Album {
+    /// A Smart Album is a read-only photo source: its rules choose its
+    /// photos, which can never be added by hand.
+    pub fn is_smart(&self) -> bool {
+        self.rules.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Default)]

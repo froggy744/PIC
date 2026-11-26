@@ -971,22 +971,24 @@ pub fn browse_photos_in_album(connection:&Connection,album_id:i64,search:Option<
     photos_in_album_filtered(connection,album_id,search,&filters::Filters::for_browsing(connection))
 }
 pub fn photos_in_album_filtered(connection:&Connection,album_id:i64,search:Option<&str>,filters:&filters::Filters)->Result<Vec<Photo>> {
-    let (predicate,args)=filters.predicate(4);
+    let (predicate,mut args)=filters.predicate(3);
+    let (membership, mut member_args) = album_membership(connection, album_id, 3 + args.len())?;
     let date = search.and_then(search_date_pattern);
     let search = search.map(search_like_pattern);
-    let text = search_text_predicate(2, 3);
+    let text = search_text_predicate(1, 2);
     let mut statement = connection.prepare(&format!(
         "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
-         FROM album_photos ap
-         JOIN photos p ON p.id = ap.photo_id
+         FROM photos p
          LEFT JOIN folders f ON f.id = p.folder_id
-         WHERE ap.album_id = ?1 AND p.trashed = 0
+         WHERE p.trashed = 0
+           AND ({membership})
            AND {text}
            AND ({predicate})
          ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE",
     ))?;
-    let mut values:Vec<rusqlite::types::Value>=vec![album_id.into(),search.into(),date.into()];
-    values.extend(args);
+    let mut values:Vec<rusqlite::types::Value>=vec![search.into(),date.into()];
+    values.append(&mut args);
+    values.append(&mut member_args);
     let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }

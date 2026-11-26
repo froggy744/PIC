@@ -3970,6 +3970,7 @@ mod tests {
                 photo_count: 23,
                 cover_frame: None,
                 cover_photo_id: None,
+                rules: None,
             },
             &on_delete,
         );

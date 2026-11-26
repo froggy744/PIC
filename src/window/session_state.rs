@@ -362,6 +362,7 @@ mod tests {
             photo_count: 0,
             cover_frame: None,
             cover_photo_id: None,
+            rules: None,
         }
     }
 

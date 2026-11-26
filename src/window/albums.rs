@@ -119,7 +119,8 @@ fn build_album_choices(
     });
     menu.append(&new_album);
 
-    let albums = db::albums(&context.connection.borrow()).unwrap_or_default();
+    // Destinations only: Smart Albums are read-only photo sources.
+    let albums = db::manual_albums(&context.connection.borrow()).unwrap_or_default();
     if !albums.is_empty() {
         menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     }
@@ -278,6 +279,31 @@ fn show_new_smart_album_rules(
             db::create_smart_album(&context.connection.borrow(), name, rules)?;
             refresh_album_ui(&context);
             Ok(())
+        }),
+    );
+}
+
+/// Open a Smart Album's rules from the sidebar or album card menu
+/// (`sidebar::EDIT_ALBUM_RULES_ACTION`). Saving refreshes album counts and,
+/// when that album is open, its photos.
+fn show_edit_album_rules(parent: &gtk::Widget, album_id: i64, context: PhotoActionContext) {
+    let Some(album) = db::albums(&context.connection.borrow())
+        .unwrap_or_default()
+        .into_iter()
+        .find(|album| album.id == album_id && album.is_smart())
+    else {
+        return;
+    };
+    let connection = context.connection.clone();
+    crate::albums_view::rules::present_edit_rules(
+        parent,
+        connection,
+        &album,
+        Rc::new(move || {
+            refresh_album_ui(&context);
+            if context.filter.get() == sidebar::SidebarFilter::Album(album_id) {
+                refresh_photo_actions_grid(&context);
+            }
         }),
     );
 }

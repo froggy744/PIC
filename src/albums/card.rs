@@ -655,7 +655,24 @@ fn album_card(
     if frame.is_some() {
         name.set_xalign(0.5);
     }
-    content.append(&name);
+    if album.is_smart() {
+        // The Smart Album mark sits before the name inside the same width.
+        name.add_css_class("smart-album-name");
+        let name_width = (width - SMART_NAME_ICON_SPACE).max(1);
+        name.set_width_request(name_width);
+        name.set_size_request(name_width, -1);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let icon = gtk::Image::from_icon_name(crate::sidebar::smart_album_icon_name());
+        icon.set_pixel_size(14);
+        icon.add_css_class("smart-album-icon");
+        icon.add_css_class("dim-label");
+        icon.set_tooltip_text(Some("Smart Album"));
+        row.append(&icon);
+        row.append(&name);
+        content.append(&row);
+    } else {
+        content.append(&name);
+    }
 
     // Photo count below album name.
     let count_text = if album.photo_count == 1 {

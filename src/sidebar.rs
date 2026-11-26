@@ -2545,6 +2545,14 @@ pub(crate) fn album_icon_name() -> &'static str {
     "pic-emblem-photos-symbolic"
 }
 
+/// The small symbolic icon that marks a Smart Album wherever albums are listed.
+pub(crate) fn smart_album_icon_name() -> &'static str {
+    "pic-smart-album-symbolic"
+}
+
+/// Window action that opens a Smart Album's rules (target: the album id).
+pub(crate) const EDIT_ALBUM_RULES_ACTION: &str = "win.edit-album-rules";
+
 fn populate_folders(
     list: &gtk::ListBox,
     folders: &[Folder],
@@ -3452,7 +3460,7 @@ fn append_album_filter(list: &gtk::ListBox, album: &Album, on_delete: &Rc<dyn Fn
     let no_unavailable_action: Rc<dyn Fn()> = Rc::new(|| {});
     let row = append_filter(
         list,
-        album_icon_name(),
+        if album.is_smart() { smart_album_icon_name() } else { album_icon_name() },
         &album.name,
         None,
         Some(album.photo_count),
@@ -3460,7 +3468,12 @@ fn append_album_filter(list: &gtk::ListBox, album: &Album, on_delete: &Rc<dyn Fn
         false,
         &no_unavailable_action,
     );
+    if album.is_smart() {
+        row.add_css_class("smart-album-row");
+        row.set_tooltip_text(Some("Smart Album"));
+    }
     let album_id = album.id;
+    let smart = album.is_smart();
     let on_delete = on_delete.clone();
     let row_for_menu = row.clone();
     let right_click = gtk::GestureClick::new();
@@ -3478,7 +3491,19 @@ fn append_album_filter(list: &gtk::ListBox, album: &Album, on_delete: &Rc<dyn Fn
             popover_for_delete.popdown();
             on_delete(album_id);
         });
-        popover.set_child(Some(&delete));
+        let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        if smart {
+            let edit = gtk::Button::with_label("Edit Rules…");
+            edit.add_css_class("flat");
+            edit.add_css_class("edit-album-rules-action");
+            edit.set_action_name(Some(EDIT_ALBUM_RULES_ACTION));
+            edit.set_action_target_value(Some(&album_id.to_variant()));
+            let popover_for_edit = popover.clone();
+            edit.connect_clicked(move |_| popover_for_edit.popdown());
+            menu.append(&edit);
+        }
+        menu.append(&delete);
+        popover.set_child(Some(&menu));
         popover.popup();
         gesture.set_state(gtk::EventSequenceState::Claimed);
     });

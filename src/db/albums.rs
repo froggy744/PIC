@@ -419,6 +419,7 @@ pub fn remove_photos_from_album(
     album_id: i64,
     photo_ids: &[i64],
 ) -> Result<usize> {
+    ensure_manual_album(connection, album_id)?;
     let transaction = connection.unchecked_transaction()?;
     let mut removed = 0;
     for photo_id in photo_ids {

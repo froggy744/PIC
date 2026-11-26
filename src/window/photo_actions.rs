@@ -588,12 +588,14 @@ fn show_photo_context_menu(
     {
         // The cover only makes sense inside an album, and always applies to
         // the album being viewed: no album list, no cross-album choices.
-        let already_cover = db::albums(&context.connection.borrow())
+        let viewed_album = db::albums(&context.connection.borrow())
             .unwrap_or_default()
             .into_iter()
-            .find(|album| album.id == album_id)
-            .and_then(|album| album.cover_photo_id)
-            == Some(photo.id());
+            .find(|album| album.id == album_id);
+        let already_cover =
+            viewed_album.as_ref().and_then(|album| album.cover_photo_id) == Some(photo.id());
+        // A Smart Album's rules decide its photos, so none can be removed by hand.
+        let manual = viewed_album.as_ref().is_some_and(|album| !album.is_smart());
         let set_cover = add_action("Set as Album Cover");
         set_cover.set_sensitive(!already_cover);
         let set_cover_context = context.clone();
@@ -616,11 +618,11 @@ fn show_photo_context_menu(
             refresh_album_ui(&set_cover_context);
         });
 
-        let remove = add_action("Remove from Album");
+        let remove = manual.then(|| add_action("Remove from Album"));
         let remove_context = context.clone();
         let remove_selection = selection_provider.clone();
         let dismiss_menu_for_remove = dismiss_menu.clone();
-        remove.connect_clicked(move |button| {
+        if let Some(remove) = remove { remove.connect_clicked(move |button| {
             dismiss_menu_for_remove();
             let ids = remove_selection();
             if let Err(error) =
@@ -640,7 +642,7 @@ fn show_photo_context_menu(
                 gallery.remove_photos(&ids);
             }
             refresh_album_ui(&remove_context);
-        });
+        }); }
     }
     {
         let separator = gtk::Separator::new(gtk::Orientation::Horizontal);

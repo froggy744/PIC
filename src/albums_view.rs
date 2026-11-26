@@ -26,7 +26,10 @@ const BOOKSHELF_MOVE_DURATION: f64 = 0.2;
 const BOOKSHELF_RUNTIME_KEY: &str = "picasa-bookshelf-runtime";
 const ALBUM_SIZE_KEY: &str = "albums-index-size";
 const ALBUM_SORT_KEY: &str = "albums-index-sort";
+const ALBUM_TYPE_KEY: &str = "albums-index-type";
 const FRAME_OPENING_KEY: &str = "picasa-album-frame-opening";
+/// Width the Smart Album icon and its gap take from an album name.
+const SMART_NAME_ICON_SPACE: i32 = 18;
 
 // Album UI implementation is split by responsibility but included into this
 // module so the refactor does not change callback visibility or state wiring.
@@ -494,6 +497,116 @@ mod tests {
             }
         }
         alpha
+    }
+
+    fn widgets_with_class(root: &gtk::Widget, class: &str, out: &mut Vec<gtk::Widget>) {
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            if widget.has_css_class(class) {
+                out.push(widget.clone());
+            }
+            widgets_with_class(&widget, class, out);
+            child = widget.next_sibling();
+        }
+    }
+
+    fn names_width(view: &gtk::ScrolledWindow, name: &str) -> i32 {
+        let mut found = Vec::new();
+        widgets_with_class(view.upcast_ref(), "album-name", &mut found);
+        found
+            .into_iter()
+            .find(|w| w.clone().downcast::<gtk::Label>().unwrap().text() == name)
+            .unwrap()
+            .measure(gtk::Orientation::Horizontal, -1)
+            .0
+    }
+
+    #[test]
+    fn album_type_choice_shows_both_kinds_by_default() {
+        let mut smart = album(2);
+        smart.rules = Some(r#"{"rating":"5"}"#.into());
+        let albums = vec![album(1), smart];
+        let ids = |kind| albums_of_type(&albums, kind).iter().map(|a| a.id).collect::<Vec<_>>();
+        assert_eq!(ids(0), vec![1, 2]);
+        assert_eq!(ids(1), vec![1]);
+        assert_eq!(ids(2), vec![2]);
+        assert_eq!(ids(9), vec![1, 2]);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn smart_albums_share_the_overview_and_its_type_filter() {
+        gtk::init().unwrap();
+        crate::register_bundled_icons();
+        let directory = std::env::temp_dir().join(format!(
+            "pic-smart-overview-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connection = Rc::new(RefCell::new(
+            db::open(&directory.join("library.db")).unwrap(),
+        ));
+        db::create_album(&connection.borrow(), "Trips").unwrap();
+        db::create_smart_album(
+            &connection.borrow(),
+            "Five stars",
+            &db::filters::AlbumRules { rating: "5".into(), ..Default::default() },
+        )
+        .unwrap();
+        let albums = db::albums(&connection.borrow()).unwrap();
+        let open = || {
+            build(&albums, connection.clone(), 100, Rc::new(|_| {}), Rc::new(|| {}), Rc::new(|| {}))
+        };
+        let names = |view: &gtk::ScrolledWindow| {
+            let mut found = Vec::new();
+            widgets_with_class(view.upcast_ref(), "album-name", &mut found);
+            found
+                .into_iter()
+                .map(|w| w.downcast::<gtk::Label>().unwrap().text().to_string())
+                .collect::<Vec<_>>()
+        };
+        let icons = |view: &gtk::ScrolledWindow| {
+            let mut found = Vec::new();
+            widgets_with_class(view.upcast_ref(), "smart-album-icon", &mut found);
+            found.len()
+        };
+        let count = |view: &gtk::ScrolledWindow| {
+            find_descendant_with_css_class(view.upcast_ref(), "albums-home-count")
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap()
+                .text()
+                .to_string()
+        };
+        let view = open();
+        let kind = find_descendant_with_css_class(view.upcast_ref(), "albums-type")
+            .unwrap()
+            .downcast::<gtk::DropDown>()
+            .unwrap();
+        // A new library lists both kinds together, in the one sorted list.
+        assert_eq!(kind.selected(), 0);
+        assert_eq!(names(&view), ["Five stars", "Trips"]);
+        assert_eq!(icons(&view), 1);
+        assert_eq!(count(&view), "2 albums");
+        // The mark and the shortened name together keep the card's width.
+        let smart_name = find_descendant_with_css_class(view.upcast_ref(), "smart-album-name")
+            .unwrap();
+        let row_width = smart_name.parent().unwrap().measure(gtk::Orientation::Horizontal, -1).0;
+        let plain_width = names_width(&view, "Trips");
+        assert_eq!(row_width, plain_width);
+
+        kind.set_selected(2);
+        assert_eq!(names(&view), ["Five stars"]);
+        assert_eq!(count(&view), "1 album");
+        kind.set_selected(1);
+        assert_eq!(names(&view), ["Trips"]);
+        assert_eq!(icons(&view), 0);
+        // The choice is remembered like Sort and Cover size.
+        let reopened = open();
+        assert_eq!(names(&reopened), ["Trips"]);
     }
 
     #[test]

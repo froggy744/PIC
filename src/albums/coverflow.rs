@@ -141,6 +141,9 @@ fn show_album_focus(
     state.focused_album_id.set(Some(selected.id));
     state.focused_index.set(state.selected);
     name.set_text(&selected.name);
+    if let Some(icon) = name.prev_sibling() {
+        icon.set_visible(selected.is_smart());
+    }
     count.set_text(&format!(
         "{} photo{}",
         selected.photo_count,
@@ -185,7 +188,17 @@ fn build_album_coverflow(
     let name = gtk::Label::new(None);
     name.add_css_class("albums-coverflow-name");
     name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    root.append(&name);
+    // The Smart Album mark before the name, shown for Smart Albums only.
+    let name_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    name_row.set_halign(gtk::Align::Center);
+    let smart_icon = gtk::Image::from_icon_name(crate::sidebar::smart_album_icon_name());
+    smart_icon.add_css_class("smart-album-icon");
+    smart_icon.add_css_class("dim-label");
+    smart_icon.set_tooltip_text(Some("Smart Album"));
+    smart_icon.set_visible(false);
+    name_row.append(&smart_icon);
+    name_row.append(&name);
+    root.append(&name_row);
     let count = gtk::Label::new(None);
     count.add_css_class("albums-coverflow-count");
     root.append(&count);

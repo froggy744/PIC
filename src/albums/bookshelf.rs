@@ -122,7 +122,8 @@ impl BookshelfItem {
             surface.set_size_request(cover_width, cover_height);
         }
         if let Some(name) = find_descendant_with_css_class(self.card.upcast_ref(), "album-name") {
-            name.set_width_request(cover_width);
+            let icon_space = if name.has_css_class("smart-album-name") { SMART_NAME_ICON_SPACE } else { 0 };
+            name.set_width_request((cover_width - icon_space).max(1));
         }
         if let Some(opening) = unsafe { self.cover.data::<PhotoOpening>(FRAME_OPENING_KEY) } {
             let (left, top, right, bottom) = photo_margins(

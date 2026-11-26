@@ -874,6 +874,21 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             create_context.clone(),
         );
     })));
+    let rules_context = action_context.clone();
+    let rules_parent = window.downgrade();
+    let edit_rules = gio::SimpleAction::new(
+        sidebar::EDIT_ALBUM_RULES_ACTION.trim_start_matches("win."),
+        Some(glib::VariantTy::INT64),
+    );
+    edit_rules.connect_activate(move |_, target| {
+        let (Some(album_id), Some(parent)) =
+            (target.and_then(|value| value.get::<i64>()), rules_parent.upgrade())
+        else {
+            return;
+        };
+        show_edit_album_rules(parent.upcast_ref(), album_id, rules_context.clone());
+    });
+    window.add_action(&edit_rules);
     let delete_context = action_context.clone();
     let delete_parent = window.clone();
     delete_album_slot.replace(Some(Rc::new(move |album_id| {

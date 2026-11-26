@@ -172,9 +172,10 @@ pub(super) struct ScanView {
     last_sidebar_count_update: Instant,
     thumbnail_dirty_paths: VecDeque<PathBuf>,
     thumbnail_dirty_seen: HashSet<PathBuf>,
-    /// The catalogue holds photos the shown list lacks and no live append
-    /// will add: new photos while a Folder view is shown. A rebuild clears
-    /// it; the job's end or Stop rebuilds while it is set.
+    /// The shown list differs from the catalogue as listed: photos it lacks
+    /// that no live append adds (new photos in a Folder view, a withheld
+    /// preferred pair half), or photos appended live at the end whatever the
+    /// sort. A rebuild clears it; the job's end or Stop rebuilds while set.
     view_stale: bool,
 }
 
@@ -499,7 +500,8 @@ impl ScanView {
                 ]);
             }
         }
-        // Any rebuild shows the catalogue as it is: nothing left to reconcile.
+        // Any rebuild shows the catalogue as it is: nothing left to reconcile,
+        // and appends still queued would show those photos twice.
         if effects.iter().any(|effect| {
             matches!(
                 effect,
@@ -507,6 +509,7 @@ impl ScanView {
             )
         }) {
             self.view_stale = false;
+            self.pending_photos.clear();
         }
         effects
     }
@@ -585,6 +588,8 @@ impl ScanView {
                     }
                 }
                 self.pending_photos.push_back(photo.clone());
+                // Appended at the end, out of order until a rebuild.
+                self.view_stale = true;
             } else if !indexed.newly_discovered {
                 // Folder refreshes deliberately avoid a full gallery
                 // rebuild: update the shown photos in place.
@@ -2184,12 +2189,12 @@ mod tests {
     fn a_new_pair_never_shows_both_halves_and_stop_shows_the_preferred_one() {
         let now = Instant::now();
         let (raw, jpeg) = (one(1, 1, "/p/a.NEF"), one(2, 1, "/p/a.jpg"));
-        // (mode, first, second) -> the live half; whether Stop rebuilds.
-        for (mode, first, second, live, stop_rebuilds) in [
-            (RawJpegPairMode::PreferRaw, &raw, &jpeg, 1, false),
-            (RawJpegPairMode::PreferRaw, &jpeg, &raw, 2, true),
-            (RawJpegPairMode::PreferJpeg, &jpeg, &raw, 2, false),
-            (RawJpegPairMode::PreferJpeg, &raw, &jpeg, 1, true),
+        // (mode, first, second) -> the live half.
+        for (mode, first, second, live) in [
+            (RawJpegPairMode::PreferRaw, &raw, &jpeg, 1),
+            (RawJpegPairMode::PreferRaw, &jpeg, &raw, 2),
+            (RawJpegPairMode::PreferJpeg, &jpeg, &raw, 2),
+            (RawJpegPairMode::PreferJpeg, &raw, &jpeg, 1),
         ] {
             let case = format!("{mode:?} first={first:?}");
             let facts = Facts {
@@ -2213,8 +2218,10 @@ mod tests {
                 &facts,
                 &[ScanEvent::Cancelled { imported: 2 }],
             );
-            let expected = if stop_rebuilds { (1, 0) } else { (0, 0) };
-            assert_eq!(grid_rebuilds(&stopped), expected, "{case}");
+            // Stop rebuilds once either way: the first half was appended
+            // live (out of order), and when it is the non-preferred half
+            // the rebuild also shows the preferred one.
+            assert_eq!(grid_rebuilds(&stopped), (1, 0), "{case}");
 
             // The same order finishing normally: an import's end of indexing
             // rebuilds the gallery from the catalogue (the full list pairs).
@@ -2224,17 +2231,19 @@ mod tests {
             };
             let mut view = ScanView::new(now);
             let mut import = self::job(ScanJobKind::Import);
+            run_events(
+                &mut view,
+                &mut import,
+                &facts,
+                &[first.clone(), second.clone()],
+            );
+            assert_eq!(drain_appends(&mut view, 7, now), [live], "{case}");
             let end = run_events(
                 &mut view,
                 &mut import,
                 &facts,
-                &[
-                    first.clone(),
-                    second.clone(),
-                    ScanEvent::IndexingFinished { imported: 2 },
-                ],
+                &[ScanEvent::IndexingFinished { imported: 2 }],
             );
-            assert_eq!(drain_appends(&mut view, 7, now), [live], "{case}");
             assert_eq!(grid_rebuilds(&end), (1, 0), "{case}");
             let finished = run_events(
                 &mut view,
@@ -2311,7 +2320,8 @@ mod tests {
                 &facts,
                 &[ScanEvent::Cancelled { imported: 5 }],
             );
-            assert_eq!(grid_rebuilds(&stopped), (0, 0), "{mode:?}");
+            // Live appends are out of order until a rebuild: Stop rebuilds.
+            assert_eq!(grid_rebuilds(&stopped), (1, 0), "{mode:?}");
         }
         // Both mode shows both halves of a pair live.
         let facts = Facts::default();
@@ -2399,18 +2409,24 @@ mod tests {
         let facts = Facts::default();
         let mut view = ScanView::new(now);
         let mut job = job(ScanJobKind::Import);
+        run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[indexed(&[
+                (1, 1, "/p/a.jpg", true),
+                (2, 3, "/p/sub/b.jpg", true),
+            ])],
+        );
+        assert_eq!(drain_appends(&mut view, 7, now), [1, 2]);
         let effects = run_events(
             &mut view,
             &mut job,
             &facts,
-            &[
-                indexed(&[(1, 1, "/p/a.jpg", true), (2, 3, "/p/sub/b.jpg", true)]),
-                ScanEvent::IndexingFinished { imported: 2 },
-            ],
+            &[ScanEvent::IndexingFinished { imported: 2 }],
         );
-        assert_eq!(drain_appends(&mut view, 7, now), [1, 2]);
         assert_eq!(grid_rebuilds(&effects), (1, 0));
-        // Stop after live appends: nothing is missing, no rebuild.
+        // Stop after live appends: rebuilt once, in order.
         let mut view = ScanView::new(now);
         let mut job = job_with_queue(ScanJobKind::Refresh);
         job.stop_requested = true;
@@ -2423,7 +2439,7 @@ mod tests {
                 ScanEvent::Cancelled { imported: 1 },
             ],
         );
-        assert_eq!(grid_rebuilds(&stopped), (0, 0));
+        assert_eq!(grid_rebuilds(&stopped), (1, 0));
     }
 
     #[test]
@@ -2517,6 +2533,76 @@ mod tests {
             }],
         );
         assert_eq!(grid_rebuilds(&last), (0, 1));
+    }
+
+    #[test]
+    fn stop_after_live_appends_rebuilds_all_photos_in_order() {
+        // Live appends land at the end whatever the sort: Stop must rebuild
+        // once, as the end of indexing or of the job would.
+        for kind in [
+            ScanJobKind::Import,
+            ScanJobKind::Refresh,
+            ScanJobKind::FolderRefresh,
+        ] {
+            let facts = Facts::default();
+            let mut view = ScanView::new(Instant::now());
+            let mut job = job_with_queue(kind);
+            run_events(&mut view, &mut job, &facts, &[one(1, 1, "/p/a.jpg")]);
+            job.stop_requested = true;
+            let stopped = run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[ScanEvent::Cancelled { imported: 1 }],
+            );
+            assert_eq!(grid_rebuilds(&stopped), (1, 0), "{kind:?}");
+        }
+        // Stop after the end of indexing already rebuilt: nothing more.
+        let facts = Facts::default();
+        let mut view = ScanView::new(Instant::now());
+        let mut job = job(ScanJobKind::Import);
+        run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[
+                one(1, 1, "/p/a.jpg"),
+                ScanEvent::IndexingFinished { imported: 1 },
+            ],
+        );
+        job.stop_requested = true;
+        let stopped = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[ScanEvent::Cancelled { imported: 1 }],
+        );
+        assert_eq!(grid_rebuilds(&stopped), (0, 0));
+    }
+
+    #[test]
+    fn a_rebuild_drops_appends_still_queued() {
+        // The rebuild lists every catalogued photo; appending the queued
+        // ones after it would show them twice.
+        let now = Instant::now();
+        let facts = Facts::default();
+        let mut view = ScanView::new(now);
+        let mut job = job(ScanJobKind::Import);
+        let rows: Vec<_> = (1..=400).map(|id| (id, 1, "/p/a.jpg", true)).collect();
+        run_events(&mut view, &mut job, &facts, &[indexed(&rows)]);
+        assert_eq!(
+            view.end_tick(7, Vec::new(), false, now).append.len(),
+            PHOTO_APPEND_BATCH
+        );
+        let end = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[ScanEvent::IndexingFinished { imported: 400 }],
+        );
+        assert_eq!(grid_rebuilds(&end), (1, 0));
+        assert_eq!(view.pending_photo_count(), 0);
+        assert!(view.end_tick(7, Vec::new(), false, now).append.is_empty());
     }
 
     #[test]

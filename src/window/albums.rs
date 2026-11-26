@@ -283,6 +283,19 @@ fn show_new_smart_album_rules(
     );
 }
 
+/// Save as Smart Album… from the metadata filter row: an independent copy of
+/// the active supported filters (including the rating filter) to name and
+/// review. Online, Offline and Corrupt are not stored metadata; when one is
+/// active the dialog says it was left out.
+fn show_save_filters_as_smart_album(parent: &gtk::Widget, context: PhotoActionContext) {
+    let browsing = db::filters::Filters::for_browsing(&context.connection.borrow());
+    let (rules, unsaved) = db::filters::AlbumRules::capture(&browsing);
+    let notice = unsaved.files.map(|files| {
+        format!("The “{files}” filter cannot be saved in a Smart Album and was left out.")
+    });
+    show_new_smart_album_rules(parent, String::new(), Some(&rules), notice, context);
+}
+
 /// Open a Smart Album's rules from the sidebar or album card menu
 /// (`sidebar::EDIT_ALBUM_RULES_ACTION`). Saving refreshes album counts and,
 /// when that album is open, its photos.

@@ -889,6 +889,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         show_edit_album_rules(parent.upcast_ref(), album_id, rules_context.clone());
     });
     window.add_action(&edit_rules);
+    let save_context = action_context.clone();
+    let save_parent = window.downgrade();
+    let save_smart_album = gio::SimpleAction::new(
+        metadata_panel::SAVE_FILTERS_AS_SMART_ALBUM_ACTION.trim_start_matches("win."),
+        None,
+    );
+    save_smart_album.connect_activate(move |_, _| {
+        if let Some(parent) = save_parent.upgrade() {
+            show_save_filters_as_smart_album(parent.upcast_ref(), save_context.clone());
+        }
+    });
+    window.add_action(&save_smart_album);
     let delete_context = action_context.clone();
     let delete_parent = window.clone();
     delete_album_slot.replace(Some(Rc::new(move |album_id| {

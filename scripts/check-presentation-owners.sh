@@ -131,7 +131,7 @@ ALLOW=(
   "src/window.rs|WINDOW_WIDTH_SETTING_KEY,|test-only re-export for the window test fixtures"
   "src/window/metadata_panel.rs|(LAST_VIEW_SETTING_KEY, format!(\"folder:{folder}\")),|test fixture (metadata panel window test)"
   "src/albums_view.rs|db::set_setting(&connection.borrow(), \"last-view\", \"albums\").unwrap();|test fixture (cover flow full-app validation)"
-  "src/window/build.rs|sidebar::update_library_counts(&sidebar_for_events, counts);|the scan's own batched Library counts (candidate 16 F4)"
+  "src/window/scan_view_widgets.rs|sidebar::update_library_counts(&parts.sidebar, counts);|the scan's own batched Library counts (candidate 16 F4; scan timer since candidate 19)"
   "src/window/photo_actions.rs|info.photo_updated(&destination);|test fixture (the shown photo)"
   "src/window/photo_actions.rs|info.photo_updated(&viewer_photo);|test fixture (the shown photo)"
   "src/window/photo_actions.rs|sidebar::update_library_counts(&sidebar, db::sidebar_counts(&connection.borrow()).unwrap());|test fixture (trash counts test)"
@@ -271,7 +271,9 @@ RS
                 && stack.visible_child_name().as_deref() == Some("photos")
             panel_for_close.set_lightbox_open(false);
             panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
-                sidebar::update_library_counts(&sidebar_for_events, counts);
+RS
+  cat >"$root/src/window/scan_view_widgets.rs" <<'RS'
+            sidebar::update_library_counts(&parts.sidebar, counts);
 RS
   cat >"$root/$COLLECTION_NAV_OWNER" <<'RS'
         lightbox.set_collection_navigation_handler(move |direction| self.navigate(direction));

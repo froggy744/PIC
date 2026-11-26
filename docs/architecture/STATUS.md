@@ -767,6 +767,15 @@ Bugs found by the review (read from the code; fix individually):
 - **Fixed** (16), handoff bug 3, `5d83b50c` on `fix/round-three-bugs`: rotating in the viewer refreshed the gallery Properties surface. Rotation moved from `build()` into `rotate_current_photo` (`photo_actions.rs`), which shows the change through `photo_mark_commands::show_changed_photo`, the same front-based surface choice photo marks use (viewer panel while the viewer is in front). Test: `rotating_in_the_viewer_refreshes_the_viewer_properties` (display).
 - **Fixed** (16), handoff bug 2, `24297e1b` on `fix/round-three-bugs`: trash did not update the Library counts. The trash work moved from the dialog response into `trash_photos` (`photo_actions.rs`), which refreshes through `photo_mark_commands::update_counts` (Smart Album + Library counts), also after a part-way failure. Test: `trashing_photos_updates_library_counts` (display; a private `XDG_DATA_HOME` Trash under `target/`).
 
+### What is left (2026-11-26, after 18)
+Candidates 14-18 merged; only `main` remains (local and GitHub).
+- 18: by-hand check of Up/Down in the viewer; a test for a library switch during navigation.
+- 16: the sidebar folder favourite never recounts Smart Albums.
+- 17: pre-existing failure `album_view_modes_preserve_albums_and_click_navigation` (bookshelf photo-count colour), also on `main`; not investigated.
+- 14: `scripts/browse-scope-checks/run.sh` never run.
+- Not started (deferred): 19 scan events as a reducer; 20 `PhotoActionContext` shrinks.
+Suggested order: 18 by-hand check, the 16 recount fix, then 19 when a refactor is wanted.
+
 ### Next (updated 2026-11-26)
 Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands. Progress (2026-11-26): all five fixed (`18923e3e`, `24297e1b`, `5d83b50c`, `d3d2252a`, `ab33310c`), each with a test seen red first. Merged into `main` 2026-11-26 (merge `4db4685f`), followed by `feature/album-links` (merge `e2c4b980`: one Add to Album list and New Album dialog, the photo menu's In Albums links; issues #266, #267). Both branches deleted. Round three (14-20) stays deferred.
 

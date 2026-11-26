@@ -34,6 +34,7 @@ mod photo_mark_commands;
 mod photo_marks;
 mod photo_list;
 mod scan_view;
+mod scan_view_widgets;
 mod album_list;
 mod album_list_widgets;
 use album_list::AlbumChange;

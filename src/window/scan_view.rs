@@ -17,7 +17,7 @@ use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use super::{format_count, ScanJobKind, ScanJobState};
+use super::{format_count, scan_may_append_new_photos, ScanJobKind, ScanJobState};
 use crate::db;
 use crate::scanner::ScanEvent;
 use crate::sidebar::SidebarFilter;
@@ -59,8 +59,6 @@ pub(super) trait ScanViewFacts {
 pub(super) enum ScanEffect {
     /// Show the operation progress, unless the user dismissed it.
     ShowProgress,
-    /// Pass the event on to onboarding.
-    NotifyOnboarding,
     /// Set the status label.
     Status(String),
     /// Show (`true`) or hide the status box.
@@ -145,6 +143,15 @@ pub(super) struct TickWork {
     pub thumbnails: Vec<PathBuf>,
 }
 
+/// Whether an event is shown, and what showing its generation needs first.
+#[derive(Debug, Default)]
+pub(super) struct Admission {
+    /// Apply these even when the event is not shown.
+    pub effects: Vec<ScanEffect>,
+    /// Pass the event to onboarding, then to [`ScanView::on_event`].
+    pub admitted: bool,
+}
+
 /// The scan as shown: per-generation state between ticks.
 pub(super) struct ScanView {
     displayed_generation: Option<u64>,
@@ -216,36 +223,44 @@ impl ScanView {
         }
     }
 
-    /// One event of generation `generation`. Returns nothing for an event
-    /// that is not shown (an older generation, or after Stop).
-    pub(super) fn on_event(
+    /// Whether an event of generation `generation` is shown: not from an
+    /// older generation, and after Stop only the job's end and catalogue
+    /// changes. The first event of a generation resets the view.
+    pub(super) fn admit(
         &mut self,
-        job: &mut ScanJobState,
+        job: &ScanJobState,
         generation: u64,
         event: &ScanEvent,
-        facts: &dyn ScanViewFacts,
-        now: Instant,
-    ) -> Vec<ScanEffect> {
+    ) -> Admission {
+        let mut admission = Admission::default();
         // Events from a cancelled/superseded scan are still allowed to
         // finish in their worker threads, but they must never overwrite
         // the progress UI or completion state of the newer job.
         if generation != job.generation {
-            return Vec::new();
+            return admission;
         }
-        let mut effects = Vec::new();
         if self.displayed_generation != Some(generation) {
             self.displayed_generation = Some(generation);
-            effects.push(ScanEffect::ShowProgress);
+            admission.effects.push(ScanEffect::ShowProgress);
             self.scan_count = 0;
             self.thumbnail_total = 0;
             self.failure_message_shown = false;
             self.pending_sidebar_counts = None;
             self.photos_since_sidebar_update = 0;
         }
-        if job.stop_requested && !passes_after_stop(event) {
-            return effects;
-        }
-        effects.push(ScanEffect::NotifyOnboarding);
+        admission.admitted = !job.stop_requested || passes_after_stop(event);
+        admission
+    }
+
+    /// An admitted event: update the view and the job, and say what to show.
+    pub(super) fn on_event(
+        &mut self,
+        job: &mut ScanJobState,
+        event: &ScanEvent,
+        facts: &dyn ScanViewFacts,
+        now: Instant,
+    ) -> Vec<ScanEffect> {
+        let mut effects = Vec::new();
         match event {
             ScanEvent::Started { root } => {
                 self.scan_count = 0;
@@ -285,7 +300,7 @@ impl ScanView {
                 added,
                 previews_ready,
                 catalog_complete,
-                ..
+                metadata_ready: _metadata_ready,
             } => {
                 let phase = if *catalog_complete {
                     "Finishing previews"
@@ -690,14 +705,6 @@ fn is_refresh(kind: Option<ScanJobKind>) -> bool {
     )
 }
 
-/// Whether a scan may append the photos it discovers to the grid as they
-/// arrive: neither the metadata filters nor the toolbar rating narrow the
-/// view (a new photo may not match them). Otherwise the scan's final grid
-/// refresh shows the ones that do.
-fn scan_may_append_new_photos(scope: &db::BrowseScope) -> bool {
-    !scope.is_narrowed()
-}
-
 /// The status a finished job leaves.
 fn completion_message(
     kind: Option<ScanJobKind>,
@@ -825,6 +832,25 @@ mod tests {
         }
     }
 
+    /// One event as the adapter runs it: admission, then the body. Returns
+    /// nothing for an event that is not admitted beyond its reset.
+    fn step(
+        view: &mut ScanView,
+        job: &mut ScanJobState,
+        generation: u64,
+        event: &ScanEvent,
+        facts: &Facts,
+        now: Instant,
+    ) -> Vec<ScanEffect> {
+        let mut admission = view.admit(job, generation, event);
+        if admission.admitted {
+            admission
+                .effects
+                .extend(view.on_event(job, event, facts, now));
+        }
+        admission.effects
+    }
+
     fn statuses(effects: &[ScanEffect]) -> Vec<String> {
         effects
             .iter()
@@ -858,7 +884,8 @@ mod tests {
         let mut job = job(ScanJobKind::Import);
         let facts = Facts::default();
 
-        let stale = view.on_event(
+        let stale = step(
+            &mut view,
             &mut job,
             6,
             &ScanEvent::DiscoveryProgress { found: 3 },
@@ -867,7 +894,8 @@ mod tests {
         );
         assert!(stale.is_empty());
 
-        let first = view.on_event(
+        let first = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::DiscoveryProgress { found: 3 },
@@ -875,10 +903,10 @@ mod tests {
             now,
         );
         assert!(matches!(first[0], ScanEffect::ShowProgress));
-        assert!(matches!(first[1], ScanEffect::NotifyOnboarding));
         assert_eq!(statuses(&first), ["Scanning… found 3 photos"]);
 
-        let second = view.on_event(
+        let second = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::DiscoveryProgress { found: 4 },
@@ -892,13 +920,13 @@ mod tests {
             path: "/a.jpg".into(),
             error: "bad".into(),
         };
-        view.on_event(&mut job, 7, &failed, &facts, now);
+        step(&mut view, &mut job, 7, &failed, &facts, now);
         assert_eq!(
-            statuses(&view.on_event(&mut job, 7, &failed, &facts, now)),
+            statuses(&step(&mut view, &mut job, 7, &failed, &facts, now)),
             ["Scanning… some files failed"]
         );
         job.generation = 8;
-        let again = view.on_event(&mut job, 8, &failed, &facts, now);
+        let again = step(&mut view, &mut job, 8, &failed, &facts, now);
         assert!(matches!(again[0], ScanEffect::ShowProgress));
         assert_eq!(statuses(&again), ["Some files could not be added: bad"]);
     }
@@ -906,7 +934,6 @@ mod tests {
     #[test]
     fn after_stop_only_completion_and_catalogue_events_pass() {
         let now = Instant::now();
-        let facts = Facts::default();
         for (event, passes) in [
             (ScanEvent::DiscoveryProgress { found: 1 }, false),
             (ScanEvent::Started { root: "/p".into() }, false),
@@ -940,9 +967,12 @@ mod tests {
             let mut view = ScanView::new(now);
             let mut job = job(ScanJobKind::Import);
             job.stop_requested = true;
-            let effects = view.on_event(&mut job, 7, &event, &facts, now);
-            let notified = has(&effects, |e| matches!(e, ScanEffect::NotifyOnboarding));
-            assert_eq!(notified, passes, "{event:?}");
+            let admission = view.admit(&job, 7, &event);
+            assert_eq!(admission.admitted, passes, "{event:?}");
+            assert!(
+                matches!(admission.effects[..], [ScanEffect::ShowProgress]),
+                "{event:?}"
+            );
         }
     }
 
@@ -1126,7 +1156,8 @@ mod tests {
             };
             let mut view = ScanView::new(now);
             let mut job = job(ScanJobKind::Import);
-            let effects = view.on_event(
+            let effects = step(
+                &mut view,
                 &mut job,
                 7,
                 &indexed(&[(5, folder, "/a.jpg", new)]),
@@ -1156,7 +1187,8 @@ mod tests {
         };
         let mut view = ScanView::new(now);
         let mut job = job(ScanJobKind::Import);
-        view.on_event(
+        step(
+            &mut view,
             &mut job,
             7,
             &indexed(&[
@@ -1179,11 +1211,12 @@ mod tests {
         let mut view = ScanView::new(now);
         let mut job = job(ScanJobKind::Import);
         let rows: Vec<_> = (1..=400).map(|id| (id, 1, "/a.jpg", true)).collect();
-        view.on_event(&mut job, 7, &indexed(&rows), &facts, now);
+        step(&mut view, &mut job, 7, &indexed(&rows), &facts, now);
 
         let mut updated = photo(3, 1, "/a.jpg");
         updated.camera = Some("Updated".into());
-        let effects = view.on_event(
+        let effects = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::PhotosUpdated {
@@ -1196,7 +1229,8 @@ mod tests {
             &effects,
             |e| matches!(e, ScanEffect::PhotosChanged(p) if p.len() == 1)
         ));
-        view.on_event(
+        step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::PhotosRemoved { ids: vec![2] },
@@ -1231,7 +1265,8 @@ mod tests {
         let mut job = job(ScanJobKind::Import);
 
         let mut view = ScanView::new(now);
-        view.on_event(
+        step(
+            &mut view,
             &mut job,
             7,
             &indexed(&[(1, 1, "/a.jpg", true)]),
@@ -1242,7 +1277,8 @@ mod tests {
         assert_eq!(view.pending_photo_count(), 0);
 
         let mut view = ScanView::new(now);
-        view.on_event(
+        step(
+            &mut view,
             &mut job,
             7,
             &indexed(&[(1, 1, "/a.jpg", true)]),
@@ -1255,7 +1291,8 @@ mod tests {
         assert!(work.sidebar_counts.is_none());
         // The next event of the new generation shows the progress again.
         job.generation = 8;
-        let effects = view.on_event(
+        let effects = step(
+            &mut view,
             &mut job,
             8,
             &ScanEvent::DiscoveryProgress { found: 1 },
@@ -1276,7 +1313,8 @@ mod tests {
         let mut view = ScanView::new(start);
         let later = |ms| start + Duration::from_millis(ms);
 
-        view.on_event(
+        step(
+            &mut view,
             &mut job,
             7,
             &indexed(&[(1, 1, "/a.jpg", true)]),
@@ -1299,14 +1337,15 @@ mod tests {
         );
 
         let rows: Vec<_> = (1..=50).map(|id| (id, 1, "/a.jpg", true)).collect();
-        view.on_event(&mut job, 7, &indexed(&rows), &facts, later(280));
+        step(&mut view, &mut job, 7, &indexed(&rows), &facts, later(280));
         assert!(view
             .end_tick(7, Vec::new(), false, later(280))
             .sidebar_counts
             .is_some());
 
         // Reconciliation counts show on the next tick without photos.
-        view.on_event(
+        step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::LibraryCountsChanged {
@@ -1329,7 +1368,8 @@ mod tests {
         let mut job = job(ScanJobKind::Import);
         let mut view = ScanView::new(start);
 
-        let first = view.on_event(
+        let first = step(
+            &mut view,
             &mut job,
             7,
             &indexed(&[(1, 1, "/a.jpg", true)]),
@@ -1337,7 +1377,8 @@ mod tests {
             later(200),
         );
         assert_eq!(statuses(&first), ["Indexed 1 photos"]);
-        let second = view.on_event(
+        let second = step(
+            &mut view,
             &mut job,
             7,
             &indexed(&[(2, 1, "/a.jpg", true)]),
@@ -1346,7 +1387,8 @@ mod tests {
         );
         assert!(statuses(&second).is_empty());
 
-        let started = view.on_event(
+        let started = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::ThumbnailsStarted { total: 300 },
@@ -1357,7 +1399,8 @@ mod tests {
         assert!(has(&started, |e| matches!(e, ScanEffect::StopButton(true))));
         for index in 0..300 {
             let path = PathBuf::from(format!("/t{index}.jpg"));
-            view.on_event(
+            step(
+                &mut view,
                 &mut job,
                 7,
                 &ScanEvent::ThumbnailCreated { path },
@@ -1366,7 +1409,8 @@ mod tests {
             );
         }
         // The same path twice is refreshed once; a priority path joins the queue.
-        view.on_event(
+        step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::ThumbnailCreated {
@@ -1375,7 +1419,8 @@ mod tests {
             &facts,
             later(270),
         );
-        let created = view.on_event(
+        let created = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::ThumbnailCreated {
@@ -1406,7 +1451,8 @@ mod tests {
         let facts = Facts::default();
         let mut job = job(ScanJobKind::Import);
         let mut view = ScanView::new(Instant::now());
-        let started = view.on_event(
+        let started = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::Started {
@@ -1417,7 +1463,8 @@ mod tests {
         );
         assert_eq!(statuses(&started), ["Scanning photos…"]);
         assert!(has(&started, |e| matches!(e, ScanEffect::StopButton(true))));
-        let indexed = view.on_event(
+        let indexed = step(
+            &mut view,
             &mut job,
             7,
             &indexed(&[(1, 1, "/a.jpg", true)]),
@@ -1433,10 +1480,11 @@ mod tests {
             catalog_complete: false,
         };
         assert_eq!(
-            statuses(&view.on_event(&mut job, 7, &progress, &facts, now)),
+            statuses(&step(&mut view, &mut job, 7, &progress, &facts, now)),
             ["Adding photos · 1,500 / 2,000"]
         );
-        let finished = view.on_event(
+        let finished = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::IndexingFinished { imported: 4 },
@@ -1452,7 +1500,8 @@ mod tests {
         let facts = Facts::default();
         let mut job = job(ScanJobKind::Maintenance);
         let mut view = ScanView::new(now);
-        let started = view.on_event(
+        let started = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::Started {
@@ -1480,7 +1529,8 @@ mod tests {
         ] {
             let mut view = ScanView::new(now);
             let mut job = job(kind);
-            let effects = view.on_event(
+            let effects = step(
+                &mut view,
                 &mut job,
                 7,
                 &ScanEvent::IndexingFinished { imported: 3 },
@@ -1509,7 +1559,8 @@ mod tests {
         job.pending.push_back("/p/b".into());
         job.active_root = Some("/p/a".into());
 
-        let effects = view.on_event(
+        let effects = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::Finished {
@@ -1527,7 +1578,8 @@ mod tests {
         assert_eq!(job.kind, Some(ScanJobKind::Refresh));
 
         job.pending.clear();
-        let last = view.on_event(
+        let last = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::Finished {
@@ -1556,7 +1608,8 @@ mod tests {
         // Stop wins over the queue: no next folder.
         let mut job = job_with_queue(ScanJobKind::Refresh);
         job.stop_requested = true;
-        let stopped = view.on_event(
+        let stopped = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::Finished {
@@ -1672,7 +1725,8 @@ mod tests {
             };
             let mut view = ScanView::new(now);
             let mut job = job(kind);
-            let effects = view.on_event(
+            let effects = step(
+                &mut view,
                 &mut job,
                 7,
                 &ScanEvent::Finished {
@@ -1729,7 +1783,8 @@ mod tests {
             let mut view = ScanView::new(now);
             let mut job = job(kind);
             if thumbnails > 0 {
-                view.on_event(
+                step(
+                    &mut view,
                     &mut job,
                     7,
                     &ScanEvent::ThumbnailsStarted { total: thumbnails },
@@ -1737,7 +1792,8 @@ mod tests {
                     now,
                 );
             }
-            let effects = view.on_event(
+            let effects = step(
+                &mut view,
                 &mut job,
                 7,
                 &ScanEvent::Finished { imported, failed },
@@ -1799,7 +1855,8 @@ mod tests {
         let mut view = ScanView::new(now);
         let mut job = job(ScanJobKind::Maintenance);
         job.active_root = Some("/p".into());
-        let effects = view.on_event(
+        let effects = step(
+            &mut view,
             &mut job,
             7,
             &ScanEvent::Finished {
@@ -1836,7 +1893,8 @@ mod tests {
             let mut job = job_with_queue(kind);
             job.stop_requested = true;
             job.imported_total = 10;
-            let effects = view.on_event(
+            let effects = step(
+                &mut view,
                 &mut job,
                 7,
                 &ScanEvent::Cancelled { imported: 4 },
@@ -1872,9 +1930,16 @@ mod tests {
             };
             let mut view = ScanView::new(now);
             let mut job = job(ScanJobKind::Refresh);
-            let effects = view.on_event(&mut job, 7, &ScanEvent::FoldersRemoved, &facts, now);
-            assert!(matches!(effects[2], ScanEffect::RecountSmartAlbums));
-            assert!(matches!(effects[3], ScanEffect::RefreshAvailability));
+            let effects = step(
+                &mut view,
+                &mut job,
+                7,
+                &ScanEvent::FoldersRemoved,
+                &facts,
+                now,
+            );
+            assert!(matches!(effects[1], ScanEffect::RecountSmartAlbums));
+            assert!(matches!(effects[2], ScanEffect::RefreshAvailability));
             assert_eq!(
                 has(&effects, |e| matches!(e, ScanEffect::ShowAllPhotos)),
                 leaves,
@@ -1906,7 +1971,8 @@ mod tests {
         for (kind, appends) in [(ScanJobKind::Import, true), (ScanJobKind::Refresh, false)] {
             let mut view = ScanView::new(now);
             let mut job = job(kind);
-            let effects = view.on_event(
+            let effects = step(
+                &mut view,
                 &mut job,
                 7,
                 &ScanEvent::FolderStarted {

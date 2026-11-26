@@ -1132,10 +1132,6 @@ impl Gallery {
         }
     }
 
-    pub fn update_edit_recipe(&self, id: i64, recipe: &str) {
-        self.update_edit_recipes_batch(&[(id, recipe.to_string())]);
-    }
-
     pub fn update_edit_recipes_batch(&self, updates: &[(i64, String)]) {
         if updates.is_empty() {
             return;

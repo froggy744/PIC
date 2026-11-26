@@ -44,24 +44,6 @@ fn refresh_sidebar_after_folder_change(context: &PhotoActionContext) {
     albums_edited(context);
 }
 
-/// A photo change to `field` (tags, edits) that can move photos in or out of
-/// Smart Albums: recount them and, when the open album is a Smart Album with
-/// a rule on `field`, rebuild its photos. Returns whether it rebuilt them.
-fn smart_albums_changed(context: &PhotoActionContext, field: db::filters::Field) -> bool {
-    refresh_smart_album_counts(context);
-    let sidebar::SidebarFilter::Album(album_id) = context.filter.get() else {
-        return false;
-    };
-    let uses_field = db::album_rules(&context.connection.borrow(), album_id)
-        .ok()
-        .flatten()
-        .is_some_and(|rules| rules.categories.contains_key(&field));
-    if uses_field {
-        refresh_photo_actions_grid(context);
-    }
-    uses_field
-}
-
 /// The InfoBar's Add to Album list, built each time it opens, so it lists
 /// the open library's manual albums as they are now (like the photo menu
 /// and Properties); no album change has to rebuild it.

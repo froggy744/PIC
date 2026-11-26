@@ -590,6 +590,16 @@ fn apply_photo_list_pairing(gallery: &grid::Gallery, list: PhotoList) -> Vec<db:
     list.photos
 }
 
+/// Show a list built on the GTK thread (library switch, collection
+/// navigation) at once: its pairing state, then its photos. Any refresh
+/// still running is invalidated first, so it cannot replace them later.
+fn show_photo_list_now(gallery: &grid::Gallery, list: PhotoList) -> Vec<db::Photo> {
+    invalidate_pending_grid_navigation();
+    let photos = apply_photo_list_pairing(gallery, list);
+    gallery.replace(&photos);
+    photos
+}
+
 /// Whether a scan may append the photos it discovers to the grid as they
 /// arrive: neither the metadata filters nor the toolbar rating narrow the
 /// view (a new photo may not match them). Otherwise the scan's final grid
@@ -1597,6 +1607,40 @@ mod photo_action_tests {
         gallery.set_grouping(grid::GroupMode::Folder, grid::GroupDate::Taken);
         gallery.replace(&photos);
         assert_eq!(gallery.photo_objects().iter().map(|p| p.id()).collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn a_gallery_shown_now_drops_an_older_refresh() {
+        use super::*;
+        gtk::init().unwrap();
+        let directory = std::env::temp_dir().join(format!("pic-stale-refresh-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("library.db");
+        let _ = std::fs::remove_file(&path);
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        connection.execute_batch(
+            "INSERT INTO photos(id,path) VALUES (1,'/old/a.jpg'),(2,'/old/b.jpg'),(3,'/old/c.jpg');",
+        ).unwrap();
+        let connection = Rc::new(RefCell::new(connection));
+        let gallery = Rc::new(grid::Gallery::new(&[], 180, |_| {}, |_, _, _| {},
+            |_, _, _, _| {}, |_, _| {}, |_| {}));
+        // A refresh still running when a library switch or collection
+        // navigation shows its own list must not land on top of it.
+        refresh_grid(&connection, sidebar::SidebarFilter::All, "",
+            PhotoSort { field: SortField::Name, direction: SortDirection::Ascending }, &gallery);
+        let mut newer = photo("/new/z.jpg", None, None, None, None);
+        newer.id = 9;
+        show_photo_list_now(&gallery, PhotoList { photos: vec![newer], ..PhotoList::default() });
+        let context = glib::MainContext::default();
+        let end = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        while std::time::Instant::now() < end {
+            context.iteration(false);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(gallery.photo_objects().iter().map(|p| p.id()).collect::<Vec<_>>(), [9]);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

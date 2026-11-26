@@ -7198,25 +7198,18 @@ fn start_photo_export_single(
                 rating: RatingFilter::All,
                 ..browse_scope(&new_connection, new_filter, "")
             };
-            let mut photos = match new_filter {
-                sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
-                _ => db::browse_photos(&new_connection, &switch_scope).unwrap_or_default(),
-            };
+            // The grid refresh's pipeline (Albums and Library list nothing).
+            let switch_list = photo_list(
+                &new_connection,
+                &PhotoListRequest {
+                    filter: new_filter,
+                    scope: switch_scope,
+                    sort: new_sort,
+                    favorites_only: false,
+                },
+            )
+            .unwrap_or_default();
             crate::startup_trace::mark("switch_photo_query", Some(switch_photos_started));
-            retain_enabled_formats(&new_connection, &mut photos);
-            limit_recently_added(&new_connection, new_filter, &mut photos);
-            apply_files_check(&mut photos, &switch_scope);
-            if matches!(new_filter, sidebar::SidebarFilter::Folder(_)) {
-                let display_mode = sidebar::FolderDisplayMode::from_setting(
-                    db::setting(&new_connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
-                        .ok()
-                        .flatten()
-                        .as_deref(),
-                );
-                sort_folder_stream(&mut photos, &folders, new_sort, display_mode);
-            } else if new_filter != sidebar::SidebarFilter::History {
-                sort_photos(&mut photos, new_sort);
-            }
 
             // The rating filter is session-only (see startup), but it is stored
             // per library, so the new library may still hold one from earlier.
@@ -7230,6 +7223,8 @@ fn start_photo_export_single(
                 eprintln!("Could not clear photo rating filter for library switch: {error}");
             }
             exit_date_browser();
+            // No refresh started for the old library may land on the new one.
+            invalidate_pending_grid_navigation();
             connection.replace(new_connection);
             settings_window.menu_controls.reload(&connection.borrow());
             folder_cache.replace(folders.clone());
@@ -7284,7 +7279,7 @@ fn start_photo_export_single(
                 zoom_slider.show_thumbnail_width(width);
             }
             apply_gallery_grouping(&gallery, new_filter, new_sort, new_group, true);
-            gallery.replace(&photos);
+            show_photo_list_now(&gallery, switch_list);
             if let Some(sidebar) = sidebar_slot.borrow().as_ref() {
                 sidebar::refresh(
                     sidebar,

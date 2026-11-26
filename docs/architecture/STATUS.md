@@ -46,7 +46,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | merged | merge `456325ac` (`refactor/photo-list-pipeline`) | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
 | 16 | Photo change: one notification, one fan-out | Strong | merged | merge `41d31b9c` (`refactor/photo-change`) | `src/window/photo_change.rs` (pure: `ChangeKind`, `ChangeView`, `FanOut`), `src/window/photo_change_widgets.rs` (GTK adapter `photo_changed`) |
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
-| 18 | Collection navigation out of `build()` | Strong | deferred (test gap recorded, see its section) | none | `src/window/build.rs` |
+| 18 | Collection navigation out of `build()` | Strong | in progress (`refactor/collection-navigation`) | none | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
 | 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
 
@@ -713,7 +713,39 @@ Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch);
 - The rating is still held twice (session row for queries, cell for photo marks and the offline watch); one owner when 17/20 give the views a scope.
 - `admits(photo)` for 15's reducer.
 
-### 18 · Collection navigation out of `build()` (deferred)
+### 18 · Collection navigation out of `build()` (in progress)
+Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. Decisions N1-N8 approved by the owner 2026-11-26 with the additions below; the agent's own choices are marked (agent).
+
+#### Before (at `5a39d0a7`, `build.rs:1254-1820`)
+- One ~340-line closure behind Up/Down in the viewer (`lightbox/impl.rs:1246`, `shortcuts.rs:125`); `collection_navigation_slot` written, never read.
+- Hard-coded order All → Favourites → Recent → albums → folders; the sidebar shows All → Recent → Favourites → Ratings → History, albums, folders. Ratings, Rating(n) and failed boundaries fell back to the folder next to the current photo's folder, in database order, sometimes favourites-only or Recent-limited while the sidebar said plain Folder.
+- Folder pages were single-folder flat lists, and in Folder mode Up/Down was a no-op (the Folder arm dead): folders were a dead end.
+- "Show this page" copied 9 times; none saved the last view, synced the rating button's scope or the date-browser button. Backward landing was the last photo at some boundaries, the first at others. Every candidate page was listed in full on the GTK thread to test emptiness.
+
+#### Decisions
+- N1: pure `collection_navigation.rs` (the sequence of stops, the next eligible stop, folder rows, landing) with table tests; GTK adapter `CollectionNavigation` (`collection_navigation_widgets.rs`); the `build()` closure, the dead slot and the dead Folder arm deleted.
+- N2: the visible sidebar order: library rows as shown (hidden rows skipped; Rating(n) only while Ratings is expanded), then albums as the sidebar lists them (manual and Smart Albums), then the visible folder rows. A collapsed section heading does not remove its rows. (agent) Library home, Albums home and History are not stops (History opens photos in the editor, not the viewer).
+- N3: the current photo's neighbouring-folder fallback and its mislabelled filtered folder pages are gone.
+- N4: folders are the continuous Folder stream. Landing on a folder shows the stream with the viewer on that folder's first photo (last going back); in Folder mode Up/Down moves to the previous/next visible folder row that has photos, inside the stream the viewer already holds; past the last folder the sequence wraps on. (agent) A photo in a folder whose row is not shown (a collapsed tree, Imported-only mode) belongs to its nearest shown ancestor row.
+- N5: forward lands on the first eligible photo, backward on the last, including within folders.
+- N6: a stop is eligible when the shared photo-list pipeline lists a photo for it under its own browse scope (`PhotoListRequest::for_view`: toolbar rating except on rating pages, metadata filters, Smart Album rules, format visibility, RAW+JPEG pairing, the Recent limit, the Files check); folder rows from the one stream list. Only the target's list is built.
+- N7: navigation does the sidebar click's destination bookkeeping through one shared step (`enter_destination`, extracted from `layout.rs` unchanged: date-browser resume/exit, filter, date-browser button, rating scope sync, section layout, last view saved, sidebar selection), keeps the viewer open, and selects the landing photo; the sidebar click itself is unchanged.
+- N8: triggers unchanged (Up/Down in the viewer only).
+- Owner additions: wrap at both ends of the eligible sequence; with only one eligible collection nothing happens; the current viewer image stays until the target is ready; stale results are dropped (a newer press, a destination or search change, the viewer closing, a library switch); presses during a navigation are queued and run one after another.
+- Search (owner, 2026-11-26): while a search is active Up/Down does nothing (every page shows the same global search results).
+
+#### Stages
+1. Pure `collection_navigation.rs`, table tests first (5, seen red against a stub). Done in the stage 1 commit.
+2. `CollectionNavigation` adapter on a worker with stale-result guards; `enter_destination` extracted; the `build()` closure deleted (library rows and albums). `sidebar::navigation_destinations` replaces `visible_folder_ids`; `Gallery::select_last_photo` and `SectionedFolderView::scroll_to_index` lost their last caller and are deleted. Display tests `viewer_up_and_down_walk_the_sidebar_collections`, `viewer_up_and_down_drop_stale_and_needless_moves` (the stale test seen red with the destination check removed). Folder rows are not stops until stage 3 (dead-code warnings for the folder helpers until then). Done in the stage 2 commit.
+3. Folder rows: the continuous stream, landing within folders, navigation inside Folder mode. The worker lists the stream once when the walk first reaches a folder row (or uses the viewer's photos in Folder mode, with the shown photo's row as the current one); inside the stream only the viewer moves. Display test `viewer_up_and_down_move_through_the_folder_stream`. Done in the stage 3 commit.
+4. Owner rule `collection-navigation` (`set_collection_navigation_handler` only in the adapter, which installs itself with `install`; one self-test case). Done in the stage 4 commit. GLOSSARY and AUDIT-INDEX entries added. Still open: a by-hand check; the library-switch drop is guarded (database path) but not tested.
+
+#### Verification (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings.
+- Unit: `window::collection_navigation` 5 passed (red against a stub first).
+- Display (Xvfb, one process each): `viewer_up_and_down_walk_the_sidebar_collections`, `viewer_up_and_down_drop_stale_and_needless_moves` (red with the destination check removed), `viewer_up_and_down_move_through_the_folder_stream`: pass.
+- `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits; `--self-test` ok.
+
 **Test coverage gap (recorded 2026-11-26, after 15).** Collection navigation (the `collection_navigation` closure in `build()`, `src/window/build.rs`, wired to the viewer through `Lightbox::set_collection_navigation_handler`) has no test of its own: no unit or display test drives it, and the GUI harness has no step for it. 15 moved its lists onto the shared pipeline; what is tested is only the request shape its pages use (`navigation_pages_are_one_folder_sorted_flat_with_favourites_kept` in `window::photo_list`) and the stale-result guard it calls (`a_gallery_shown_now_drops_an_older_refresh`). Untested behaviour:
 - which page comes next in each direction (folders in visible sidebar order, albums in order, the Recently Added ↔ albums ↔ folders boundaries, library views moving by the current photo's folder);
 - skipping empty candidates (`photo_list_has_photos`), including under a toolbar rating, metadata filters, a search and RAW+JPEG pairing;

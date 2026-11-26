@@ -15,6 +15,10 @@
 # Library counts after a change, and writes the gallery's marks:
 #   - src/window/photo_change_widgets.rs (photo_changed; the decision is
 #     window::photo_change)
+# Up/Down in the viewer moves between collections through one adapter
+# (candidate 18), which alone installs the viewer's handler:
+#   - src/window/collection_navigation_widgets.rs (CollectionNavigation; the
+#     decision is window::collection_navigation)
 # The current photo (candidate 10) has one owner, the InfoBar
 # (`InfoBar::current_photo`); no window code may keep a hand-synced copy in a
 # `selected_photo` cell again.
@@ -69,6 +73,7 @@ PROPERTIES_OWNER='src/window/properties_widgets.rs'
 INFOBAR_OWNER='src/infobar.rs'
 MARKS_OWNER='src/window/photo_mark_commands.rs'
 PHOTO_CHANGE_OWNER='src/window/photo_change_widgets.rs'
+COLLECTION_NAV_OWNER='src/window/collection_navigation_widgets.rs'
 FRONT_OWNER='src/window/front_surface.rs'
 MIRRORS_OWNER='src/window/front_mirrors.rs'
 ZOOM_OWNER='src/window/zoom_slider_widgets.rs'
@@ -97,6 +102,7 @@ RULES=(
   "scroll-motion~$SCROLL_OWNER~(^|[^[:alnum:]_])(grid|folder)_(direct_)?scrub_(active|generation|frames|last_queue|sampler)([^[:alnum:]_(]|_for|$)|THUMBNAIL_MOTION_PUMP_FRAMES|ScrollbarScrub~a hand-kept gallery scrub, settle or pump state (ask window::scroll_motion)"
   "photo-list~$PHOTO_LIST_OWNER src/image_format.rs~(^|[^[:alnum:]_])(retain_raw_jpeg_pair_mode|limit_recently_added|apply_files_check|collection_photos)\(~a photo-list pipeline step by hand (build lists with window::photo_list)"
   "photo-change~$PHOTO_CHANGE_OWNER $INFOBAR_OWNER src/infobar_responsive_tests.rs src/sidebar.rs~(^|[^[:alnum:]_])(photo_updated|update_library_counts)\(~the shown photo's facts or the Library counts after a photo change (say photo_changed)"
+  "collection-navigation~$COLLECTION_NAV_OWNER~\.set_collection_navigation_handler\(~the viewer's Up/Down collection handler (CollectionNavigation)"
   "album-list~$ALBUM_LIST_OWNER~(albums_view::refresh|sidebar::refresh_album_rows)\(~the sidebar album rows or the Albums home (say AlbumList::changed)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
@@ -196,7 +202,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed / CollectionNavigation (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -266,6 +272,9 @@ RS
             panel_for_close.set_lightbox_open(false);
             panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
                 sidebar::update_library_counts(&sidebar_for_events, counts);
+RS
+  cat >"$root/$COLLECTION_NAV_OWNER" <<'RS'
+        lightbox.set_collection_navigation_handler(move |direction| self.navigate(direction));
 RS
   cat >"$root/$PHOTO_CHANGE_OWNER" <<'RS'
                 context.info.photo_updated(shown);
@@ -365,6 +374,7 @@ self_test() {
     "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"
     "shown photo written in build.rs|src/window/build.rs|info.photo_updated(&photo);|photo-change"
     "Library counts written in albums.rs|src/window/albums.rs|sidebar::update_library_counts(&sidebar, counts);|photo-change"
+    "navigation closure back in build.rs|src/window/build.rs|lightbox.set_collection_navigation_handler(handler);|collection-navigation"
   )
   local entry name file line rule
   for entry in "${cases[@]}"; do

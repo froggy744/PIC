@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PIC Architecture Review 4</title>
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+</script>
+<style>
+  :root { --bg:#fafaf9; --fg:#0f172a; --card:#ffffff; --line:#e2e8f0; }
+  body { background: var(--bg); color: var(--fg); }
+  .lbl { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
+  .deep { background: linear-gradient(135deg,#0f172a,#1e293b); color:#e2e8f0; }
+  .leak { border-color:#dc2626 !important; color:#b91c1c; }
+  .seam { border-style: dashed !important; }
+  .box { border:1px solid #cbd5e1; border-radius:.375rem; padding:.35rem .5rem; background:#fff; }
+  .diagram { min-height: 260px; }
+  .mermaid { background: transparent; }
+</style>
+</head>
+<body class="font-sans">
+<main class="max-w-5xl mx-auto px-4 sm:px-6 py-12 space-y-12">
+
+<header class="space-y-3">
+  <p class="lbl text-slate-500">PIC · main @ 61873093 · 2026-11-26 · round four (candidates 21-29)</p>
+  <h1 class="font-serif text-4xl">Architecture review: round four</h1>
+  <p class="text-sm text-slate-600">Rounds one to three (1-20) are all merged or closed. This round covers what is still inline in <code>build()</code> and, for the first time, the editor and lightbox.</p>
+  <div class="flex flex-wrap gap-4 text-xs text-slate-600 pt-2">
+    <span class="flex items-center gap-2"><span class="box inline-block w-6 h-4"></span> module</span>
+    <span class="flex items-center gap-2"><span class="box seam inline-block w-6 h-4"></span> seam</span>
+    <span class="flex items-center gap-2"><span class="box leak inline-block w-6 h-4"></span> leakage / divergent copy</span>
+    <span class="flex items-center gap-2"><span class="deep inline-block w-6 h-4 rounded"></span> deep module</span>
+  </div>
+  <div class="rounded-lg border border-slate-300 bg-white p-4 text-sm">
+    <p class="font-semibold">Context finding</p>
+    <p><code>layout.rs</code>, <code>toolbar.rs</code>, <code>immersive.rs</code> and <code>shortcuts.rs</code> are <code>include!</code>d into the body of <code>build()</code> (build.rs:229, 4669, 4884, 4952). The real <code>build()</code> is about 9,000 lines in one shared scope, with 59 <code>*_slot</code> cells and about 121 <code>Rc&lt;Cell/RefCell&gt;</code> cells. Turning the <code>include!</code>s into modules on its own is rejected because complexity would only move. The candidates below name concepts that deserve a seam even if the files stay as they are.</p>
+  </div>
+</header>
+
+<section id="candidates" class="space-y-10">
+
+<!-- 21 -->
+<article id="c21" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">21 · Workspace session: one owner for Editor and Collage open/close</h2>
+    <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">Strong</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/window/build.rs:3087-3570, 4049-4113 · src/window/layout.rs:2307-2470</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before</p>
+      <pre class="mermaid">
+flowchart TB
+  F1[collage_add_mode]:::cell
+  F2[collage_editing]:::cell
+  S1[edit_space_slot / edit_escape_slot]:::cell
+  A[Editor Done/Back<br/>4 return routes] --> F2
+  B[InfoBar Edit toggle<br/>2 return routes]:::leak --> F2
+  C[3 visible_child_notify handlers] --> F1
+  D[Collage close] --> F1
+  A --> S1
+  B --> S1
+  C --> S1
+  E[Back label<br/>3rd copy of route]:::leak
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#b91c1c;
+  classDef cell fill:#f1f5f9;
+      </pre>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="space-y-3 text-sm">
+        <div class="flex gap-2 flex-wrap"><span class="box">Done</span><span class="box">Escape</span><span class="box">Edit toggle</span><span class="box">Draw again</span><span class="box">sidebar click</span></div>
+        <div class="text-center text-slate-400">↓ events</div>
+        <div class="deep rounded-lg p-4">
+          <p class="lbl text-slate-400">WorkspaceSession (pure)</p>
+          <p class="mt-1">origin: Viewer(outside) | Collage | Library | Photos</p>
+          <p>close() → ReturnRoute · leave_page() → Teardown</p>
+        </div>
+        <div class="box seam text-center">seam</div>
+        <div class="box text-center">GTK adapter: stack switch, fade, detach, save draft</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem:</b> the edit and collage session is a state machine spread over 2 flags (9 writers in 2 files), 6 slot clears and 3 handlers that each work it out again. The editor's own close has 4 return routes and the InfoBar Edit toggle has 2.</p>
+  <p><b>Solution:</b> one pure session value decides the return route and teardown for every way out. The GTK adapter applies the result.</p>
+  <ul class="list-disc pl-5 text-sm">
+    <li>Locality: the return route is decided in one place.</li>
+    <li>Leverage: 6 exit sites call one <code>close()</code>.</li>
+    <li>Table tests: origin × exit → route.</li>
+    <li>The collage draft save is written once, not 3 times.</li>
+  </ul>
+  <div class="rounded border border-red-200 bg-red-50 p-3 text-sm"><b>Suspected bug (from reading the code):</b> the InfoBar Edit toggle used on an outside-library photo returns to the gallery instead of the viewer. It also skips <code>restore_view</code> and drops the Save Copy result. layout.rs:2431-2450 has no viewer branch, which I confirmed.</div>
+</article>
+
+<!-- 22 -->
+<article id="c22" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">22 · Tone stage as one deep module (CPU kernel, GLSL kernel, neutrality)</h2>
+    <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">Strong</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">local-substitutable</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/edit/render.rs:292, 370-470, 588, 904 · src/edit/live_gpu.rs:362, 1405, 1600-1640, 1802-2080 · src/edit/model.rs:1106 · src/edit/editor.rs:214 · .github/workflows/editor-quality.yml</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before: the field list is listed 7 times, the maths written twice</p>
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <div class="box">model.rs is_default <span class="text-slate-400">&lt;0.0001</span></div>
+        <div class="box leak">render.rs apply_tone early return <span>== 0.0</span></div>
+        <div class="box">GpuTone::is_neutral</div>
+        <div class="box">set_recipe field copy</div>
+        <div class="box">gpu_base_recipe</div>
+        <div class="box">gpu_tone_supported</div>
+        <div class="box col-span-2">editor cpu_fallback_reason</div>
+        <div class="box leak">Rust tone / clarity / grain</div>
+        <div class="box leak">GLSL tone / clarity / grain</div>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">About 30 constants match today, checked by hand only. The 8 GL parity tests are <code>#[ignore]</code>, and their only workflow runs on PRs or on a pushes to <code>feature/editor-tone-clarity-grain</code>, so in practice they never run.</p>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="deep rounded-lg p-4 text-sm space-y-1">
+        <p class="lbl text-slate-400">tone module</p>
+        <p>ToneParams::from(&amp;recipe)</p>
+        <p>is_neutral · gpu_supported · uniforms</p>
+        <p>tone_pixel(rgb, &amp;ToneParams)</p>
+        <p>GLSL prelude generated from the same <code>const</code>s</p>
+      </div>
+      <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
+        <div class="box seam text-center">CPU adapter: apply_tone loops</div>
+        <div class="box seam text-center">GPU adapter: live_gpu uploads uniforms</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem:</b> the same adjustment is written in two languages, and the only check that they agree never runs.</p>
+  <p><b>Solution:</b> one Rust module owns the parameters, the neutrality rule and the constants. Two adapters justify the seam: the CPU loop and the GPU uniforms.</p>
+  <ul class="list-disc pl-5 text-sm">
+    <li>Visual parity follows from the structure, instead of relying on hand checks.</li>
+    <li>Locality: a slider is defined in one place.</li>
+    <li>A test checks that each constant appears in the shader source.</li>
+    <li>A test checks that <code>is_neutral</code> agrees with <code>is_default</code>.</li>
+  </ul>
+  <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm">Suspected 1-LSB difference: GPU Auto Colour uses <code>dot()</code> (live_gpu.rs:1813, confirmed), which the shader's own comment warns against, and the histogram copy uses <code>luma()</code>. GPU grain scales by <code>min(uPhysicalScale,1)</code> and the CPU does not. Separate decision: should the parity tests run anywhere? They need a workflow trigger or a local run, and you do not run workflows.</div>
+</article>
+
+<!-- 23 -->
+<article id="c23" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">23 · Window keyboard dispatch: one key → command table</h2>
+    <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">Strong</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/window/shortcuts.rs:1-157 · src/window/build.rs:4717-4867, 6019</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before: two capture-phase controllers</p>
+      <div class="grid grid-cols-2 gap-3 text-xs">
+        <div class="space-y-1">
+          <div class="box font-semibold">shortcuts.rs</div>
+          <div class="box leak">typing rule: Space when search is empty, F11, Esc</div>
+          <div class="box">I: rejects Ctrl|Alt|Super|Meta</div>
+          <div class="box">Esc: 7-branch if-chain</div>
+        </div>
+        <div class="space-y-1">
+          <div class="box font-semibold">build.rs</div>
+          <div class="box leak">typing rule: no exceptions</div>
+          <div class="box leak">digits: reject Alt|Super|Meta only</div>
+          <div class="box leak">viewer arrows: no modifier check (Alt+Left changes photo)</div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">A third focus walk: <code>gallery_owns_focus</code>. No tests, because everything is in closures.</p>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="text-sm space-y-3">
+        <div class="box text-center">one EventControllerKey builds KeyContext</div>
+        <div class="box seam text-center">seam</div>
+        <div class="deep rounded-lg p-4">
+          <p class="lbl text-slate-400">key_command (pure)</p>
+          <p>(key, mods, KeyContext{front, typing, immersive, …}) → KeyCommand</p>
+        </div>
+        <div class="box text-center">adapter runs the command</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem:</b> which surface owns a key is decided in two controllers whose guard rules differ.</p>
+  <p><b>Solution:</b> one pure table from key, modifiers and context to a command. It builds on the front surface (12).</p>
+  <ul class="list-disc pl-5 text-sm">
+    <li>The Escape priority is tested as a table.</li>
+    <li>One modifier rule applies to every key.</li>
+    <li>Leverage: small interface, many rules behind it.</li>
+  </ul>
+</article>
+
+<!-- 24 -->
+<article id="c24" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">24 · Metadata panel presentation: Immersive Mode as an input</h2>
+    <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">Strong</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/window/metadata_panel.rs:688-733 · src/window/immersive.rs:538-616, 665-672 · src/window/build.rs:4909-4921</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before: 4 writers of <code>root.visible</code></p>
+      <pre class="mermaid">
+flowchart LR
+  A[sync_view] --> R((panel root visible))
+  B[immersive toggle<br/>metadata_was_visible snapshot]:::leak --> R
+  C[immersive visible_notify<br/>guard forces hidden]:::leak --> R
+  D[FrontMirrors set_lightbox_open] --> R
+  T[tick callback every frame<br/>polls page + filter]:::leak --> A
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#b91c1c;
+      </pre>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After: mirrors PropertiesWidgets::set_immersive</p>
+      <div class="text-sm space-y-3">
+        <div class="flex flex-wrap gap-2 text-xs"><span class="box">workspace</span><span class="box">toggled</span><span class="box">lightbox open</span><span class="box">immersive</span><span class="box">filter (pushed)</span></div>
+        <div class="deep rounded-lg p-4">
+          <p class="lbl text-slate-400">panel_shown (pure)</p>
+          <p>one rule, one writer</p>
+        </div>
+        <div class="box seam text-center">MetadataPanel adapter: the only writer</div>
+        <p class="text-xs text-slate-500">Removed: the snapshot, the guard, the frame tick, and the hand-set pin/collapse on the Properties split.</p>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem:</b> Immersive Mode suspends the panel with a snapshot and a guard that fights back, and a tick callback that never stops polls the filter on every frame.</p>
+  <p><b>Solution:</b> Immersive Mode and the filter become inputs to one pure visibility rule, with one adapter as the only writer. This is the same shape as Properties presentation (3).</p>
+  <ul class="list-disc pl-5 text-sm">
+    <li>Interface shrinks to 4 inputs.</li>
+    <li>Removes a frame tick that runs for the whole session.</li>
+    <li>An owner rule is added to <code>check-presentation-owners.sh</code>.</li>
+    <li>Pure tests cover the Immersive sequences.</li>
+  </ul>
+  <div class="rounded border border-red-200 bg-red-50 p-3 text-sm"><b>Suspected bug (from reading the code):</b> open the panel in All Photos, enter Immersive Mode, go to Albums home, then leave Immersive Mode. The panel shows with its toggle off, because the snapshot restores <code>set_visible(true)</code> (immersive.rs:608, confirmed). <b>Suspected cost:</b> the tick (build.rs:4913, confirmed, it always returns <code>Continue</code>) keeps the frame clock running for the whole session. Check idle wakeups with <code>PICASA_TRACE</code>.</div>
+</article>
+
+<!-- 25 -->
+<article id="c25" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">25 · Lightbox front request: one invalidation per reason</h2>
+    <span class="rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5">Worth exploring</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/lightbox.rs:209-303 · src/lightbox/impl.rs:288, 1021, 1846, 2420, 2530, 2574, 2623, 2797</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before: 8 hand-written subsets of the same steps</p>
+      <table class="text-xs w-full">
+        <tr class="text-slate-500"><td></td><td>gen++</td><td>decode</td><td>zoom</td><td>prefetch</td><td>retained</td></tr>
+        <tr><td>open</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td></tr>
+        <tr class="text-red-700"><td>navigate</td><td>●</td><td>●</td><td>●</td><td>–</td><td>–</td></tr>
+        <tr class="text-red-700"><td>refresh</td><td>●</td><td>●</td><td>–</td><td>●</td><td>●</td></tr>
+        <tr><td>…5 more</td><td colspan="5" class="text-slate-400">different subsets</td></tr>
+      </table>
+      <p class="text-xs text-slate-500 mt-2">References in impl.rs: <code>load_generation</code> 27, <code>zoom_render_lease</code> 18, <code>decode_cancel</code> 15.</p>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="deep rounded-lg p-4 text-sm">
+        <p class="lbl text-slate-400">FrontRequest (pure)</p>
+        <p>invalidate(Reason) → Invalidation</p>
+        <p>is_current(generation)</p>
+      </div>
+      <div class="box seam text-center mt-3 text-sm">thin GTK adapter drops leases and caches</div>
+    </div>
+  </div>
+  <p><b>Problem:</b> what "a new photo is in front" means is decided again at every caller. <b>Solution:</b> a reason → effects table behind one owner, extending the existing <code>ViewerRequestLease</code> core.</p>
+  <ul class="list-disc pl-5 text-sm"><li>8 sites call one method.</li><li>Gaps are visible in one table.</li></ul>
+  <p class="text-xs text-slate-500">No confirmed bug. Some gaps may be deliberate: the zoom render guards itself by recipe.</p>
+</article>
+
+<!-- 26 -->
+<article id="c26" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">26 · Editor opening phase</h2>
+    <span class="rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5">Worth exploring</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/edit/editor.rs:117-138, 739-744, 1694-1703, 1811, 3384-3464 · src/window/build.rs:3383, 3551</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before: raw flags, combined differently in 2 places</p>
+      <div class="space-y-2 text-xs">
+        <div class="flex gap-2"><span class="box">preview_ready</span><span class="box">first_frame_shown</span><span class="box">placeholder_active</span></div>
+        <div class="box leak">build.rs:3383 first_frame_shown || has_placeholder</div>
+        <div class="box leak">build.rs:3551 preview_ready || has_placeholder</div>
+      </div>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="flex items-center gap-1 text-xs flex-wrap">
+        <span class="box">Blank</span>→<span class="box">StandIn{width}</span>→<span class="box">Fading</span>→<span class="box">Ready</span>
+      </div>
+      <div class="deep rounded-lg p-3 mt-3 text-sm">OpeningPhase · ready_for(Handoff)</div>
+    </div>
+  </div>
+  <p><b>Problem:</b> the readiness rule is split between the editor and the window's tick callbacks. This area had 6 commits in November. <b>Solution:</b> a pure phase value that answers "ready for this handoff?".</p>
+</article>
+
+<!-- 27 -->
+<article id="c27" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">27 · Photo action targets for Export and Print</h2>
+    <span class="rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5">Worth exploring</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/window/build.rs:4548-4653 · src/window/photo_actions.rs:929-958, 1132-1160 · src/infobar.rs:1664-1676</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before</p>
+      <div class="space-y-1 text-xs">
+        <div class="box">Export: outside branch; filters ids through gallery objects</div>
+        <div class="box leak">InfoBar Print: no outside branch; reads the DB</div>
+        <div class="box">Menu Print: outside branch</div>
+        <div class="box leak">InfoBar disables Export/Print for outside photos; the menu and hover actions still offer them</div>
+        <div class="box">ExportJob::from_record(path, rotation, …) written 4 times</div>
+      </div>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="deep rounded-lg p-4 text-sm">action_targets(anchor, selection) → Outside(record) | Library(ids)</div>
+      <div class="box seam text-center mt-3 text-xs">ExportJob::from_photo · PhotoPrintRequest::from_photo</div>
+    </div>
+  </div>
+  <p><b>Problem:</b> "which photos does this act on" has no owner, and the outside-library rule differs between actions. Photo marks (9) solved the same problem for marks. <b>Solution:</b> one pure target rule shared by Export and Print. The logic is small, so this passes the deletion test only moderately.</p>
+  <p class="text-xs text-slate-500">Suspected: Export silently does nothing when the anchor is not in the gallery model, while Print still works.</p>
+</article>
+
+<!-- 28 -->
+<article id="c28" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">28 · Creative look choice and layer selection in EditSession</h2>
+    <span class="rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5">Worth exploring</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">src/edit/controls.rs:74-89 · src/edit/editor.rs:670, 690-694, 2081, 2138, 2196, 2346 · src/edit/draw_ui.rs · src/edit/undo.rs:25-44</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">Before</p>
+      <div class="space-y-1 text-xs">
+        <div class="box leak">exclusive look rule (filter / B&amp;W / Sepia, amount 100%) written 4 times</div>
+        <div class="box">"Sepia wins" normalisation only applied when the editor opens</div>
+        <div class="box leak">overlay/text/drawing selection lives in index cells outside EditSession; undo ignores it</div>
+      </div>
+    </div>
+    <div class="diagram rounded-lg border border-slate-200 p-3">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="deep rounded-lg p-4 text-sm">EditRecipe::choose_look(Look) · EditSession owns the selection by stable id</div>
+    </div>
+  </div>
+  <p><b>Problem:</b> recipe rules and selection validity are kept by GTK closures. <b>Solution:</b> the look rule moves onto the recipe, and the selection moves into the session so undo, redo and reset revalidate it. The look rule clearly passes the deletion test; the selection part is borderline.</p>
+</article>
+
+<!-- 29 -->
+<article id="c29" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">29 · Render from a cached preview (keep the chokepoint whole)</h2>
+    <span class="rounded-full bg-slate-200 text-slate-700 text-xs px-2 py-0.5">Speculative</span>
+    <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">in-process</span>
+  </div>
+  <p class="font-mono text-sm text-slate-600">grid/tile.rs:2310-2380 · thumbnail_display.rs:633-717 · thumbnail/texture.rs:197 · screensaver.rs:1333 · collage/render.rs:114 · lightbox/render.rs:1052-1094, 2046 · edit/render.rs:8, 197-225</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 text-xs space-y-1">
+      <p class="lbl text-slate-500 mb-2">Before</p>
+      <div class="box">RAW aspect fix → library rotation → apply_recipe: written in 6 callers</div>
+      <div class="box leak">the lightbox worker and render_for_export repeat apply_recipe's stage order inline</div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3 text-sm">
+      <p class="lbl text-slate-500 mb-2">After</p>
+      <div class="deep rounded-lg p-3">apply_recipe_staged(img, recipe, &amp;mut Observer) · render_from_preview</div>
+    </div>
+  </div>
+  <p><b>Problem:</b> the single rendering chokepoint is copied inline wherever tracing or cancellation is needed. <b>Solution:</b> add an observer hook so the chokepoint stays one function. The copies agree today.</p>
+</article>
+
+<section class="rounded-xl border border-slate-200 bg-white p-6 text-sm space-y-2">
+  <h2 class="font-serif text-xl">Looked at and rejected</h2>
+  <ul class="list-disc pl-5 text-slate-700">
+    <li>Turning the <code>include!</code> files into modules on its own: code moves, nothing deepens.</li>
+    <li>toolbar.rs, Immersive chrome geometry, navigation crossfade (<code>sidebar_crossfade_target</code> is already pure), startup restore (already uses window session state).</li>
+    <li>Search session cells (7 cells): overlaps with the browse scope, and the leverage is unclear.</li>
+    <li>Export spine (<code>export_batch</code>), EditSession undo core, editor close/save, the collage editor, viewer retention: already deep or recently reworked with tests.</li>
+    <li>Candidate 7 (editor preview plan): the renderer choice is still copied by hand, but nothing user-visible comes of it, so it stays closed.</li>
+  </ul>
+</section>
+
+</section>
+
+<section id="top-recommendation" class="deep rounded-xl p-8 space-y-3">
+  <p class="lbl text-slate-400">Top recommendation</p>
+  <h2 class="font-serif text-3xl"><a href="#c24" class="underline decoration-emerald-400">24 · Metadata panel presentation</a></h2>
+  <p>It is the smallest candidate with suspected user-visible effects: a panel that shows with its toggle off after Immersive Mode, and a frame tick that never stops. It has the same shape as Properties presentation (3), so the pattern, owner rule and tests are already proven. Then take <a href="#c21" class="underline">21</a>, which has a suspected bug and the largest remaining state machine in <code>build()</code>, and <a href="#c22" class="underline">22</a>, which protects image quality, your first priority.</p>
+</section>
+
+</main>
+</body>
+</html>

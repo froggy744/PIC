@@ -5,6 +5,7 @@ The single source of truth for the deepening candidates from the architecture re
 - Round one, candidates 1-8: [`architecture-review-2026-11-22.html`](architecture-review-2026-11-22.html), taken at `main` @ `5356ef20`.
 - Round two, re-checks 5-8 and adds 9-12: [`architecture-review-2026-11-23.html`](architecture-review-2026-11-23.html), taken at `main` @ `07cabed4`. The report labels the new candidates N1-N4; they are 9-12 here.
 - Round three, candidates 14-20: [`architecture-review-2026-11-26.html`](architecture-review-2026-11-26.html), taken at `feature/smart-albums` @ `13855231` (main + Smart Albums). All deferred, see "Round three" below.
+- Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. Proposed, none started; see "Round four" below.
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -49,6 +50,15 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
 | 19 | Scan events as a reducer | Worth exploring | merged | merge `db8d6588` (`refactor/scan-events`) | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | merged (test fixture only) | merge `f598440d` (`refactor/photo-action-context-fixture`) | `src/window.rs` (`#[cfg(test)] PhotoActionContext::for_tests`) |
+| 21 | Workspace session: one owner for Editor and Collage open/close | Strong | proposed | | |
+| 22 | Tone stage as one deep module (CPU kernel, GLSL kernel, neutrality) | Strong | proposed | | |
+| 23 | Window keyboard dispatch: one key → command table | Strong | proposed | | |
+| 24 | Metadata panel presentation: Immersive Mode as an input | Strong | proposed (recommended first) | | |
+| 25 | Lightbox front request: one invalidation per reason | Worth exploring | proposed | | |
+| 26 | Editor opening phase | Worth exploring | proposed | | |
+| 27 | Photo action targets for Export and Print | Worth exploring | proposed | | |
+| 28 | Creative look choice and layer selection in EditSession | Worth exploring | proposed | | |
+| 29 | Render from a cached preview (keep the chokepoint whole) | Speculative | proposed | | |
 
 ## Outstanding work
 
@@ -850,6 +860,25 @@ Candidates 14-18 merged; only `main` remains (local and GitHub).
 - 19: merged 2026-11-26 (merge `db8d6588`). Its two bugs (Folder view admission, RAW+JPEG pairing) fixed and merged 2026-11-26 (merge `50238693`, see 19); four follow-ups under "Backlog".
 - 20: merged 2026-11-26 (merge `f598440d`), test fixture only.
 All round-three candidates (14-20) are merged. Nothing open from the reviews: 19's two bugs, 18's library-switch test, 17's stale album test, 14's browse-scope checks (9/9) and the four scan backlog items are done.
+
+### Round four (2026-11-26): proposed, start tomorrow
+Review at `main` @ `61873093`, read only (nothing built or run); report [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html). Rounds one to three are all merged or closed. The bugs below are **suspected from reading the code**, not reproduced; confirm each with a test seen red first.
+
+Context: `layout.rs`, `toolbar.rs`, `immersive.rs` and `shortcuts.rs` are `include!`d into the body of `build()` (`build.rs:229, 4669, 4884, 4952`), so `build()` is really about 9,000 lines in one scope (59 `*_slot` cells, about 121 `Rc<Cell/RefCell>` cells). Converting the `include!`s into modules on its own is rejected: code moves, nothing deepens.
+
+**Next step: start 24**, then 21, then 22. For each: load the skills under "Starting a candidate", grill the decisions with the owner, record them here, branch `refactor/<name>` from `main`.
+
+- **24 · Metadata panel presentation** (recommended first: smallest, same shape as 3). `root` visibility has four writers: `sync_view` (`metadata_panel.rs:688-733`), the Immersive toggle with its own `metadata_was_visible` snapshot (`immersive.rs:538-616`), an Immersive `connect_visible_notify` guard that forces it hidden (`:665-672`), and `set_lightbox_open`. `build.rs:4913` installs a `main_stack.add_tick_callback` that always returns `Continue`, only to poll page and filter for `set_navigation_view`. Immersive Mode also sets the Properties split's pin and collapse by hand (`immersive.rs:559-567, 593-594`). Deepening: a pure `panel_shown(workspace, toggled, lightbox_open, immersive)` plus `MetadataPanel::set_immersive` (like `PropertiesWidgets::set_immersive`), with the filter pushed instead of polled; add an owner rule. Suspected bug: panel open in All Photos → enter Immersive → Albums home → leave Immersive: the panel shows with its toggle off (the snapshot restores `set_visible(true)`, `immersive.rs:608`). Suspected cost: the tick keeps the frame clock running for the whole session; measure idle wakeups with `PICASA_TRACE` on the live app.
+- **21 · Workspace session.** `collage_add_mode`/`collage_editing` (`build.rs:303, 307`) have 9 writers across two files; `edit_space_slot`/`edit_escape_slot` are cleared in 6 places. The return route on closing the editor is decided twice: the editor's close (`build.rs:3419-3446`, 4 routes: outside photo → viewer, collage, Library, photos + `restore_view`) and the InfoBar Edit toggle (`layout.rs:2431-2450`, 2 routes, no viewer, no `restore_view`); the back label is a third copy (`build.rs:3499-3503`). The collage draft save and teardown is written 3 times (`build.rs:3271-3289`, `layout.rs:2329-2349`, `~2470`). Deepening: pure `WorkspaceSession` (origin; `close() -> ReturnRoute`, `leave_page() -> Teardown`), GTK adapter does the switches. Suspected bug: Edit toggle while editing an outside-library photo goes to the gallery instead of the viewer and drops a Save Copy result.
+- **22 · Tone stage.** Tone maths is written in Rust (`render.rs:370-470, 588, 904`) and GLSL (`live_gpu.rs:1802-1886`); clarity, grain, Auto Contrast and the special filters likewise. About 30 constants match today, by hand only. The tone field list is listed 7 times (`model.rs:1106` `<0.0001`, `render.rs:292` `== 0.0`, `GpuTone::is_neutral`, `set_recipe`, `gpu_base_recipe`, `gpu_tone_supported`, `cpu_fallback_reason`). The 8 GL parity tests are `#[ignore]`, and `editor-quality.yml` runs only on pull requests or pushes to `feature/editor-tone-clarity-grain`, so they never run under the push-to-main workflow (owner decision needed: how should they run, without starting workflows?). Suspected 1-LSB risk: GPU Auto Colour `neutral` uses `dot()` (`live_gpu.rs:1813`), the histogram copy uses `luma()`; GPU grain scales by `min(uPhysicalScale,1)`, the CPU doesn't. Deepening: a `tone` module with `ToneParams`, `is_neutral`, `tone_pixel`, and the GLSL constant prelude generated from the same Rust `const`s.
+- **23 · Keyboard dispatch.** Two capture-phase key controllers (`shortcuts.rs:1-157`, `build.rs:4717-4867`) with different "typing" rules and modifier masks; viewer arrows check no modifiers (Alt+Left changes photo); Escape is a 7-branch chain. Deepening: pure `key_command(key, mods, KeyContext) -> KeyCommand`.
+- **25 · Lightbox front request.** The invalidation ritual (generation, decode cancel, zoom lease, prefetch, retained decode, native texture) is hand-written at 8 sites in `lightbox/impl.rs` (`:288, 1021, 1846, 2420, 2530, 2574, 2623, 2797`) with different subsets. Deepening: `invalidate(Reason) -> Invalidation` beside `ViewerRequestLease`.
+- **26 · Editor opening phase.** `preview_ready`/`first_frame_shown`/`placeholder_active` (`editor.rs:739-744`) exposed raw and combined differently at `build.rs:3383` and `:3551`. Deepening: pure `OpeningPhase` with `ready_for(Handoff)`.
+- **27 · Export/Print targets.** Target choice written 3 times with different outside-library rules (`build.rs:4548-4653`, `photo_actions.rs:950-958`); `ExportJob::from_record(path, rotation, …)` 4 times. Suspected: Export does nothing when the anchor is not in the gallery model.
+- **28 · Look choice and layer selection.** Exclusive look rule written 4 times (`controls.rs:74-89`, `editor.rs:2081, 2138, 2196`); overlay/text/drawing selection lives outside `EditSession`, undo and Reset don't revalidate it.
+- **29 · Render from a cached preview.** RAW aspect fix → rotation → `apply_recipe` repeated in 6 callers; the lightbox worker and `render_for_export` repeat `apply_recipe`'s stage order inline. Copies agree today.
+
+Rejected this round: `include!` → modules alone; toolbar.rs; Immersive chrome geometry; navigation crossfade; search session cells (overlap with browse scope); export spine, EditSession undo core, editor close/save, collage editor, viewer retention (already deep). 7 stays closed (still no user-visible effect).
 
 ### Next (updated 2026-11-26)
 Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands. Progress (2026-11-26): all five fixed (`18923e3e`, `24297e1b`, `5d83b50c`, `d3d2252a`, `ab33310c`), each with a test seen red first. Merged into `main` 2026-11-26 (merge `4db4685f`), followed by `feature/album-links` (merge `e2c4b980`: one Add to Album list and New Album dialog, the photo menu's In Albums links; issues #266, #267). Both branches deleted. Round three (14-20) stays deferred.

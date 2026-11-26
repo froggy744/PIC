@@ -786,7 +786,8 @@ Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q
 - `cargo check --locked` and `--tests`: no warnings.
 - Unit: `window::scan_view` 19 passed (generation isolation, Stop gate, append admission table, format asked lazily, append batches with updates and removals of queued photos, search and generation drops, sidebar-count throttle, progress throttle and thumbnail batches, network progress, Maintenance, end-of-indexing and end-of-job rebuild tables, completion messages, cancellation, removed folders, sidebar folder rows, visible-thumbnail status); `scan_appends_new_photos_only_to_an_unfiltered_view` passes.
 - `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits; `--self-test` ok.
-- Not run: no display test drives a real scan through the window, and the GUI harness `import` suite needs a release build (not authorised). Open: a by-hand import, refresh and Stop check, or that suite.
+- Not run: no display test drives a real scan through the window, and the GUI harness `import` suite needs a release build (not authorised).
+- By hand (owner, 2026-11-26, `cargo run` with `PIC_WATCH_TRACE=1`): import into All Photos appends live; library refresh and Folder refresh run; Stop ends each; after the stop fix the sidebar shows the imported folder tree with real counts. No panic, GTK critical or borrow error in the logs. Not yet seen by hand: an import running to "✓ Previews complete".
 
 ### Round three (2026-11-26): deferred, not rejected
 The owner deferred all seven candidates: the bugs the review found are fixed one at a time instead of starting another refactoring cycle. The candidates stay valid; revisit them in this order when a refactor is wanted: 14 → 15 → 17 → 16 → 18, then 19 and 20.

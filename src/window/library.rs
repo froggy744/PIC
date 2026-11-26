@@ -207,23 +207,11 @@ fn refresh_grid_inner(
         None
     };
 
-    let pair_mode = crate::image_format::raw_jpeg_pair_mode(&connection.borrow());
-    gallery.set_raw_jpeg_mode(pair_mode);
-    let pair_folders = if search.is_empty()
-        && matches!(filter, sidebar::SidebarFilter::Folder(_))
-    {
-        db::raw_jpeg_pair_folder_ids(&connection.borrow()).unwrap_or_default()
-    } else {
-        std::collections::HashSet::new()
-    };
-    gallery.set_raw_jpeg_pair_folders(pair_folders);
-
     let generation = REFRESH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     PENDING_REFRESH_GENERATION.store(generation, std::sync::atomic::Ordering::Relaxed);
     // An immutable snapshot for the worker; a later refresh (any scope or
     // library change) bumps the generation and this result is dropped.
-    let scope = browse_scope(&connection.borrow(), filter, search);
-    let search = search.to_owned();
+    let request = PhotoListRequest::for_view(&connection.borrow(), filter, search, sort);
     let (sender, receiver) = std::sync::mpsc::channel();
     let database = db::connection_path(&connection.borrow()).ok();
 
@@ -242,40 +230,20 @@ fn refresh_grid_inner(
         // individual original photo path.
         let _ = db::folders(&connection);
 
-        let folder_stream = search.is_empty()
-            && matches!(filter, sidebar::SidebarFilter::Folder(_));
-        let Some(mut photos) = collection_photos(&connection, filter, &scope) else {
+        let Some(list) = photo_list(&connection, &request) else {
             return;
         };
-
-        retain_enabled_formats(&connection, &mut photos);
-        let raw_jpeg_mode = crate::image_format::raw_jpeg_pair_mode(&connection);
-        crate::image_format::retain_raw_jpeg_pair_mode(&mut photos, raw_jpeg_mode);
-        if search.is_empty() {
-            limit_recently_added(&connection, filter, &mut photos);
-        }
-        apply_files_check(&mut photos, &scope);
-        if folder_stream {
-            let folders = db::folders(&connection).unwrap_or_default();
-            let display_mode = sidebar::FolderDisplayMode::from_setting(
-                db::setting(&connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
-                    .ok()
-                    .flatten()
-                    .as_deref(),
-            );
-            sort_folder_stream(&mut photos, &folders, sort, display_mode);
-        } else if filter != sidebar::SidebarFilter::History || !search.is_empty() {
-            sort_photos(&mut photos, sort);
-        }
-        let _ = sender.send(Some(photos));
+        let _ = sender.send(Some(list));
     });
 
     let gallery = gallery.clone();
     glib::timeout_add_local(std::time::Duration::from_millis(25), move || {
         match receiver.try_recv() {
-            Ok(Some(photos)) => {
+            Ok(Some(list)) => {
                 let _ = PENDING_REFRESH_GENERATION.compare_exchange(generation, 0, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed);
                 if REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation {
+                    // Pairing state and photos together, only from a current result.
+                    let photos = apply_photo_list_pairing(&gallery, list);
                     let replace_started = std::time::Instant::now();
                     let count = photos.len();
                     let visible_photo_ids = photos.iter().map(|photo| photo.id).collect::<Vec<_>>();
@@ -614,33 +582,12 @@ fn albums_home_scope(connection: &Connection) -> db::BrowseScope {
     browse_scope(connection, sidebar::SidebarFilter::Albums, "")
 }
 
-/// The photos the window opens on for the restored destination, filtered
-/// and in display order, as the grid would show them.
-fn startup_photos(
-    connection: &Connection,
-    initial_filter: sidebar::SidebarFilter,
-    sort: PhotoSort,
-    folders: &[db::Folder],
-) -> Vec<db::Photo> {
-    // The same per-destination query as a grid refresh (History included).
-    let scope = browse_scope(connection, initial_filter, "");
-    let mut photos = collection_photos(connection, initial_filter, &scope).unwrap_or_default();
-    retain_enabled_formats(connection, &mut photos);
-    limit_recently_added(connection, initial_filter, &mut photos);
-    apply_files_check(&mut photos, &scope);
-    if matches!(initial_filter, sidebar::SidebarFilter::Folder(_)) {
-        let display_mode = sidebar::FolderDisplayMode::from_setting(
-            db::setting(connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
-                .ok()
-                .flatten()
-                .as_deref(),
-        );
-        sort_folder_stream(&mut photos, folders, sort, display_mode);
-    } else if initial_filter != sidebar::SidebarFilter::History {
-        // History keeps its most-recent-first order, as in a grid refresh.
-        sort_photos(&mut photos, sort);
-    }
-    photos
+/// Give the gallery a pipeline result's RAW+JPEG pairing state (GTK side)
+/// and hand back its photos to show. Call it only for a current result.
+fn apply_photo_list_pairing(gallery: &grid::Gallery, list: PhotoList) -> Vec<db::Photo> {
+    gallery.set_raw_jpeg_mode(list.pair_mode);
+    gallery.set_raw_jpeg_pair_folders(list.pair_folders);
+    list.photos
 }
 
 /// Whether a scan may append the photos it discovers to the grid as they
@@ -849,7 +796,7 @@ fn pixel_count(width: Option<i64>, height: Option<i64>) -> Option<i128> {
 #[cfg(test)]
 mod photo_action_tests {
     use super::{
-        apply_files_check, browse_destination, browse_scope, folder_navigation_target,
+        browse_destination, browse_scope, folder_navigation_target,
         folder_stream_order, no_target_refresh, sort_folder_stream, sort_photos, valid_file_name,
         wallpaper_layout, NoTargetRefresh, PhotoSort, RatingFilter, SortDirection, SortField,
         WallpaperLayout,
@@ -1481,13 +1428,18 @@ mod photo_action_tests {
         assert_eq!(history, [3, 1]);
 
         let by_name = PhotoSort { field: SortField::Name, direction: SortDirection::Ascending };
-        let restored = crate::window::startup_photos(
+        // What startup lists (build.rs): the grid refresh's pipeline.
+        let restored = crate::window::photo_list(
             &connection,
-            sidebar::SidebarFilter::History,
-            by_name,
-            &db::folders(&connection).unwrap(),
-        );
-        assert_eq!(restored.iter().map(|photo| photo.id).collect::<Vec<_>>(), history);
+            &crate::window::PhotoListRequest::for_view(
+                &connection,
+                sidebar::SidebarFilter::History,
+                "",
+                by_name,
+            ),
+        )
+        .unwrap();
+        assert_eq!(restored.photos.iter().map(|photo| photo.id).collect::<Vec<_>>(), history);
     }
 
     #[test]
@@ -1557,12 +1509,11 @@ mod photo_action_tests {
         assert_eq!(grid_ids(&connection, sidebar::SidebarFilter::All), [1, 2, 3, 4]);
     }
 
-    /// The photo ids a grid refresh queries for `filter` (no search), after
-    /// the Files check, sorted.
+    /// The photo ids a grid refresh lists for `filter` (no search), sorted.
     fn grid_ids(connection: &Connection, filter: sidebar::SidebarFilter) -> Vec<i64> {
-        let scope = browse_scope(connection, filter, "");
-        let mut photos = crate::window::collection_photos(connection, filter, &scope).unwrap();
-        apply_files_check(&mut photos, &scope);
+        let by_name = PhotoSort { field: SortField::Name, direction: SortDirection::Ascending };
+        let request = crate::window::PhotoListRequest::for_view(connection, filter, "", by_name);
+        let photos = crate::window::photo_list(connection, &request).unwrap().photos;
         let mut ids = photos.iter().map(|photo| photo.id).collect::<Vec<_>>();
         ids.sort_unstable();
         ids

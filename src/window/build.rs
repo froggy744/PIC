@@ -124,14 +124,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         grid::GroupMode::None
     }));
     let startup_photos_started = Instant::now();
-    let photos = startup_photos(
+    // The same pipeline as a grid refresh (History in its own order).
+    let startup_list = photo_list(
         &connection.borrow(),
-        initial_filter,
-        sort.get(),
-        &folders,
-    );
+        &PhotoListRequest::for_view(&connection.borrow(), initial_filter, "", sort.get()),
+    )
+    .unwrap_or_default();
     crate::startup_trace::mark("startup_photo_query", Some(startup_photos_started));
-    let startup_photos = Rc::new(photos);
+    let startup_pairing = (startup_list.pair_mode, startup_list.pair_folders);
+    let startup_photos = Rc::new(startup_list.photos);
     crate::startup_trace::mark("database_photos_sorted", Some(build_started));
     if std::env::var_os("PIC_STARTUP_TRACE").is_some() {
         eprintln!(
@@ -723,6 +724,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         },
     ));
+    // The startup list's pairing state, before the first photos are shown.
+    gallery.set_raw_jpeg_mode(startup_pairing.0);
+    gallery.set_raw_jpeg_pair_folders(startup_pairing.1);
     crate::startup_trace::mark("gallery_widgets_done", Some(gallery_started));
     // Multi-photo selection replaces metadata in the existing InfoBar instead
     // of drawing a second, floating count on top of the gallery. This observes

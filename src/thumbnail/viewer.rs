@@ -24,6 +24,190 @@ struct ViewerNefSourceCacheEntry {
     bytes: usize,
 }
 
+/// The full-size decode of the photo in front of the viewer, for formats that
+/// cannot decode at a reduced size (PNG, TIFF, WebP, ...). A fit decode of such
+/// a file already produced every source pixel; keeping them lets 1:1 zoom skip
+/// a second read + decode (~600 ms for a 6072x9000 PNG).
+///
+/// Ownership: the GTK thread names the photo in front and the decode request
+/// that owns it (`viewer_retain_front`). Only that request, while it still has
+/// consumers, may publish pixels, and only the native (1:1) request of that
+/// owner takes them back out, so a stale or cancelled worker can neither
+/// publish nor remove a newer request's pixels. One slot, at most
+/// `VIEWER_RETAIN_LIMIT_BYTES` of decoded buffer, dropped on navigation to
+/// another photo and when the viewer closes.
+pub const VIEWER_RETAIN_LIMIT_BYTES: usize = 320 * 1024 * 1024;
+
+#[cfg(test)]
+static VIEWER_RETAIN_LIMIT_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
+
+fn viewer_retain_limit() -> usize {
+    #[cfg(test)]
+    {
+        let limit = VIEWER_RETAIN_LIMIT_OVERRIDE.load(Ordering::Relaxed);
+        if limit != 0 {
+            return limit;
+        }
+    }
+    VIEWER_RETAIN_LIMIT_BYTES
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ViewerRetainPhoto {
+    reference: String,
+    fingerprint: crate::source::ViewerSourceFingerprint,
+}
+
+struct ViewerRetainedDecode {
+    photo: ViewerRetainPhoto,
+    image: Arc<DynamicImage>,
+}
+
+struct ViewerRetainState {
+    /// The photo in front of the viewer and the request allowed to publish.
+    front: Option<(ViewerRetainPhoto, Option<u64>)>,
+    slot: Option<ViewerRetainedDecode>,
+}
+
+static VIEWER_RETAIN: Mutex<ViewerRetainState> = Mutex::new(ViewerRetainState {
+    front: None,
+    slot: None,
+});
+
+/// The decode request asking to publish or take retained pixels.
+pub struct ViewerRetention<'a> {
+    /// Unique id of the viewer request (never reused).
+    pub owner: u64,
+    /// False once the request lost every consumer (cancelled or superseded).
+    pub active: &'a dyn Fn() -> bool,
+}
+
+/// Free evicted pixels off the calling (GTK) thread: unmapping a 150-300 MB
+/// buffer stalls for tens of milliseconds.
+fn viewer_retain_drop_later(slot: ViewerRetainedDecode, action: &str) {
+    viewer_retain_trace(action, slot.image.as_bytes().len(), &slot.photo.reference);
+    // If the spawn fails, the closure and the slot are dropped right here.
+    let _ = std::thread::Builder::new()
+        .name("viewer-retain-drop".to_string())
+        .spawn(move || drop(slot));
+}
+
+fn viewer_retain_trace(action: &str, bytes: usize, reference: &str) {
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=full_decode_retain action={action} bytes={bytes} uri={}",
+            viewer_trace_reference(reference),
+        );
+    }
+}
+
+/// Name the photo now in front of the viewer (GTK thread). Drops pixels kept
+/// for any other photo; `owner` is the request that may publish for this one.
+pub fn viewer_retain_front(
+    reference: &str,
+    fingerprint: crate::source::ViewerSourceFingerprint,
+    owner: Option<u64>,
+) {
+    let photo = ViewerRetainPhoto {
+        reference: reference.to_owned(),
+        fingerprint,
+    };
+    let dropped = {
+        let mut state = VIEWER_RETAIN.lock().unwrap();
+        let dropped = state.slot.take_if(|slot| slot.photo != photo);
+        state.front = Some((photo, owner));
+        dropped
+    };
+    if let Some(slot) = dropped {
+        viewer_retain_drop_later(slot, "release_navigation");
+    }
+}
+
+/// Drop the retained full-size decode and forget the photo in front. Called
+/// when the viewer closes.
+pub fn release_viewer_full_decode() {
+    let dropped = {
+        let mut state = VIEWER_RETAIN.lock().unwrap();
+        state.front = None;
+        state.slot.take()
+    };
+    if let Some(slot) = dropped {
+        viewer_retain_drop_later(slot, "release_close");
+    }
+}
+
+/// Bytes currently retained (tests and benchmarks).
+pub fn viewer_retained_bytes() -> usize {
+    VIEWER_RETAIN
+        .lock()
+        .unwrap()
+        .slot
+        .as_ref()
+        .map_or(0, |slot| slot.image.as_bytes().len())
+}
+
+fn viewer_retain_lookup(photo: &ViewerRetainPhoto) -> Option<Arc<DynamicImage>> {
+    VIEWER_RETAIN
+        .lock()
+        .unwrap()
+        .slot
+        .as_ref()
+        .filter(|slot| slot.photo == *photo)
+        .map(|slot| slot.image.clone())
+}
+
+fn viewer_retain_owns(
+    state: &ViewerRetainState,
+    photo: &ViewerRetainPhoto,
+    retention: &ViewerRetention<'_>,
+) -> bool {
+    state
+        .front
+        .as_ref()
+        .is_some_and(|(front, owner)| front == photo && *owner == Some(retention.owner))
+        && (retention.active)()
+}
+
+/// Keep `image` for the photo in front. The ownership check and the store
+/// happen under one lock, so a request cancelled or superseded on the GTK
+/// thread (which updates `front` under the same lock) cannot publish late.
+fn viewer_retain_publish(
+    photo: &ViewerRetainPhoto,
+    retention: &ViewerRetention<'_>,
+    image: &Arc<DynamicImage>,
+) -> &'static str {
+    let bytes = image.as_bytes().len();
+    let mut state = VIEWER_RETAIN.lock().unwrap();
+    if !viewer_retain_owns(&state, photo, retention) {
+        return "skip_not_owner";
+    }
+    if bytes > viewer_retain_limit() {
+        return "skip_limit";
+    }
+    state.slot = Some(ViewerRetainedDecode {
+        photo: photo.clone(),
+        image: image.clone(),
+    });
+    "publish"
+}
+
+/// Hand the retained pixels to the owner's 1:1 decode, which keeps them as
+/// its native texture; holding both would double the memory at 1:1.
+fn viewer_retain_take(
+    photo: &ViewerRetainPhoto,
+    retention: &ViewerRetention<'_>,
+    image: &Arc<DynamicImage>,
+) -> bool {
+    let mut state = VIEWER_RETAIN.lock().unwrap();
+    if !viewer_retain_owns(&state, photo, retention) {
+        return false;
+    }
+    state
+        .slot
+        .take_if(|slot| Arc::ptr_eq(&slot.image, image))
+        .is_some()
+}
+
 static VIEWER_NEF_SOURCE_CACHE: OnceLock<Mutex<VecDeque<ViewerNefSourceCacheEntry>>> =
     OnceLock::new();
 #[cfg(target_os = "linux")]
@@ -1037,6 +1221,29 @@ pub fn decode_for_viewer_with_cancel<F>(
 where
     F: Fn() -> bool,
 {
+    decode_for_viewer_retaining(
+        reference,
+        viewport_width,
+        viewport_height,
+        read_context,
+        None,
+        cancelled,
+    )
+}
+
+/// `decode_for_viewer_with_cancel` for the lightbox: with `retention`, a
+/// full-size decode of the photo in front is kept for its 1:1 zoom.
+pub fn decode_for_viewer_retaining<F>(
+    reference: &str,
+    viewport_width: u32,
+    viewport_height: u32,
+    read_context: Option<&crate::source::ViewerReadContext>,
+    retention: Option<&ViewerRetention<'_>>,
+    cancelled: F,
+) -> Result<image::RgbaImage>
+where
+    F: Fn() -> bool,
+{
     let decode_started = std::time::Instant::now();
     let mut source_read_ms = 0.0;
     let orientation_started = std::time::Instant::now();
@@ -1244,14 +1451,34 @@ where
         );
         (Arc::new(image), target_width, target_height)
     } else {
-        check_viewer_cancelled(&cancelled, "before_source_read")?;
-        let source_started = std::time::Instant::now();
-        let bytes = read_viewer_source(reference, read_context)?;
-        source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
-        let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-        check_viewer_cancelled(&cancelled, "before_generic_decode")?;
-        let image = reader.decode()?;
-        check_viewer_cancelled(&cancelled, "after_generic_decode")?;
+        let retain_photo = read_context
+            .and_then(|context| context.fingerprint())
+            .map(|fingerprint| ViewerRetainPhoto {
+                reference: reference.to_owned(),
+                fingerprint,
+            });
+        let retained = retain_photo.as_ref().and_then(viewer_retain_lookup);
+        let reused = retained.is_some();
+        let image = if let Some(image) = retained {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_DECODE stage=full_decode_reuse decoded={}x{}",
+                    image.width(),
+                    image.height(),
+                );
+            }
+            image
+        } else {
+            check_viewer_cancelled(&cancelled, "before_source_read")?;
+            let source_started = std::time::Instant::now();
+            let bytes = read_viewer_source(reference, read_context)?;
+            source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
+            let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+            check_viewer_cancelled(&cancelled, "before_generic_decode")?;
+            let image = Arc::new(reader.decode()?);
+            check_viewer_cancelled(&cancelled, "after_generic_decode")?;
+            image
+        };
         let source_width = image.width();
         let source_height = image.height();
         let (target_width, target_height) = viewer_target_dimensions(
@@ -1261,7 +1488,18 @@ where
             viewport_width,
             viewport_height,
         );
-        (Arc::new(image), target_width, target_height)
+        if let (Some(photo), Some(retention)) = (retain_photo.as_ref(), retention) {
+            let bytes = image.as_bytes().len();
+            let native = viewport_width == u32::MAX && viewport_height == u32::MAX;
+            // Only worth keeping when this request discards pixels a zoom needs.
+            let downscaled = target_width < source_width || target_height < source_height;
+            if !reused && downscaled {
+                viewer_retain_trace(viewer_retain_publish(photo, retention, &image), bytes, reference);
+            } else if reused && native && viewer_retain_take(photo, retention, &image) {
+                viewer_retain_trace("take_native", bytes, reference);
+            }
+        }
+        (image, target_width, target_height)
     };
 
     let decoded_width = image.width();
@@ -1283,7 +1521,7 @@ where
     // large copy for orientations 5-8.
     check_viewer_cancelled(&cancelled, "before_resize")?;
     let resize_started = std::time::Instant::now();
-    let image = resize_viewer_image(&image, target_width, target_height)?;
+    let image = resize_viewer_image_owned(image, target_width, target_height)?;
     check_viewer_cancelled(&cancelled, "after_resize")?;
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -1443,14 +1681,39 @@ fn resize_viewer_rgba(
         PixelType::U8x4,
     )?;
     let mut destination_image = Image::new(destination_width, destination_height, PixelType::U8x4);
-    let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Hamming));
+    // The resizer premultiplies alpha by default: a full-size copy of the
+    // source on one thread (~100-200 ms for a 40-75 MP PNG). Many RGBA PNGs
+    // are fully opaque, where premultiplying is the identity, so skip it then.
+    let started = std::time::Instant::now();
+    let opaque = rgba_fully_opaque(source);
+    let options = ResizeOptions::new()
+        .resize_alg(ResizeAlg::Convolution(FilterType::Hamming))
+        .use_alpha(!opaque);
     Resizer::new().resize(&source_image, &mut destination_image, &options)?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=rgba_resize elapsed_ms={:.3} opaque={} output={}x{}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            opaque,
+            destination_width,
+            destination_height,
+        );
+    }
     image::RgbaImage::from_raw(
         destination_width,
         destination_height,
         destination_image.into_vec(),
     )
     .context("viewer RGBA resizer returned an invalid buffer")
+}
+
+/// True when every alpha byte is 255, scanned in bands on the rayon pool.
+fn rgba_fully_opaque(source: &image::RgbaImage) -> bool {
+    use rayon::prelude::*;
+    source
+        .as_raw()
+        .par_chunks(4 * 65_536)
+        .all(|band| band.chunks_exact(4).all(|pixel| pixel[3] == 255))
 }
 
 /// Opaque RGBA copy of `source`, converted in row bands on the rayon pool.
@@ -1473,6 +1736,36 @@ fn rgb_to_rgba(source: &image::RgbImage) -> image::RgbaImage {
             });
     }
     image::RgbaImage::from_raw(width, height, pixels).expect("RGBA buffer matches dimensions")
+}
+
+/// `resize_viewer_image` that moves a same-size RGBA source into the result
+/// instead of copying it (a 1:1 decode of a 75 MP RGBA PNG copied ~290 MB).
+/// A shared source (still retained, or cached elsewhere) is copied as before.
+fn resize_viewer_image_owned(
+    source: Arc<DynamicImage>,
+    destination_width: u32,
+    destination_height: u32,
+) -> Result<image::RgbaImage> {
+    let same_size_rgba = matches!(*source, DynamicImage::ImageRgba8(_))
+        && source.width() == destination_width
+        && source.height() == destination_height;
+    if same_size_rgba {
+        match Arc::try_unwrap(source) {
+            Ok(DynamicImage::ImageRgba8(image)) => {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_DECODE stage=rgba_conversion elapsed_ms=0.000 output={}x{} source=rgba_moved",
+                        destination_width, destination_height,
+                    );
+                }
+                Ok(image)
+            }
+            Ok(other) => resize_viewer_image(&other, destination_width, destination_height),
+            Err(shared) => resize_viewer_image(&shared, destination_width, destination_height),
+        }
+    } else {
+        resize_viewer_image(&source, destination_width, destination_height)
+    }
 }
 
 fn resize_viewer_image(
@@ -1634,6 +1927,258 @@ pub fn apply_orientation(image: DynamicImage, orientation: u16) -> DynamicImage 
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    struct RetainFixture {
+        path: std::path::PathBuf,
+        fingerprint: crate::source::ViewerSourceFingerprint,
+    }
+
+    impl RetainFixture {
+        fn new(name: &str, image: DynamicImage) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("pic-retain-{}-{name}.png", std::process::id()));
+            image.save(&path).unwrap();
+            let size_bytes = std::fs::metadata(&path).unwrap().len() as i64;
+            Self {
+                path,
+                fingerprint: crate::source::ViewerSourceFingerprint {
+                    mtime: 1_700_000_000,
+                    size_bytes,
+                },
+            }
+        }
+
+        fn reference(&self) -> &str {
+            self.path.to_str().unwrap()
+        }
+
+        fn front(&self, owner: Option<u64>) {
+            viewer_retain_front(self.reference(), self.fingerprint, owner);
+        }
+
+        fn decode_with(
+            &self,
+            width: u32,
+            height: u32,
+            owner: u64,
+            active: bool,
+            during: impl Fn(),
+        ) -> image::RgbaImage {
+            let fingerprint = self.fingerprint;
+            let context = crate::source::ViewerReadContext::new(
+                || crate::source::ViewerReadLane::Foreground,
+                || false,
+                Some(fingerprint),
+            );
+            let active = move || active;
+            let retention = ViewerRetention {
+                owner,
+                active: &active,
+            };
+            let during_called = Cell::new(false);
+            decode_for_viewer_retaining(
+                self.reference(),
+                width,
+                height,
+                Some(&context),
+                Some(&retention),
+                || {
+                    if !during_called.replace(true) {
+                        during();
+                    }
+                    false
+                },
+            )
+            .unwrap()
+        }
+
+        fn fit(&self, owner: u64) -> image::RgbaImage {
+            self.decode_with(64, 64, owner, true, || {})
+        }
+
+        fn native(&self, owner: u64) -> image::RgbaImage {
+            self.decode_with(u32::MAX, u32::MAX, owner, true, || {})
+        }
+    }
+
+    impl Drop for RetainFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    fn retain_rgb(name: &str) -> RetainFixture {
+        RetainFixture::new(
+            name,
+            DynamicImage::ImageRgb8(image::RgbImage::from_fn(320, 200, |x, y| {
+                image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x * y) % 239) as u8])
+            })),
+        )
+    }
+
+    fn retain_rgba(name: &str) -> RetainFixture {
+        RetainFixture::new(
+            name,
+            DynamicImage::ImageRgba8(image::RgbaImage::from_fn(300, 210, |x, y| {
+                image::Rgba([(x % 251) as u8, (y % 241) as u8, 90, ((x + y) % 256) as u8])
+            })),
+        )
+    }
+
+    fn reset_retention() {
+        release_viewer_full_decode();
+        VIEWER_RETAIN_LIMIT_OVERRIDE.store(0, Ordering::Relaxed);
+    }
+
+    /// The retention tests share VIEWER_RETAIN and the limit override, so
+    /// they run one at a time even under a parallel `cargo test`, each
+    /// starting and ending with an empty slot and the default limit.
+    struct RetentionTestGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    impl Drop for RetentionTestGuard {
+        fn drop(&mut self) {
+            reset_retention();
+        }
+    }
+
+    fn retention_guard() -> RetentionTestGuard {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        reset_retention();
+        RetentionTestGuard(guard)
+    }
+
+    #[test]
+    fn retention_publishes_only_for_the_owner_of_the_photo_in_front() {
+        let _guard = retention_guard();
+        let a = retain_rgb("owner-a");
+        let b = retain_rgb("owner-b");
+        a.front(Some(1));
+        a.fit(1);
+        assert_eq!(viewer_retained_bytes(), 320 * 200 * 3);
+        // A neighbour prefetch (not the owner, not in front) leaves it alone.
+        b.fit(2);
+        assert!(viewer_retain_lookup(&ViewerRetainPhoto {
+            reference: a.reference().to_owned(),
+            fingerprint: a.fingerprint,
+        })
+        .is_some());
+        reset_retention();
+    }
+
+    #[test]
+    fn cancelled_or_closed_decode_does_not_publish() {
+        let _guard = retention_guard();
+        let a = retain_rgb("cancel");
+        a.front(Some(1));
+        a.decode_with(64, 64, 1, false, || {});
+        assert_eq!(viewer_retained_bytes(), 0, "cancelled request published");
+        // The viewer closes while the worker is decoding.
+        a.front(Some(1));
+        a.decode_with(64, 64, 1, true, release_viewer_full_decode);
+        assert_eq!(viewer_retained_bytes(), 0, "late worker refilled a closed viewer");
+        reset_retention();
+    }
+
+    #[test]
+    fn navigation_drops_pixels_and_stale_workers_cannot_publish_or_take() {
+        let _guard = retention_guard();
+        let a = retain_rgb("nav-a");
+        let b = retain_rgb("nav-b");
+        a.front(Some(1));
+        a.fit(1);
+        assert!(viewer_retained_bytes() > 0);
+        // Navigating to a JPEG/RAW/cached photo names it without an owner.
+        b.front(None);
+        assert_eq!(viewer_retained_bytes(), 0, "previous photo's pixels kept");
+        a.fit(1);
+        assert_eq!(viewer_retained_bytes(), 0, "stale worker published");
+
+        // Back on A with a newer request: the old request cannot remove them.
+        a.front(Some(3));
+        a.fit(3);
+        let kept = viewer_retained_bytes();
+        assert!(kept > 0);
+        a.native(1);
+        assert_eq!(viewer_retained_bytes(), kept, "stale 1:1 decode took a newer slot");
+        reset_retention();
+    }
+
+    #[test]
+    fn promoted_prefetch_publishes_when_it_finishes() {
+        let _guard = retention_guard();
+        let a = retain_rgb("promote");
+        a.front(None);
+        a.decode_with(64, 64, 7, true, || {});
+        assert_eq!(viewer_retained_bytes(), 0, "unowned prefetch published");
+        // Promoted to foreground while decoding: ownership decides at the end.
+        a.decode_with(64, 64, 8, true, || a.front(Some(8)));
+        assert_eq!(viewer_retained_bytes(), 320 * 200 * 3);
+        reset_retention();
+    }
+
+    #[test]
+    fn retain_limit_uses_the_decoded_buffer_size() {
+        let _guard = retention_guard();
+        let a = retain_rgb("limit");
+        let decoded = 320 * 200 * 3;
+        a.front(Some(1));
+        VIEWER_RETAIN_LIMIT_OVERRIDE.store(decoded - 1, Ordering::Relaxed);
+        a.fit(1);
+        assert_eq!(viewer_retained_bytes(), 0, "over-limit decode retained");
+        VIEWER_RETAIN_LIMIT_OVERRIDE.store(decoded, Ordering::Relaxed);
+        a.fit(1);
+        assert_eq!(viewer_retained_bytes(), decoded);
+        assert_eq!(VIEWER_RETAIN_LIMIT_BYTES, 320 * 1024 * 1024);
+        reset_retention();
+    }
+
+    #[test]
+    fn native_decode_takes_retained_pixels_without_changing_them() {
+        let _guard = retention_guard();
+        for fixture in [retain_rgb("take-rgb"), retain_rgba("take-rgba")] {
+            reset_retention();
+            let expected = image::open(&fixture.path).unwrap().to_rgba8();
+            fixture.front(Some(1));
+            fixture.fit(1);
+            assert!(viewer_retained_bytes() > 0);
+            // Another request's 1:1 decode reuses but does not take.
+            let shared = fixture.native(2);
+            assert_eq!(shared.as_raw(), expected.as_raw());
+            assert!(viewer_retained_bytes() > 0);
+            // The owner's 1:1 decode takes ownership: nothing is held twice.
+            let native = fixture.native(1);
+            assert_eq!(native.as_raw(), expected.as_raw(), "1:1 pixels changed");
+            assert_eq!(viewer_retained_bytes(), 0, "pixels held twice at 1:1");
+            // Without a slot the same-size RGBA move gives identical pixels.
+            let fresh = fixture.native(1);
+            assert_eq!(fresh.as_raw(), expected.as_raw());
+        }
+        reset_retention();
+    }
+
+    #[test]
+    fn opaque_rgba_resize_skips_alpha_without_changing_pixels() {
+        let opaque = image::RgbaImage::from_fn(301, 257, |x, y| {
+            image::Rgba([(x * 7) as u8, (y * 5) as u8, (x ^ y) as u8, 255])
+        });
+        assert!(rgba_fully_opaque(&opaque));
+        let fast = resize_viewer_rgba(&opaque, 97, 83).unwrap();
+
+        let source = ImageRef::new(301, 257, opaque.as_raw(), PixelType::U8x4).unwrap();
+        let mut premultiplied = Image::new(97, 83, PixelType::U8x4);
+        let options = ResizeOptions::new()
+            .resize_alg(ResizeAlg::Convolution(FilterType::Hamming))
+            .use_alpha(true);
+        Resizer::new()
+            .resize(&source, &mut premultiplied, &options)
+            .unwrap();
+        assert_eq!(fast.as_raw(), premultiplied.buffer());
+
+        let mut translucent = opaque.clone();
+        translucent.get_pixel_mut(300, 256)[3] = 254;
+        assert!(!rgba_fully_opaque(&translucent));
+    }
 
     #[test]
     fn viewer_rgba_conversion_matches_into_rgba8_at_same_and_smaller_size() {

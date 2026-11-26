@@ -233,6 +233,8 @@ fn start_zoom_texture(
         target_height,
     };
     let (request, lease, claim) = claim_viewer_request(&key, true);
+    // The newest render of the photo in front may refill its retained pixels.
+    set_viewer_retain_front(&path, photo.mtime(), photo.size_bytes(), Some(request.id));
     viewer_trace(format!(
         "request lane=zoom-render action={} uri={} variant={}x{}",
         match claim {
@@ -324,7 +326,7 @@ fn start_zoom_texture(
 
         if let Ok(result) = result {
             let texture_started = std::time::Instant::now();
-            let bytes = glib::Bytes::from_owned(result.pixels.clone());
+            let bytes = result.pixels.clone();
             let texture = gtk::gdk::MemoryTexture::new(
                 result.width as i32,
                 result.height as i32,
@@ -462,6 +464,9 @@ fn show_photo(
     if let Some(previous) = decode_cancel.borrow_mut().take() {
         previous.cancel();
     }
+    // Before any early return (cache hit, offline, corrupt): pixels retained
+    // for the previous photo must not outlive the navigation.
+    set_viewer_retain_front(&path, photo.mtime(), photo.size_bytes(), None);
     offline.track(photo);
     offline.retry_requested.set(false);
     if photo.original_available() && photo.corrupt() {
@@ -542,6 +547,8 @@ fn show_photo(
     cancel_lightbox_prefetch_except(Some(&key));
     VIEWER_FOREGROUND_GENERATION.store(expected_generation, Ordering::Release);
     let (request, lease, claim) = claim_viewer_request(&key, true);
+    // A promoted prefetch keeps its id, so it may publish once it finishes.
+    set_viewer_retain_front(&path, photo.mtime(), photo.size_bytes(), Some(request.id));
     viewer_trace(format!(
         "request lane=foreground action={} uri={} variant={}x{}",
         match claim {
@@ -624,7 +631,7 @@ fn show_photo(
                     set_raw_loading_spinner(&root, false);
                 }
                 let display_started = std::time::Instant::now();
-                let bytes = glib::Bytes::from_owned(result.pixels.clone());
+                let bytes = result.pixels.clone();
                 let texture = gtk::gdk::MemoryTexture::new(
                     result.width as i32,
                     result.height as i32,
@@ -1017,11 +1024,17 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
             ));
             let base_decode_started = std::time::Instant::now();
             let cancelled = || !request_for_worker.has_consumers();
-            let result = crate::thumbnail::decode_for_viewer_with_cancel(
+            let active = || request_for_worker.has_consumers();
+            let retention = crate::thumbnail::ViewerRetention {
+                owner: request_for_worker.id,
+                active: &active,
+            };
+            let result = crate::thumbnail::decode_for_viewer_retaining(
                 &worker_key.path,
                 worker_key.target_width,
                 worker_key.target_height,
                 Some(&read_context),
+                Some(&retention),
                 &cancelled,
             )
             .and_then(|image| {
@@ -1092,7 +1105,7 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 let pack_started = std::time::Instant::now();
                 let width = image.width();
                 let height = image.height();
-                let pixels = image.into_raw();
+                let pixels = glib::Bytes::from_owned(image.into_raw());
                 viewer_trace(format!(
                     "stage=pack_pixels elapsed_ms={:.3} bytes={} size={}x{} uri={}",
                     pack_started.elapsed().as_secs_f64() * 1000.0,
@@ -1449,7 +1462,7 @@ fn prefetch_display_texture(
             lease.release();
             return;
         };
-        let bytes = glib::Bytes::from_owned(result.pixels.clone());
+        let bytes = result.pixels.clone();
         let texture = gtk::gdk::MemoryTexture::new(
             result.width as i32,
             result.height as i32,

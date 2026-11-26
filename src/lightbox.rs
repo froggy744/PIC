@@ -123,7 +123,8 @@ struct ViewerRequestKey {
 struct ViewerDecodeResult {
     width: u32,
     height: u32,
-    pixels: Vec<u8>,
+    /// Built on the decode worker so the GTK thread never copies pixels.
+    pixels: gtk::glib::Bytes,
 }
 
 type ViewerDecodeOutcome = Result<Arc<ViewerDecodeResult>, Arc<str>>;
@@ -182,6 +183,8 @@ impl Future for ViewerResultFuture {
 }
 
 struct ViewerRequest {
+    /// Never reused; names the request that owns retained viewer pixels.
+    id: u64,
     consumers: AtomicUsize,
     foreground: AtomicBool,
     result: Arc<ViewerResultSlot>,
@@ -191,6 +194,16 @@ impl ViewerRequest {
     fn has_consumers(&self) -> bool {
         self.consumers.load(Ordering::Acquire) != 0
     }
+}
+
+/// Tell the decoder which photo is in front and which request owns its
+/// retained full-size pixels (`None` when it is shown from a cache).
+fn set_viewer_retain_front(key_path: &str, mtime: i64, size_bytes: i64, owner: Option<u64>) {
+    crate::thumbnail::viewer_retain_front(
+        key_path,
+        crate::source::ViewerSourceFingerprint { mtime, size_bytes },
+        owner,
+    );
 }
 
 struct ViewerRequestLease {
@@ -263,7 +276,10 @@ fn claim_viewer_request(
         };
         return (request, lease, claim);
     }
+    static NEXT_VIEWER_REQUEST_ID: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(1);
     let request = Arc::new(ViewerRequest {
+        id: NEXT_VIEWER_REQUEST_ID.fetch_add(1, Ordering::Relaxed),
         consumers: AtomicUsize::new(0),
         foreground: AtomicBool::new(foreground),
         result: ViewerResultSlot::new(),
@@ -497,3 +513,6 @@ include!("lightbox/tests.rs");
 #[cfg(test)]
 #[path = "lightbox/offline_tests.rs"]
 mod offline_tests;
+#[cfg(test)]
+#[path = "lightbox/bench_tests.rs"]
+mod bench_tests;

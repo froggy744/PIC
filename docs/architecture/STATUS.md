@@ -43,7 +43,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 | 14 | Browse scope: one value for "what am I browsing" | Strong | merged | merge `16fa04e7` (`refactor/browse-scope`) | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
-| 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | deferred | none | `src/window/library.rs`, `src/window/build.rs` |
+| 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | in progress (`refactor/photo-list-pipeline`) | none | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
 | 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
 | 17 | Album list: one owner of the albums as shown | Strong | deferred (its count bug fixed, see below) | none | `src/window/albums.rs`, `src/window/layout.rs`, `src/sidebar.rs` |
 | 18 | Collection navigation out of `build()` | Strong | deferred | none | `src/window/build.rs` |
@@ -537,6 +537,40 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - GUI harness `screensaver`: its report ends at the editing prerequisites (27 PASS, 2 FAIL: the pre-existing editor checks below), so it reached no screensaver step.
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
+
+### 15 · One photo-list pipeline (in progress, `refactor/photo-list-pipeline`)
+Started 2026-11-26 at `main` @ `0653bd77`, on top of 14's `BrowseScope`. Decisions D1-D6 approved by the owner.
+
+#### The four entry points before (at `0653bd77`)
+| Step | Grid refresh | Startup | Library switch | Collection navigation |
+|---|---|---|---|---|
+| Query | `collection_photos` | `collection_photos` | own `match`, rating forced to All | 12 hand-written copies, search kept per candidate |
+| Formats | yes | yes | yes | yes |
+| RAW+JPEG pairing filter | yes | no | no | no |
+| Gallery pairing mode / pair folders | set (before the worker) | not set | not set | not set |
+| Recently Added limit | without a search | yes | yes | some branches, even while searching |
+| Files check | yes | yes | yes | yes |
+| Order | Folder stream / History kept / sort | same | same | always `sort_photos`; folder pages are one folder |
+| Thread, stale results | worker, generation | GTK, startup generation | GTK, `gallery.replace` without a generation bump | GTK, `gallery.replace` without a generation bump |
+
+Intentional and kept: startup and the switch are synchronous; the switch forces the rating to All and clears the search; navigation keeps its own page shapes (single-folder flat pages) and its search scope (candidate's destination plus the search). Omissions: pairing outside the grid refresh (added only there by `9fc96934`); no generation bump before the switch and navigation replace the gallery (suspected stale-result bug, not reproduced). Also: navigation's `Folder(current_folder_id)` arm is dead (an early return), left for 18.
+
+#### Decisions (approved 2026-11-26)
+- D1: startup, the library switch and navigation apply RAW+JPEG pairing and set the gallery's pairing state.
+- D2: the switch and navigation invalidate outstanding refresh generations before they switch libraries or replace the gallery; a stale worker cannot update photos or pairing state (the grid refresh now sets pairing state with its result, only while current).
+- D3: navigation keeps its single-folder flat pages (the Folder stream for them is 18's decision).
+- D4: navigation keeps each candidate's destination plus the search.
+- D5: the Recently Added limit applies only without a search, everywhere.
+- D6: owner rule: the pipeline steps are called only from `photo_list.rs`; tests stay allowed.
+
+Owner requirements: keep navigation fast (its "next non-empty page" checks skip ordering, `photo_list_has_photos`); Smart Album membership and the five round-three fixes kept; GTK stays outside the pipeline.
+
+#### Stages
+1. `photo_list.rs`: `PhotoListRequest`, `PhotoList`, `photo_list`, `photo_list_has_photos`; `collection_photos`, `limit_recently_added`, `apply_files_check` moved in. Table tests.
+2. Grid refresh and startup use it (`startup_photos` removed).
+3. Library switch uses it, with the invalidation (red-first stale-result test).
+4. Collection navigation uses it.
+5. Owner rule, docs.
 
 ### 14 · Browse scope (merged 2026-11-26)
 Merged into `main` 2026-11-26 (merge `16fa04e7`, branch deleted). The owner approved the revised decisions 4, 6 and 7 and checked the rating picker, facet counts, Smart Albums, library switching and search by hand: working. Follow-ups below stay open. Next in order: 15.

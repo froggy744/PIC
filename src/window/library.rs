@@ -614,22 +614,6 @@ fn albums_home_scope(connection: &Connection) -> db::BrowseScope {
     browse_scope(connection, sidebar::SidebarFilter::Albums, "")
 }
 
-/// The photos the database returns for `scope` (taken for `filter`), before
-/// format, RAW+JPEG, Recently Added and Files filtering. `None` for
-/// destinations that show no photo grid (Albums, Library).
-fn collection_photos(
-    connection: &Connection,
-    filter: sidebar::SidebarFilter,
-    scope: &db::BrowseScope,
-) -> Option<Vec<db::Photo>> {
-    if scope.search.is_empty()
-        && matches!(filter, sidebar::SidebarFilter::Albums | sidebar::SidebarFilter::Library)
-    {
-        return None;
-    }
-    Some(db::browse_photos(connection, scope).unwrap_or_default())
-}
-
 /// The photos the window opens on for the restored destination, filtered
 /// and in display order, as the grid would show them.
 fn startup_photos(
@@ -667,27 +651,6 @@ fn scan_may_append_new_photos(scope: &db::BrowseScope) -> bool {
     !scope.is_narrowed()
 }
 
-fn limit_recently_added(
-    connection: &Connection,
-    filter: sidebar::SidebarFilter,
-    photos: &mut Vec<db::Photo>,
-) {
-    if filter != sidebar::SidebarFilter::RecentlyAdded {
-        return;
-    }
-
-    // Select the newest files first, then restore the user's chosen display
-    // ordering in refresh_grid().
-    sort_photos(
-        photos,
-        PhotoSort {
-            field: SortField::DateAdded,
-            direction: SortDirection::Descending,
-        },
-    );
-    photos.truncate(db::recently_added_limit(connection));
-}
-
 fn retain_enabled_formats(connection: &Connection, photos: &mut Vec<db::Photo>) {
     let enabled = crate::image_format::enabled_ids(connection).unwrap_or_else(|_| {
         crate::image_format::all()
@@ -696,27 +659,6 @@ fn retain_enabled_formats(connection: &Connection, photos: &mut Vec<db::Photo>) 
             .collect()
     });
     photos.retain(|photo| crate::image_format::path_is_enabled_in(&enabled, &photo.path));
-}
-
-/// The Files choice (Online, Offline, Corrupt) SQL cannot express, checked on
-/// the loaded photos. Stored ratings are already in the query.
-fn apply_files_check(photos: &mut Vec<db::Photo>, scope: &db::BrowseScope) {
-    match scope.files_check() {
-        Some(RatingFilter::Online) => {
-            photos.retain(|photo| crate::source::folder_available(photo.folder_id));
-        }
-        Some(RatingFilter::Offline) => {
-            photos.retain(|photo| !crate::source::folder_available(photo.folder_id));
-        }
-        Some(RatingFilter::Corrupt) => {
-            photos.retain(|photo| {
-                crate::photo_object::confirmed_corrupt_local_jpeg(
-                    &photo.path, photo.width, photo.height,
-                )
-            });
-        }
-        _ => {}
-    }
 }
 
 /// Whether the toolbar rating filter narrows this destination. The sidebar
@@ -1453,25 +1395,6 @@ mod photo_action_tests {
             sorted_paths(SortField::Rating, SortDirection::Ascending),
             ["/photos/z.jpg", "/photos/m.jpg", "/photos/A.jpg"]
         );
-    }
-
-    #[test]
-    fn corrupt_filter_uses_the_same_status_as_the_badge() {
-        let directory = std::env::temp_dir().join(format!("pic-corrupt-filter-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let good_path = directory.join("good.jpg");
-        let bad_path = directory.join("bad.jpg");
-        std::fs::write(&good_path, [0xff, 0xd8, 0xff, 0xe0]).unwrap();
-        std::fs::write(&bad_path, b"not image data").unwrap();
-        let mut good = photo(good_path.to_str().unwrap(), None, None, None, None);
-        good.id = 1;
-        let mut bad = photo(bad_path.to_str().unwrap(), None, None, None, None);
-        bad.id = 2;
-        let mut photos = vec![good, bad];
-        let corrupt = db::BrowseScope { rating: RatingFilter::Corrupt, ..db::BrowseScope::default() };
-        apply_files_check(&mut photos, &corrupt);
-        assert_eq!(photos.iter().map(|photo| photo.id).collect::<Vec<_>>(), [2]);
-        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

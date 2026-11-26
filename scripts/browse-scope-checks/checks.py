@@ -20,8 +20,9 @@ the library copy (sqlite). Views are opened by restarting PIC on a saved
 - Library switch: the second library opens without its stale saved rating.
 
 Run through run.sh; prints PASS/FAIL per check and a SUMMARY line.
-Not yet executed (written 2026-11-26): expect to adjust selectors on the
-first run."""
+First run 2026-11-26: 9/9 passed on a 15-photo harness library, after
+adjusting the selectors (GTK 4 radio buttons by keyboard focus, the
+"Filters" toggle, the unnamed search entry, the header library switcher)."""
 import sys, os, re, json, time, sqlite3, traceback
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "front-surface-checks"))
 from drv import *
@@ -121,6 +122,29 @@ def select_row(label_text):
     wait(pick, f"{label_text} row")
 
 
+def focused_name(role):
+    for n in nodes():
+        try:
+            if n.getRoleName() == role and n.getState().contains(pyatspi.STATE_FOCUSED):
+                return n.name
+        except Exception:
+            continue
+    return None
+
+
+def activate_by_focus(role, name, steps=20):
+    """GTK 4 radio and check buttons expose no AT-SPI action (as
+    scripts/gui_test.py notes): move keyboard focus to the button, then
+    press Space."""
+    for direction, count in (("Down", steps), ("Up", 2 * steps)):
+        for _ in range(count + 1):
+            if focused_name(role) == name:
+                key("space")
+                return
+            key(direction)
+    raise TimeoutError(f"could not focus {role} {name!r}")
+
+
 def pick_rating(label):
     """Toolbar rating picker: open it, choose `label`, close it. Returns the
     log position before the choice."""
@@ -128,7 +152,7 @@ def pick_rating(label):
     action = wait(rating_button, "rating picker").queryAction()
     action.doAction(0)
     wait(lambda: find("radio button", "Clear"), "rating popover")
-    press("radio button", label)
+    activate_by_focus("radio button", label)
     time.sleep(0.5)
     key("Escape")
     return since
@@ -180,7 +204,7 @@ try:
 
     # Metadata panel count under the same rating.
     try:
-        press("toggle button", "Show or hide photo filters")
+        press("toggle button", "Filters")
         panel = wait(photo_count_label, "metadata panel photo count")
     except Exception as error:
         panel = f"not found ({type(error).__name__})"
@@ -199,9 +223,16 @@ try:
         path = c.execute("SELECT path FROM photos WHERE trashed=0 ORDER BY id LIMIT 1").fetchone()[0]
     term = os.path.splitext(os.path.basename(path))[0]
     since = log_len()
-    entry = wait(lambda: next((n for n in nodes() if n.getRoleName() in {"entry", "text"} and showing(n)
-                               and "Search" in (n.name or n.description or "")), None), "search entry")
-    entry.queryComponent().grabFocus()
+    # GTK 4 gives the header's search entry no accessible name: take the
+    # showing text-entry node (the only one in the gallery view).
+    entry = wait(lambda: next((n for n in nodes() if n.getRoleName() in {"entry", "text", "search box"}
+                               and showing(n)), None), "search entry")
+    try:
+        entry.queryComponent().grabFocus()
+    except Exception:
+        # GTK 4 may refuse AT-SPI focus; typing in the gallery starts a
+        # search instead (type-to-search, window/search.rs).
+        x("windowactivate", "--sync", win, check=False)
     x("type", "--delay", "40", term)
     shown = grid_count(since)
     expected = count(f"p.path LIKE '%{term}%' OR substr(p.taken_at,1,10) LIKE '%{term}%' OR EXISTS "
@@ -242,15 +273,21 @@ try:
     # Library switch: Second must not open under its stale saved 5 stars.
     proc = restart("all")
     pick_rating("★★★ 3")
-    press("button", "Settings")
-    select_row("Libraries")
-    time.sleep(1)
-    press("button", "Open")
+    # The header's library switcher: one button per library, named after it
+    # (Settings > Libraries lists the others below the fold).
+    press("button", "Libraries")
+    second = wait(lambda: next((n for n in nodes() if n.getRoleName() == "button" and showing(n)
+                                and (n.name or "").startswith("Second")), None), "Second in the switcher")
+    act = second.queryAction()
+    act.doAction(0)
     wait(lambda: "Second" in x("getwindowname", win, check=False), "switched to Second", 15)
     key("Escape")
     time.sleep(3)
     with sqlite3.connect(library_b()) as c:
         saved = c.execute("SELECT value FROM settings WHERE key='photo-rating-filter'").fetchone()
+    # Clear on an already clear rating refreshes nothing: narrow first, so
+    # Clear rebuilds the grid of the second library.
+    pick_rating("★★★ 3")
     since = pick_rating("Clear")
     shown, expected = grid_count(since), count("1", library_b())
     check("A library switch drops the new library's stale rating",

@@ -8,10 +8,9 @@
 # touches the real library or the desktop. Output:
 # reports/browse-scope-checks/<time>/.
 #
-# Status: written 2026-11-26 after candidate 14 merged and NOT YET EXECUTED;
-# its AT-SPI selectors may need adjusting on the first run. Needs one GUI
-# harness run first (PIC_GUI_SUITE=viewer scripts/test-gui.sh) for the
-# library it copies.
+# Status: first run 2026-11-26, 9/9 passed. Needs one GUI harness run first
+# (e.g. PIC_GUI_SUITE=viewer scripts/test-gui.sh) for the library it copies,
+# or PIC_CHECK_LIBRARY pointing at a reports/gui-tests/<run> folder.
 #
 # Usage, from the repository root:
 #   scripts/browse-scope-checks/run.sh

@@ -37,6 +37,8 @@ include!("albums/coverflow.rs");
 include!("albums/card.rs");
 include!("albums/actions.rs");
 include!("albums/view.rs");
+#[path = "albums/rules.rs"]
+pub(crate) mod rules;
 
 #[cfg(test)]
 mod tests {

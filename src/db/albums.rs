@@ -184,7 +184,9 @@ pub fn create_smart_album(
     Ok(album)
 }
 
-fn insert_album(connection: &Connection, name: &str, rules: Option<String>) -> Result<Album> {
+/// The checks a new album name must pass, so a two-step creation can report
+/// a bad name before its second step.
+pub fn check_new_album_name(connection: &Connection, name: &str) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
         anyhow::bail!("album name cannot be blank");
@@ -199,6 +201,12 @@ fn insert_album(connection: &Connection, name: &str, rules: Option<String>) -> R
     if duplicate.is_some() {
         anyhow::bail!("an album named ‘{name}’ already exists");
     }
+    Ok(())
+}
+
+fn insert_album(connection: &Connection, name: &str, rules: Option<String>) -> Result<Album> {
+    check_new_album_name(connection, name)?;
+    let name = name.trim();
     connection.execute(
         "INSERT INTO albums(name, created_at, rules)
          VALUES (?1, CAST(strftime('%s', 'now') AS INTEGER), ?2)",

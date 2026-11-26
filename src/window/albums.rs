@@ -166,6 +166,25 @@ fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: P
     entry.set_placeholder_text(Some("Album name"));
     entry.set_activates_default(true);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    // Album or Smart Album. Opened from Add to Album the photos need a
+    // manual album, so the choice is not offered there.
+    let smart = gtk::ToggleButton::with_label("Smart Album");
+    if photo_ids.is_empty() {
+        let kind = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        kind.add_css_class("linked");
+        kind.add_css_class("new-album-kind");
+        kind.set_halign(gtk::Align::Center);
+        kind.set_margin_bottom(4);
+        let manual = gtk::ToggleButton::with_label("Album");
+        manual.set_active(true);
+        smart.set_group(Some(&manual));
+        manual.set_hexpand(true);
+        smart.set_hexpand(true);
+        kind.set_homogeneous(true);
+        kind.append(&manual);
+        kind.append(&smart);
+        content.append(&kind);
+    }
     content.append(&gtk::Label::new(Some("Enter a name for the album:")));
     content.append(&entry);
     let dialog = adw::AlertDialog::builder()
@@ -177,9 +196,29 @@ fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: P
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("create", "Create");
     dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+    let weak_dialog = dialog.downgrade();
+    smart.connect_toggled(move |smart| {
+        if let Some(dialog) = weak_dialog.upgrade() {
+            dialog.set_response_label("create", if smart.is_active() { "Next" } else { "Create" });
+        }
+    });
     let parent_for_response = parent.clone();
     let entry_for_response = entry.clone();
     dialog.connect_response(Some("create"), move |_, _| {
+        if smart.is_active() {
+            let name = entry_for_response.text().trim().to_string();
+            if let Err(error) = db::check_new_album_name(&context.connection.borrow(), &name) {
+                show_error(&parent_for_response, "Could not create album", &error.to_string());
+                return;
+            }
+            let parent = parent_for_response.clone();
+            let context = context.clone();
+            // Present after the name dialog has closed and released its focus.
+            glib::idle_add_local_once(move || {
+                show_new_smart_album_rules(&parent, name, None, None, context);
+            });
+            return;
+        }
         let album = match db::create_album(
             &context.connection.borrow(),
             entry_for_response.text().as_str(),
@@ -209,6 +248,38 @@ fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: P
     });
     dialog.present(Some(&parent));
     entry.grab_focus();
+}
+
+/// The second step of a new Smart Album (and Save as Smart Album): choose
+/// its rules, then create it. `name` is `None` when the dialog should ask for
+/// one; `rules` prefills the conditions.
+fn show_new_smart_album_rules(
+    parent: &gtk::Widget,
+    name: String,
+    rules: Option<&db::filters::AlbumRules>,
+    notice: Option<String>,
+    context: PhotoActionContext,
+) {
+    let ask_name = rules.is_some();
+    let connection = context.connection.clone();
+    crate::albums_view::rules::present_rules_dialog(
+        parent,
+        connection,
+        crate::albums_view::rules::RulesDialogSpec {
+            title: if ask_name { "Save as Smart Album".into() } else { "New Smart Album".into() },
+            subtitle: (!ask_name).then(|| name.clone()),
+            name: ask_name.then(|| name.clone()),
+            accept_label: if ask_name { "Save" } else { "Create" },
+            notice,
+        },
+        rules,
+        Rc::new(move |entered, rules| {
+            let name = if ask_name { entered } else { name.as_str() };
+            db::create_smart_album(&context.connection.borrow(), name, rules)?;
+            refresh_album_ui(&context);
+            Ok(())
+        }),
+    );
 }
 
 fn show_delete_album_confirmation(parent: gtk::Widget, album_id: i64, context: PhotoActionContext) {

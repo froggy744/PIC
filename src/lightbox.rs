@@ -123,7 +123,8 @@ struct ViewerRequestKey {
 struct ViewerDecodeResult {
     width: u32,
     height: u32,
-    pixels: Vec<u8>,
+    /// Built on the decode worker so the GTK thread never copies pixels.
+    pixels: gtk::glib::Bytes,
 }
 
 type ViewerDecodeOutcome = Result<Arc<ViewerDecodeResult>, Arc<str>>;

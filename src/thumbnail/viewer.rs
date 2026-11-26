@@ -24,6 +24,37 @@ struct ViewerNefSourceCacheEntry {
     bytes: usize,
 }
 
+/// The full-size decode of the photo in front of the viewer, for formats that
+/// cannot decode at a reduced size (PNG, TIFF, WebP, ...). A fit decode of such
+/// a file already produced every source pixel; keeping them lets 1:1 zoom skip
+/// a second read + decode (~600 ms for a 6072x9000 PNG). One slot, filled only
+/// by the foreground lane so a neighbour prefetch never evicts it, and released
+/// when the viewer closes.
+struct ViewerFullDecode {
+    reference: String,
+    fingerprint: crate::source::ViewerSourceFingerprint,
+    image: Arc<DynamicImage>,
+}
+
+static VIEWER_FULL_DECODE: Mutex<Option<ViewerFullDecode>> = Mutex::new(None);
+
+/// Drop the retained full-size decode. Called when the viewer closes.
+pub fn release_viewer_full_decode() {
+    VIEWER_FULL_DECODE.lock().unwrap().take();
+}
+
+fn viewer_full_decode_lookup(
+    reference: &str,
+    fingerprint: crate::source::ViewerSourceFingerprint,
+) -> Option<Arc<DynamicImage>> {
+    VIEWER_FULL_DECODE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|slot| slot.reference == reference && slot.fingerprint == fingerprint)
+        .map(|slot| slot.image.clone())
+}
+
 static VIEWER_NEF_SOURCE_CACHE: OnceLock<Mutex<VecDeque<ViewerNefSourceCacheEntry>>> =
     OnceLock::new();
 #[cfg(target_os = "linux")]
@@ -1244,14 +1275,36 @@ where
         );
         (Arc::new(image), target_width, target_height)
     } else {
-        check_viewer_cancelled(&cancelled, "before_source_read")?;
-        let source_started = std::time::Instant::now();
-        let bytes = read_viewer_source(reference, read_context)?;
-        source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
-        let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-        check_viewer_cancelled(&cancelled, "before_generic_decode")?;
-        let image = reader.decode()?;
-        check_viewer_cancelled(&cancelled, "after_generic_decode")?;
+        let fingerprint = read_context.and_then(|context| context.fingerprint());
+        let foreground = read_context.is_some_and(|context| {
+            matches!(context.lane(), crate::source::ViewerReadLane::Foreground)
+        });
+        let retained =
+            fingerprint.and_then(|fingerprint| viewer_full_decode_lookup(reference, fingerprint));
+        let image = if let Some(image) = retained {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_DECODE stage=full_decode_reuse decoded={}x{}",
+                    image.width(),
+                    image.height(),
+                );
+            }
+            image
+        } else {
+            if foreground {
+                // Free the previous photo's pixels before decoding the next.
+                release_viewer_full_decode();
+            }
+            check_viewer_cancelled(&cancelled, "before_source_read")?;
+            let source_started = std::time::Instant::now();
+            let bytes = read_viewer_source(reference, read_context)?;
+            source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
+            let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+            check_viewer_cancelled(&cancelled, "before_generic_decode")?;
+            let image = Arc::new(reader.decode()?);
+            check_viewer_cancelled(&cancelled, "after_generic_decode")?;
+            image
+        };
         let source_width = image.width();
         let source_height = image.height();
         let (target_width, target_height) = viewer_target_dimensions(
@@ -1261,7 +1314,16 @@ where
             viewport_width,
             viewport_height,
         );
-        (Arc::new(image), target_width, target_height)
+        // Only worth keeping when this request discards pixels a zoom needs.
+        let downscaled = target_width < source_width || target_height < source_height;
+        if let (Some(fingerprint), true, true) = (fingerprint, foreground, downscaled) {
+            *VIEWER_FULL_DECODE.lock().unwrap() = Some(ViewerFullDecode {
+                reference: reference.to_owned(),
+                fingerprint,
+                image: image.clone(),
+            });
+        }
+        (image, target_width, target_height)
     };
 
     let decoded_width = image.width();

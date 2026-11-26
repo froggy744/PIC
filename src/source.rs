@@ -52,8 +52,12 @@ impl ViewerReadContext {
         }
     }
 
-    fn lane(&self) -> ViewerReadLane {
+    pub(crate) fn lane(&self) -> ViewerReadLane {
         (self.lane)()
+    }
+
+    pub(crate) fn fingerprint(&self) -> Option<ViewerSourceFingerprint> {
+        self.fingerprint
     }
 
     fn cancelled(&self) -> bool {
@@ -419,7 +423,14 @@ pub fn read(reference: &str) -> Result<Vec<u8>> {
     if crate::network_shares::private(reference) {
         return crate::network_shares::read(reference);
     }
-    let (contents, _) = file(reference)
+    let file = file(reference);
+    // A local path (including a gvfs FUSE path) reads in one sized
+    // allocation. GIO's load_contents grows its buffer piecemeal and the
+    // result was copied again, which cost ~200 ms on a 100 MB PNG.
+    if let Some(path) = file.path() {
+        return std::fs::read(&path).with_context(|| format!("could not read {reference}"));
+    }
+    let (contents, _) = file
         .load_contents(gio::Cancellable::NONE)
         .with_context(|| format!("could not read {reference}"))?;
     Ok(contents.as_ref().to_vec())

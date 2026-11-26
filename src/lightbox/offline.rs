@@ -154,7 +154,7 @@ fn load_cached_lightbox_preview(
         return Some(ViewerDecodeResult {
             width: width as u32,
             height: height as u32,
-            pixels,
+            pixels: glib::Bytes::from_owned(pixels),
         });
     }
     None
@@ -253,7 +253,7 @@ fn apply_offline_preview_result(
                     preview.width as i32,
                     preview.height as i32,
                     gtk::gdk::MemoryFormat::R8g8b8a8,
-                    &glib::Bytes::from_owned(preview.pixels),
+                    &preview.pixels,
                     preview.width as usize * 4,
                 );
                 picture.set_paintable(Some(&texture));

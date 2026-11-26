@@ -324,7 +324,7 @@ fn start_zoom_texture(
 
         if let Ok(result) = result {
             let texture_started = std::time::Instant::now();
-            let bytes = glib::Bytes::from_owned(result.pixels.clone());
+            let bytes = result.pixels.clone();
             let texture = gtk::gdk::MemoryTexture::new(
                 result.width as i32,
                 result.height as i32,
@@ -624,7 +624,7 @@ fn show_photo(
                     set_raw_loading_spinner(&root, false);
                 }
                 let display_started = std::time::Instant::now();
-                let bytes = glib::Bytes::from_owned(result.pixels.clone());
+                let bytes = result.pixels.clone();
                 let texture = gtk::gdk::MemoryTexture::new(
                     result.width as i32,
                     result.height as i32,
@@ -1092,7 +1092,7 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 let pack_started = std::time::Instant::now();
                 let width = image.width();
                 let height = image.height();
-                let pixels = image.into_raw();
+                let pixels = glib::Bytes::from_owned(image.into_raw());
                 viewer_trace(format!(
                     "stage=pack_pixels elapsed_ms={:.3} bytes={} size={}x{} uri={}",
                     pack_started.elapsed().as_secs_f64() * 1000.0,
@@ -1449,7 +1449,7 @@ fn prefetch_display_texture(
             lease.release();
             return;
         };
-        let bytes = glib::Bytes::from_owned(result.pixels.clone());
+        let bytes = result.pixels.clone();
         let texture = gtk::gdk::MemoryTexture::new(
             result.width as i32,
             result.height as i32,

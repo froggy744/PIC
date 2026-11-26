@@ -284,6 +284,7 @@ impl Lightbox {
                 }
                 // A closing viewer must not apply a late decode or prefetch.
                 cancel_lightbox_prefetch();
+        crate::thumbnail::release_viewer_full_decode();
                 load_generation.set(load_generation.get().wrapping_add(1));
                 if let Some(active) = decode_cancel.borrow_mut().take() {
                     active.cancel();
@@ -2567,6 +2568,7 @@ impl Lightbox {
             .set(self.close_generation.get().wrapping_add(1));
         self.close_in_progress.set(false);
         cancel_lightbox_prefetch();
+        crate::thumbnail::release_viewer_full_decode();
         // Invalidate an in-flight full-resolution decode as well as hiding
         // the viewer. A late worker result must not repopulate a closed view.
         self.load_generation
@@ -2616,6 +2618,7 @@ impl Lightbox {
         self.close_in_progress.set(true);
         self.handoff_in_progress.set(true);
         cancel_lightbox_prefetch();
+        crate::thumbnail::release_viewer_full_decode();
         // A late decode must not change the frame that is being handed off.
         self.load_generation
             .set(self.load_generation.get().wrapping_add(1));

@@ -677,7 +677,7 @@ fn show_photo_context_menu(
                 );
                 return;
             }
-            refresh_album_ui(&set_cover_context);
+            albums_edited(&set_cover_context);
         });
 
         let remove = manual.then(|| add_action("Remove from Album"));
@@ -703,7 +703,7 @@ fn show_photo_context_menu(
             if let Some(gallery) = remove_context.gallery.borrow().upgrade() {
                 gallery.remove_photos(&ids);
             }
-            refresh_album_ui(&remove_context);
+            albums_edited(&remove_context);
         }); }
     }
     {
@@ -2619,7 +2619,7 @@ mod photo_actions_tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(|_| {}),
+            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
@@ -2716,7 +2716,7 @@ mod photo_actions_tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(|_| {}),
+            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
@@ -2799,7 +2799,7 @@ mod photo_actions_tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(|_| {}),
+            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(filter))),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
@@ -3018,7 +3018,7 @@ mod photo_actions_tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(|_| {}),
+            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
@@ -3121,7 +3121,7 @@ mod photo_actions_tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(|_| {}),
+            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
@@ -3191,7 +3191,7 @@ mod photo_actions_tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(|_| {}),
+            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),

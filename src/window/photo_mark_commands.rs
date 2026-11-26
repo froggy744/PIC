@@ -298,9 +298,16 @@ mod tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(move |albums: &[db::Album]| {
-                applied_in.borrow_mut().push(albums[0].photo_count);
-            }),
+            albums: {
+                let list = AlbumList::new(
+                    connection.clone(),
+                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                );
+                list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
+                    applied_in.borrow_mut().push(albums[0].photo_count);
+                }));
+                list
+            },
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
@@ -380,11 +387,18 @@ mod tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(move |albums: &[db::Album]| {
-                home_in
-                    .borrow_mut()
-                    .push(albums.iter().map(|a| (a.name.clone(), a.photo_count)).collect());
-            }),
+            albums: {
+                let list = AlbumList::new(
+                    connection.clone(),
+                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                );
+                list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
+                    home_in
+                        .borrow_mut()
+                        .push(albums.iter().map(|a| (a.name.clone(), a.photo_count)).collect());
+                }));
+                list
+            },
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),
@@ -405,7 +419,7 @@ mod tests {
         };
 
         // An album edit refreshes the home with filtered counts.
-        refresh_album_ui(&context);
+        albums_edited(&context);
         assert_eq!(home.borrow().last(), Some(&filtered));
 
         // A Smart Album recount (worker) does too.
@@ -416,7 +430,7 @@ mod tests {
 
         // A recount started under the old filters never overwrites a newer
         // filter state.
-        recount_smart_albums(&context);
+        context.albums.recount_now();
         db::set_setting(&connection.borrow(), "photo-rating-filter", "").unwrap();
         let settle = std::time::Instant::now() + std::time::Duration::from_millis(500);
         while std::time::Instant::now() < settle {
@@ -433,6 +447,158 @@ mod tests {
         assert_eq!(whole, [("Loved".to_string(), 2), ("Trips".to_string(), 2)]);
         let chooser = db::manual_albums(&connection.borrow()).unwrap();
         assert_eq!(chooser.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Trips"]);
+    }
+
+    /// A library file in a fresh temporary directory.
+    fn album_library(name: &str) -> Rc<RefCell<rusqlite::Connection>> {
+        let directory = std::env::temp_dir().join(format!(
+            "pic-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        Rc::new(RefCell::new(db::open(&directory.join("library.db")).unwrap()))
+    }
+
+    /// A window-free context whose Albums home records what it is given.
+    fn album_context(
+        connection: Rc<RefCell<rusqlite::Connection>>,
+        home: Rc<RefCell<Vec<Vec<(String, i64)>>>>,
+    ) -> PhotoActionContext {
+        PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: Rc::new(InfoBar::new()),
+            lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
+            sidebar: Rc::new(RefCell::new(None)),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            albums: {
+                let list = AlbumList::new(
+                    connection.clone(),
+                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                );
+                list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
+                    home.borrow_mut()
+                        .push(albums.iter().map(|a| (a.name.clone(), a.photo_count)).collect());
+                }));
+                list
+            },
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
+        }
+    }
+
+    fn spin_for(millis: u64) {
+        let main = glib::MainContext::default();
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(millis);
+        while std::time::Instant::now() < until {
+            main.iteration(false);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn an_older_recount_never_overwrites_a_newer_album_edit() {
+        gtk::init().unwrap();
+        let connection = album_library("older-recount");
+        connection
+            .borrow()
+            .execute_batch("INSERT INTO photos (id, path, favorite) VALUES (1, '/r/a.jpg', 1), (2, '/r/b.jpg', 1);")
+            .unwrap();
+        let trips = db::create_album(&connection.borrow(), "Trips").unwrap();
+        db::add_photos_to_album(&connection.borrow(), trips.id, &[1, 2]).unwrap();
+        let mut rules = db::filters::AlbumRules::default();
+        rules.categories.insert(
+            db::filters::Field::Favorite,
+            db::filters::Selection { values: vec!["1".into()], ..Default::default() },
+        );
+        db::create_smart_album(&connection.borrow(), "Loved", &rules).unwrap();
+        let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
+        let context = album_context(connection.clone(), home.clone());
+
+        // A recount is counting on its worker when an album is deleted.
+        context.albums.recount_now();
+        db::delete_album(&connection.borrow(), trips.id).unwrap();
+        albums_edited(&context);
+        assert_eq!(home.borrow().last(), Some(&vec![("Loved".to_string(), 2)]));
+        spin_for(600);
+        // The edit is newer: the older recount's lists are dropped.
+        assert_eq!(home.borrow().len(), 1, "an older recount landed: {:?}", home.borrow());
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn add_to_album_lists_the_open_librarys_manual_albums() {
+        gtk::init().unwrap();
+        let first = album_library("add-menu-first");
+        db::create_album(&first.borrow(), "Old library album").unwrap();
+        let context = album_context(first, Rc::default());
+        configure_infobar_album_menu(&context.info.add_to_album, context.clone());
+
+        // Another library is opened behind the same window.
+        let second = album_library("add-menu-second");
+        db::create_album(&second.borrow(), "New library album").unwrap();
+        let mut rules = db::filters::AlbumRules::default();
+        rules.rating = "5".into();
+        db::create_smart_album(&second.borrow(), "Smart source", &rules).unwrap();
+        let second = Rc::try_unwrap(second).ok().unwrap().into_inner();
+        context.connection.replace(second);
+
+        let window = gtk::Window::new();
+        window.set_default_size(1200, 200);
+        window.set_child(Some(&context.info.root));
+        window.present();
+        spin_for(200);
+        context.info.add_to_album.set_visible(true);
+        context.info.add_to_album.popup();
+        spin_for(200);
+        let labels = context
+            .info
+            .add_to_album
+            .popover()
+            .map(|popover| {
+                let mut labels = Vec::new();
+                let mut pending = vec![popover.upcast::<gtk::Widget>()];
+                while let Some(widget) = pending.pop() {
+                    if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+                        if let Some(label) = button.label() {
+                            labels.push(label.to_string());
+                        }
+                    }
+                    let mut child = widget.first_child();
+                    while let Some(next) = child {
+                        child = next.next_sibling();
+                        pending.push(next);
+                    }
+                }
+                labels
+            })
+            .unwrap_or_default();
+        context.info.add_to_album.popdown();
+        // Manual albums of the open library only: Smart Albums are sources.
+        assert!(labels.iter().any(|label| label == "New library album"), "{labels:?}");
+        assert!(!labels.iter().any(|label| label == "Old library album"), "{labels:?}");
+        assert!(!labels.iter().any(|label| label == "Smart source"), "{labels:?}");
     }
 
     #[test]
@@ -502,7 +668,7 @@ mod tests {
             import_folder: Rc::new(|| {}),
             delete_album: Rc::new(|_| {}),
             on_unavailable: Rc::new(|| {}),
-            refresh_albums_home: Rc::new(|_| {}),
+            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(sidebar::SidebarFilter::All))),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),
             open_edit: Rc::new(|_| {}),

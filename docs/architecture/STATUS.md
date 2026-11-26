@@ -543,12 +543,16 @@ The owner deferred all seven candidates: the bugs the review found are fixed one
 
 Bugs found by the review (read from the code; fix individually):
 - **Fixed** (candidate 17, on `feature/smart-albums`): after an album edit or a Smart Album recount, the Albums home got unfiltered counts. `refresh_album_ui` and `recount_smart_albums` (`src/window/albums.rs`) now feed it `browse_albums`, and a recount started under older browsing filters is dropped. Test: `albums_home_keeps_browsing_filters_after_edits_and_recounts`.
-- Open (14/15): a restored History session shows all photos; startup's list (`build.rs:125-157`) has no History arm.
-- Open (14): sidebar Ratings with the toolbar rating on Unrated is empty: SQL keeps `rating=0`, then `apply_collection_rating_filter` keeps 1-5 (`library.rs:635-673`).
-- Open (14/19): the scan append path (`build.rs:6562-6590`) adds new photos to a rating-filtered view; its "narrowed?" check ignores the rating.
-- Open (16): rotating in the viewer refreshes the gallery Properties surface (`build.rs:4675-4699`); trash does not update library counts (`photo_actions.rs:1500-1537`).
+- Open (14/15), handoff bug 4: a restored History session shows all photos; startup's list (`build.rs:125-157`) has no History arm.
+- Open (14), handoff bug 1: sidebar Ratings with the toolbar rating on Unrated is empty: SQL keeps `rating=0`, then `apply_collection_rating_filter` keeps 1-5 (`library.rs:635-673`).
+- Open (14/19), handoff bug 5: the scan append path (`build.rs:6562-6590`) adds new photos to a rating-filtered view; its "narrowed?" check ignores the rating.
+- Open (16), handoff bug 3: rotating in the viewer refreshes the gallery Properties surface (`build.rs:4675-4699`).
+- Open (16), handoff bug 2: trash does not update library counts (`photo_actions.rs:1500-1537`).
 
-### Next (updated 2026-11-24, after 5 and the 11 follow-up)
+### Next (updated 2026-11-26)
+Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands.
+
+### Next (2026-11-24, history)
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).
 
 Open candidates, in order:

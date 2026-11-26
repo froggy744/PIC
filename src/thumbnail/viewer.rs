@@ -1505,14 +1505,39 @@ fn resize_viewer_rgba(
         PixelType::U8x4,
     )?;
     let mut destination_image = Image::new(destination_width, destination_height, PixelType::U8x4);
-    let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Hamming));
+    // The resizer premultiplies alpha by default: a full-size copy of the
+    // source on one thread (~100-200 ms for a 40-75 MP PNG). Many RGBA PNGs
+    // are fully opaque, where premultiplying is the identity, so skip it then.
+    let started = std::time::Instant::now();
+    let opaque = rgba_fully_opaque(source);
+    let options = ResizeOptions::new()
+        .resize_alg(ResizeAlg::Convolution(FilterType::Hamming))
+        .use_alpha(!opaque);
     Resizer::new().resize(&source_image, &mut destination_image, &options)?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=rgba_resize elapsed_ms={:.3} opaque={} output={}x{}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            opaque,
+            destination_width,
+            destination_height,
+        );
+    }
     image::RgbaImage::from_raw(
         destination_width,
         destination_height,
         destination_image.into_vec(),
     )
     .context("viewer RGBA resizer returned an invalid buffer")
+}
+
+/// True when every alpha byte is 255, scanned in bands on the rayon pool.
+fn rgba_fully_opaque(source: &image::RgbaImage) -> bool {
+    use rayon::prelude::*;
+    source
+        .as_raw()
+        .par_chunks(4 * 65_536)
+        .all(|band| band.chunks_exact(4).all(|pixel| pixel[3] == 255))
 }
 
 /// Opaque RGBA copy of `source`, converted in row bands on the rayon pool.
@@ -1696,6 +1721,29 @@ pub fn apply_orientation(image: DynamicImage, orientation: u16) -> DynamicImage 
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn opaque_rgba_resize_skips_alpha_without_changing_pixels() {
+        let opaque = image::RgbaImage::from_fn(301, 257, |x, y| {
+            image::Rgba([(x * 7) as u8, (y * 5) as u8, (x ^ y) as u8, 255])
+        });
+        assert!(rgba_fully_opaque(&opaque));
+        let fast = resize_viewer_rgba(&opaque, 97, 83).unwrap();
+
+        let source = ImageRef::new(301, 257, opaque.as_raw(), PixelType::U8x4).unwrap();
+        let mut premultiplied = Image::new(97, 83, PixelType::U8x4);
+        let options = ResizeOptions::new()
+            .resize_alg(ResizeAlg::Convolution(FilterType::Hamming))
+            .use_alpha(true);
+        Resizer::new()
+            .resize(&source, &mut premultiplied, &options)
+            .unwrap();
+        assert_eq!(fast.as_raw(), premultiplied.buffer());
+
+        let mut translucent = opaque.clone();
+        translucent.get_pixel_mut(300, 256)[3] = 254;
+        assert!(!rgba_fully_opaque(&translucent));
+    }
 
     #[test]
     fn viewer_rgba_conversion_matches_into_rgba8_at_same_and_smaller_size() {

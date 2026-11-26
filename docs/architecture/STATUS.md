@@ -566,11 +566,22 @@ Intentional and kept: startup and the switch are synchronous; the switch forces 
 Owner requirements: keep navigation fast (its "next non-empty page" checks skip ordering, `photo_list_has_photos`); Smart Album membership and the five round-three fixes kept; GTK stays outside the pipeline.
 
 #### Stages
-1. `photo_list.rs`: `PhotoListRequest`, `PhotoList`, `photo_list`, `photo_list_has_photos`; `collection_photos`, `limit_recently_added`, `apply_files_check` moved in. Table tests.
-2. Grid refresh and startup use it (`startup_photos` removed).
-3. Library switch uses it, with the invalidation (red-first stale-result test).
-4. Collection navigation uses it.
-5. Owner rule, docs.
+1. `photo_list.rs`: `PhotoListRequest`, `PhotoList`, `photo_list`, `photo_list_has_photos`; `collection_photos`, `limit_recently_added`, `apply_files_check` moved in. Table tests. Done: `74e2941c` (builds with dead-code warnings until stage 2).
+2. Grid refresh and startup use it (`startup_photos` removed); the grid refresh applies pairing state with its result, only while current; startup gives the new gallery its pairing state. Done: `412912bf`.
+3. Library switch uses it, invalidates refreshes before swapping the connection and shows its list through `show_photo_list_now` (invalidates again). Red-first test `a_gallery_shown_now_drops_an_older_refresh` (the older refresh replaced the newer list: `[1, 2, 3]` for `[9]`). Done: `26395d9c`.
+4. Collection navigation's 12 lists are `photo_list` requests on each candidate page; the "next non-empty album" checks use `photo_list_has_photos` (no ordering). Done: `e48a2955`.
+5. Owner rule `photo-list` (`photo_list.rs`, `image_format.rs`; self-test cases for pairing and the Files check by hand), docs.
+
+#### Verification (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings.
+- Unit (one filtered run): `window::photo_list` (6, new), `window::photo_action_tests`, `window::photo_marks`, `db::browse_scope`, `db::tests`, `db::filters`: 104 passed. Includes the round-three unit tests (`sidebar_rating_destinations_are_independent_of_toolbar_and_favourites`, `startup_restores_history_in_history_order` now through the pipeline, `scan_appends_new_photos_only_to_an_unfiltered_view`) and the Smart Album rule tests.
+- Display (Xvfb, one process each): `a_gallery_shown_now_drops_an_older_refresh`, `toolbar_rating_filter_shows_it_is_off_in_ratings`, `trashing_photos_updates_library_counts`, `rotating_in_the_viewer_refreshes_the_viewer_properties`, `albums_home_keeps_browsing_filters_after_edits_and_recounts`, `rating_filter_refresh_invalidates_previous_folder_membership`, `raw_jpeg_header_stays_in_place_after_search_reveal`, `rapid_folder_navigation_keeps_superseded_destination_hidden`, `folder_navigation_hides_unrestored_destination_paint`: all pass.
+- `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits; `--self-test` ok.
+- Not covered by a test: collection navigation itself (it lives in `build()`; candidate 18 makes it testable). Its request shape is covered by `navigation_pages_are_one_folder_sorted_flat_with_favourites_kept`. Not run: full suite, GUI harness, by-hand check.
+
+#### Follow-ups
+- 18: collection navigation out of `build()` (its dead `Folder(current_folder_id)` arm; whether its folder pages should be the Folder stream).
+- 19: the scan's progressive appends still decide "does this photo join" outside the pipeline (`admits` from 14's follow-ups).
 
 ### 14 · Browse scope (merged 2026-11-26)
 Merged into `main` 2026-11-26 (merge `16fa04e7`, branch deleted). The owner approved the revised decisions 4, 6 and 7 and checked the rating picker, facet counts, Smart Albums, library switching and search by hand: working. Follow-ups below stay open. Next in order: 15.

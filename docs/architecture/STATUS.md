@@ -4,6 +4,7 @@ The single source of truth for the deepening candidates from the architecture re
 
 - Round one, candidates 1-8: [`architecture-review-2026-11-22.html`](architecture-review-2026-11-22.html), taken at `main` @ `5356ef20`.
 - Round two, re-checks 5-8 and adds 9-12: [`architecture-review-2026-11-23.html`](architecture-review-2026-11-23.html), taken at `main` @ `07cabed4`. The report labels the new candidates N1-N4; they are 9-12 here.
+- Round three, candidates 14-20: [`architecture-review-2026-11-26.html`](architecture-review-2026-11-26.html), taken at `feature/smart-albums` @ `13855231` (main + Smart Albums). All deferred, see "Round three" below.
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -41,6 +42,13 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 11 | Window session state | Worth exploring | merged | merge `4f47d674` (`refactor/window-session-state`) | `src/window/session_state.rs` (pure: keys, defaults, clamps, load, record; `SessionStore` seam) |
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
 | 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | merged | merge `888408e0` (`refactor/front-surface-events`) | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
+| 14 | Browse scope: one value for "what am I browsing" | Strong | deferred | none | `src/db/filters.rs`, `src/db/photos.rs`, `src/window/toolbar.rs`, `src/window/library.rs` |
+| 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | deferred | none | `src/window/library.rs`, `src/window/build.rs` |
+| 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
+| 17 | Album list: one owner of the albums as shown | Strong | deferred (its count bug fixed, see below) | none | `src/window/albums.rs`, `src/window/layout.rs`, `src/sidebar.rs` |
+| 18 | Collection navigation out of `build()` | Strong | deferred | none | `src/window/build.rs` |
+| 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
+| 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
 
 ## Outstanding work
 
@@ -529,6 +537,16 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - GUI harness `screensaver`: its report ends at the editing prerequisites (27 PASS, 2 FAIL: the pre-existing editor checks below), so it reached no screensaver step.
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
+
+### Round three (2026-11-26): deferred, not rejected
+The owner deferred all seven candidates: the bugs the review found are fixed one at a time instead of starting another refactoring cycle. The candidates stay valid; revisit them in this order when a refactor is wanted: 14 → 15 → 17 → 16 → 18, then 19 and 20.
+
+Bugs found by the review (read from the code; fix individually):
+- **Fixed** (candidate 17, on `feature/smart-albums`): after an album edit or a Smart Album recount, the Albums home got unfiltered counts. `refresh_album_ui` and `recount_smart_albums` (`src/window/albums.rs`) now feed it `browse_albums`, and a recount started under older browsing filters is dropped. Test: `albums_home_keeps_browsing_filters_after_edits_and_recounts`.
+- Open (14/15): a restored History session shows all photos; startup's list (`build.rs:125-157`) has no History arm.
+- Open (14): sidebar Ratings with the toolbar rating on Unrated is empty: SQL keeps `rating=0`, then `apply_collection_rating_filter` keeps 1-5 (`library.rs:635-673`).
+- Open (14/19): the scan append path (`build.rs:6562-6590`) adds new photos to a rating-filtered view; its "narrowed?" check ignores the rating.
+- Open (16): rotating in the viewer refreshes the gallery Properties surface (`build.rs:4675-4699`); trash does not update library counts (`photo_actions.rs:1500-1537`).
 
 ### Next (updated 2026-11-24, after 5 and the 11 follow-up)
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router), 11 (window session state, merge `4f47d674`, merged by the owner); the GUI harness was fixed separately (`467b3ee1`).

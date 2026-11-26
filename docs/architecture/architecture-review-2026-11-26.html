@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PIC architecture review, round three</title>
+<script src="https://cdn.tailwindcss.com/3.4.5"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { curve: "basis" } });
+</script>
+<style>
+  .seam { border-style: dashed !important; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #e2e8f0; }
+  .label { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
+  .leak { color: #dc2626; }
+  .mermaid { display: flex; justify-content: center; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+<header class="space-y-3">
+  <p class="label text-slate-500">PIC · architecture review · round three · 2026-11-26</p>
+  <h1 class="font-serif text-4xl">Deepening candidates 14–20</h1>
+  <p class="text-sm text-slate-600">Taken at <code class="font-mono">feature/smart-albums</code> @ <code class="font-mono">13855231</code> (main + Smart Albums). Candidates 1–13 are merged or closed and are not repeated. The hot spots by commits: <code class="font-mono">window/build.rs</code>, <code class="font-mono">edit/editor.rs</code>, <code class="font-mono">window.rs</code>, <code class="font-mono">window/layout.rs</code>, <code class="font-mono">infobar.rs</code>, <code class="font-mono">window/photo_actions.rs</code>. “Suspected bug” means read from the code, not reproduced.</p>
+  <div class="flex flex-wrap gap-4 text-xs text-slate-600 pt-2">
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 border-2 border-slate-400 rounded-sm"></span>module</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 border-2 border-slate-500 seam rounded-sm"></span>seam</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-0.5 bg-red-600"></span>leakage / duplicated decision</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 deep rounded-sm"></span>deep module</span>
+  </div>
+</header>
+
+<section id="candidates" class="space-y-10">
+
+<!-- 14 -->
+<article id="c14" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">14 · Browse scope: one value for “what am I browsing”</h2>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 space-y-0.5">
+    <li>src/db/filters.rs (Filters::for_browsing, Scope, rating_predicate)</li>
+    <li>src/db/photos.rs:795, :971 · src/db/albums.rs:127, :150 · src/db/history.rs:69</li>
+    <li>src/window/toolbar.rs:472-492 (Scope closure) · src/window/library.rs:197, :635-673</li>
+    <li>src/window/build.rs:109, :7219 · src/albums/card.rs:414 · src/window.rs (rating_filter cell)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">Before: the scope is re-read everywhere</p>
+      <pre class="mermaid">
+flowchart LR
+  S[(settings:<br/>metadata filters<br/>rating filter)]
+  C[Rc Cell RatingFilter]
+  Q1[browse_photos] -.reads.-> S
+  Q2[browse_albums] -.reads.-> S
+  Q3[browse_photos_in_album] -.reads.-> S
+  Q4[browse_history] -.reads.-> S
+  T[toolbar Scope closure] -.reads.-> S
+  L[library.rs Rust rating pass] --> C
+  N1["narrowed? v1<br/>(ignores rating)"] -.reads.-> S
+  N2["narrowed? v2<br/>(history, card)"] -.reads.-> S
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class N1,N2,L leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">After: loaded once, passed explicitly</p>
+      <div class="flex flex-col items-center gap-3 py-4">
+        <div class="deep rounded-lg px-5 py-4 w-72 text-center">
+          <p class="label text-slate-400">deep module</p>
+          <p class="font-semibold">BrowseScope</p>
+          <p class="text-xs text-slate-300 mt-1">sidebar filter · search · rating · metadata filters · sort</p>
+          <div class="mt-3 grid grid-cols-2 gap-1 text-[11px] text-slate-400">
+            <span class="border border-slate-600 rounded px-1">predicate()</span>
+            <span class="border border-slate-600 rounded px-1">facet Scope</span>
+            <span class="border border-slate-600 rounded px-1">is_narrowed()</span>
+            <span class="border border-slate-600 rounded px-1">admits(photo)</span>
+          </div>
+        </div>
+        <div class="w-72 border-t-2 border-dashed border-slate-400 text-center text-[11px] text-slate-500 pt-1">seam: db queries take a BrowseScope</div>
+        <div class="flex gap-2 text-xs text-slate-600">
+          <span class="border rounded px-2 py-1">grid</span><span class="border rounded px-2 py-1">albums</span><span class="border rounded px-2 py-1">facets</span><span class="border rounded px-2 py-1">scan append</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p><strong>Problem.</strong> Browsing state lives in settings rows and two cells. 7 db functions read it implicitly. The rating is applied in SQL and again in Rust. The “is the view narrowed?” check exists in two versions: the one used by 5 call sites ignores the rating. <span class="leak">Suspected bugs:</span> sidebar Ratings with the toolbar on Unrated comes out empty; the scan append path adds new photos to a rating-filtered view.</p>
+  <p><strong>Solution.</strong> One <em>BrowseScope</em> value, loaded once and passed into the queries. The facet scope, the narrowed check and “does this new photo belong here?” all derive from it.</p>
+  <ul class="grid sm:grid-cols-2 gap-x-6 text-sm list-disc pl-5">
+    <li>locality: one rating rule</li>
+    <li>leverage: one value, ~40 call sites</li>
+    <li>no hidden settings reads</li>
+    <li>tests: table over scope × photos</li>
+  </ul>
+</article>
+
+<!-- 15 -->
+<article id="c15" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">15 · One photo-list pipeline</h2>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">local-substitutable (in-memory SQLite)</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 space-y-0.5">
+    <li>src/window/library.rs:176-415 (refresh_grid_inner, ~240 lines)</li>
+    <li>src/window/build.rs:125-157 (startup) · :7184-7211 (library switch) · :1244-1860 (collection navigation)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-3">Before: four hand-copied pipelines</p>
+      <div class="space-y-2 text-xs">
+        <div class="grid grid-cols-6 gap-1 items-center">
+          <span class="col-span-1 text-slate-500">grid</span>
+          <span class="bg-slate-200 rounded px-1">query</span><span class="bg-slate-200 rounded px-1">formats</span><span class="bg-slate-200 rounded px-1">raw+jpeg</span><span class="bg-slate-200 rounded px-1">rating</span><span class="bg-slate-200 rounded px-1">sort</span>
+        </div>
+        <div class="grid grid-cols-6 gap-1 items-center">
+          <span class="col-span-1 text-slate-500">startup</span>
+          <span class="bg-red-100 text-red-700 rounded px-1">no History</span><span class="bg-slate-200 rounded px-1">formats</span><span class="bg-red-100 text-red-700 rounded px-1">—</span><span class="bg-slate-200 rounded px-1">rating</span><span class="bg-slate-200 rounded px-1">sort</span>
+        </div>
+        <div class="grid grid-cols-6 gap-1 items-center">
+          <span class="col-span-1 text-slate-500">switch</span>
+          <span class="bg-slate-200 rounded px-1">query</span><span class="bg-slate-200 rounded px-1">formats</span><span class="bg-red-100 text-red-700 rounded px-1">—</span><span class="bg-red-100 text-red-700 rounded px-1">All only</span><span class="bg-slate-200 rounded px-1">sort</span>
+        </div>
+        <div class="grid grid-cols-6 gap-1 items-center">
+          <span class="col-span-1 text-slate-500">nav</span>
+          <span class="bg-slate-200 rounded px-1">query ×N</span><span class="bg-slate-200 rounded px-1">formats ×12</span><span class="bg-red-100 text-red-700 rounded px-1">—</span><span class="bg-amber-100 text-amber-800 rounded px-1">own rule</span><span class="bg-slate-200 rounded px-1">sort</span>
+        </div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-3">After: one pure function of the scope</p>
+      <div class="deep rounded-lg p-4">
+        <p class="font-mono text-sm">collection_photos(&amp;conn, &amp;BrowseScope) → Vec&lt;Photo&gt;</p>
+        <div class="mt-3 flex gap-1 text-[11px] text-slate-400">
+          <span class="border border-slate-600 rounded px-1">query</span>→<span class="border border-slate-600 rounded px-1">formats</span>→<span class="border border-slate-600 rounded px-1">raw+jpeg</span>→<span class="border border-slate-600 rounded px-1">recent limit</span>→<span class="border border-slate-600 rounded px-1">sort</span>
+        </div>
+      </div>
+      <div class="mt-3 grid grid-cols-4 gap-2 text-xs text-center text-slate-600">
+        <span class="border rounded py-1">grid</span><span class="border rounded py-1">startup</span><span class="border rounded py-1">switch</span><span class="border rounded py-1">nav</span>
+      </div>
+    </div>
+  </div>
+  <p><strong>Problem.</strong> Query → format filter → RAW+JPEG pairing → Recently Added limit → rating → sort is written four times, and each copy has drifted. <span class="leak">Suspected bugs:</span> a restored History session shows all photos; library switch and navigation skip RAW+JPEG pairing.</p>
+  <p><strong>Solution.</strong> Build on 14: one <em>collection_photos</em> function that every surface calls. Startup and library switch then reduce to “load the scope, show the list”.</p>
+  <ul class="grid sm:grid-cols-2 gap-x-6 text-sm list-disc pl-5">
+    <li>delete 3 drifted copies</li>
+    <li>tests: in-memory DB, every view</li>
+    <li>locality: pairing rule in one place</li>
+    <li>library switch becomes small</li>
+  </ul>
+</article>
+
+<!-- 16 -->
+<article id="c16" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">16 · Photo change: one notification, one fan-out</h2>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 space-y-0.5">
+    <li>src/window/photo_mark_commands.rs:152-230 · src/window/photo_actions.rs:261-293, :1432-1449, :1500-1537, :1870, :1928</li>
+    <li>src/window/build.rs:4101-4111 (editor saved), :4675-4699 (rotate), :6544-6604 (scan updates)</li>
+    <li>src/window/albums.rs (smart_albums_changed, refresh_smart_album_counts)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 overflow-x-auto">
+      <p class="label text-slate-500 mb-2">Before: each site picks its own subset</p>
+      <table class="text-[11px] w-full text-center">
+        <thead class="text-slate-500"><tr><th class="text-left">site</th><th>tile</th><th>viewer</th><th>InfoBar</th><th>Props</th><th>counts</th><th>albums</th></tr></thead>
+        <tbody>
+          <tr><td class="text-left">marks</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td></tr>
+          <tr><td class="text-left">editor save</td><td>●</td><td class="leak">✕</td><td>●</td><td class="leak">✕</td><td>–</td><td>●</td></tr>
+          <tr><td class="text-left">bulk edit</td><td>●</td><td>●</td><td>~</td><td class="leak">✕</td><td>–</td><td>●</td></tr>
+          <tr><td class="text-left">rotate</td><td>●</td><td>●</td><td>●</td><td class="leak">gallery only</td><td>–</td><td>●</td></tr>
+          <tr><td class="text-left">trash</td><td>●</td><td>●</td><td>●</td><td>–</td><td class="leak">✕</td><td>●</td></tr>
+          <tr><td class="text-left">rename</td><td class="leak">✕</td><td>–</td><td>●</td><td>–</td><td>–</td><td>–</td></tr>
+          <tr><td class="text-left">tags</td><td>–</td><td>–</td><td class="leak">✕</td><td>~</td><td>–</td><td>●</td></tr>
+          <tr><td class="text-left">scan update</td><td>●</td><td class="leak">✕</td><td>●</td><td>–</td><td>~</td><td>–</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">After: report the change, the module refreshes</p>
+      <pre class="mermaid">
+flowchart TB
+  A[marks] & B[editor] & C[bulk edit] & D[rotate] & E[trash] & F[tags] & G[scan] --> P
+  P["PhotoChanged { ids, fields }"]:::deep
+  P --> X[gallery tiles]
+  P --> Y[viewer]
+  P --> Z[InfoBar + Properties]
+  P --> W[library counts]
+  P --> V[album counts]
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+      </pre>
+    </div>
+  </div>
+  <p><strong>Problem.</strong> 8 change sites each update a different subset of surfaces, and several forget one. For example, rotating in the viewer refreshes the gallery Properties panel; trash never updates the library counts. Only the marks path is tested.</p>
+  <p><strong>Solution.</strong> A <em>photo change</em> module: callers report <code>ids + changed fields</code>, and it owns the fan-out, including the gallery rebuild rule (it absorbs <code>smart_albums_changed</code> and the photo mark plan's <em>Membership</em>).</p>
+  <ul class="grid sm:grid-cols-2 gap-x-6 text-sm list-disc pl-5">
+    <li>locality: one fan-out</li>
+    <li>no forgotten surface</li>
+    <li>tests: fields → effects table</li>
+    <li>leverage: 8 sites, one call</li>
+  </ul>
+</article>
+
+<!-- 17 -->
+<article id="c17" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">17 · Album list: one owner of the albums as shown</h2>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 space-y-0.5">
+    <li>src/window/albums.rs:10-30, :70-85 (refresh_album_ui, recount) · src/window/layout.rs:175, :419</li>
+    <li>src/window/toolbar.rs:516 · src/window/build.rs:560, :1121, :2865, :2916, :7159, :7278 · src/window/availability.rs:340</li>
+    <li>src/sidebar.rs (refresh, refresh_album_rows) · albums_home_refresh_slot</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">Before: two queries, many writers</p>
+      <pre class="mermaid">
+flowchart LR
+  U[db::albums<br/>unfiltered] --> H
+  B[db::browse_albums<br/>filtered] --> H
+  U --> SB[sidebar rows]
+  B -.6 sites.-> H[Albums home]
+  U -.refresh_album_ui ×8.-> H
+  U --> M[InfoBar album menu]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class H leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">After: one module decides which list feeds which view</p>
+      <div class="flex flex-col items-center gap-3 py-3">
+        <div class="deep rounded-lg px-5 py-4 w-72 text-center">
+          <p class="label text-slate-400">deep module</p>
+          <p class="font-semibold">AlbumList</p>
+          <p class="text-xs text-slate-300 mt-1">changed(reason) → query once → sidebar · home · album menu</p>
+          <p class="text-[11px] text-slate-400 mt-2">worker recount · coalescing · stale guard</p>
+        </div>
+        <div class="flex gap-2 text-xs text-slate-600"><span class="border rounded px-2 py-1">sidebar</span><span class="border rounded px-2 py-1">Albums home</span><span class="border rounded px-2 py-1">Add to Album</span></div>
+      </div>
+    </div>
+  </div>
+  <p><strong>Problem.</strong> The Albums home is fed by the filtered list from 6 sites and by the unfiltered list from album edits and Smart Album recounts. <span class="leak">Suspected bug:</span> after any album edit, the home's counts stop following the active filters. The sidebar has 5 writers, and the home is reached through a slot closure cloned 4+ times.</p>
+  <p><strong>Solution.</strong> An <em>AlbumList</em> module: callers say “albums changed”, and it picks the right query per view, runs it once (off-thread) and writes every album surface.</p>
+  <ul class="grid sm:grid-cols-2 gap-x-6 text-sm list-disc pl-5">
+    <li>filtered vs unfiltered: decided once</li>
+    <li>delete the home refresh slot</li>
+    <li>tests: reason → views table</li>
+    <li>locality: Smart Album recount moves in</li>
+  </ul>
+</article>
+
+<!-- 18 -->
+<article id="c18" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">18 · Collection navigation out of build()</h2>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 space-y-0.5">
+    <li>src/window/build.rs:1256-1860 (~600 lines, no tests)</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-3">Before: rule and widget writes interleaved</p>
+      <div class="space-y-1 text-xs">
+        <div class="h-7 border-l-4 border-slate-400 bg-slate-50 px-2 flex items-center">match current filter (All · Favourites · Recent · Album · <span class="leak ml-1">dead Folder arm</span>)</div>
+        <div class="h-7 border-l-4 border-red-400 bg-red-50 px-2 flex items-center">browse_photos_in_album for every album</div>
+        <div class="h-7 border-l-4 border-slate-400 bg-slate-50 px-2 flex items-center">formats + rating ×12</div>
+        <div class="h-7 border-l-4 border-red-400 bg-red-50 px-2 flex items-center">“show collection X” sequence ×10</div>
+        <div class="h-7 border-l-4 border-slate-400 bg-slate-50 px-2 flex items-center">lightbox.open / select_last_photo</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-3">After: pure rule + one adapter</p>
+      <div class="deep rounded-lg p-4 text-sm">
+        <p class="font-mono text-xs">next_collection(current, direction, non-empty) → (SidebarFilter, Position)</p>
+        <p class="text-[11px] text-slate-400 mt-2">All → Favourites → Recently Added → albums → wrap</p>
+      </div>
+      <div class="mt-3 border-t-2 border-dashed border-slate-400 pt-2 text-xs text-slate-600 text-center">seam: one “show collection” adapter (uses 15)</div>
+    </div>
+  </div>
+  <p><strong>Problem.</strong> The next/previous collection rule is about 600 untested lines inside <code>build()</code>. It repeats a seven-step view switch 10 times and queries every album just to find the non-empty ones.</p>
+  <p><strong>Solution.</strong> A pure <em>next_collection</em> rule with table tests, plus one adapter that shows a collection through the 15 pipeline.</p>
+  <ul class="grid sm:grid-cols-2 gap-x-6 text-sm list-disc pl-5">
+    <li>build() loses ~550 lines</li>
+    <li>tests: order and wrap table</li>
+    <li>one view-switch sequence</li>
+    <li>counts instead of per-album queries</li>
+  </ul>
+</article>
+
+<!-- 19 -->
+<article id="c19" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">19 · Scan events as a reducer</h2>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800">Worth exploring</span>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 space-y-0.5"><li>src/window/build.rs:6314-6950 (scan event loop)</li></ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">Before</p>
+      <pre class="mermaid">
+flowchart LR
+  E[ScanEvent] --> L{{"inline match<br/>~640 lines"}}
+  L --> G[gallery append]
+  L --> S[pending sidebar counts]
+  L --> R[refresh_grid]
+  L -.admits? All/Folder only.-> G
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class G leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">After</p>
+      <pre class="mermaid">
+flowchart LR
+  E[ScanEvent] --> R["scan_effects(event, &amp;BrowseScope, state)"]:::deep
+  R --> U[UiEffect list]
+  U --> A[adapter applies]
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+      </pre>
+    </div>
+  </div>
+  <p><strong>Problem.</strong> Batching, “does this photo join the view” (ignores rating, favourites and pairing) and the rebuild rules are decided inline, with no tests.</p>
+  <p><strong>Solution.</strong> A pure reducer from event and scope to UI effects; the event loop becomes its adapter. Most of the win depends on 14.</p>
+  <ul class="grid sm:grid-cols-2 gap-x-6 text-sm list-disc pl-5"><li>tests: event sequence tables</li><li>admits() reused from 14</li></ul>
+</article>
+
+<!-- 20 -->
+<article id="c20" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">20 · PhotoActionContext shrinks</h2>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-200 text-slate-700">Speculative</span>
+    <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 space-y-0.5"><li>src/window.rs:563-596 (24 fields) · src/window/build.rs (31 callback slots)</li></ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">Before: interface as wide as the window</p>
+      <div class="flex items-end gap-3 h-40 px-4">
+        <div class="w-16 bg-slate-300 rounded-t" style="height:92%"></div>
+        <div class="w-16 bg-slate-500 rounded-t" style="height:100%"></div>
+      </div>
+      <div class="flex gap-3 px-4 text-[11px] text-slate-500"><span class="w-16 text-center">interface (24 fields)</span><span class="w-16 text-center">implementation</span></div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <p class="label text-slate-500 mb-2">After 14, 16, 17: fields fold into modules</p>
+      <div class="flex items-end gap-3 h-40 px-4">
+        <div class="w-16 bg-emerald-300 rounded-t" style="height:40%"></div>
+        <div class="w-16 deep rounded-t" style="height:100%"></div>
+      </div>
+      <div class="flex gap-3 px-4 text-[11px] text-slate-500"><span class="w-16 text-center">interface</span><span class="w-16 text-center">implementation</span></div>
+    </div>
+  </div>
+  <p><strong>Problem.</strong> Every test context must stub 10 callbacks; the context is a shallow bag of window state.</p>
+  <p><strong>Solution.</strong> No refactor of its own: it shrinks as 14, 16 and 17 absorb its fields. Shrinking it first only moves complexity (deletion test).</p>
+</article>
+</section>
+
+<section id="top-recommendation" class="rounded-2xl deep p-8 space-y-3">
+  <p class="label text-slate-400">Top recommendation</p>
+  <h2 class="font-serif text-3xl"><a href="#c14" class="underline decoration-emerald-400">14 · Browse scope</a>, then <a href="#c15" class="underline decoration-emerald-400">15</a> on top of it</h2>
+  <p class="text-slate-300">It is the seam the others need. The photo-list pipeline (15), collection navigation (18), the scan reducer (19) and the album list's filtered counts (17) all take a scope. Today each re-reads settings and has drifted, with three suspected bugs. Suggested order: 14 → 15 → 17 → 16 → 18, with 19 and 20 following.</p>
+</section>
+
+</main>
+</body>
+</html>

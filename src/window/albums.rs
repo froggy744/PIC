@@ -24,7 +24,10 @@ fn refresh_album_ui(context: &PhotoActionContext) {
         );
     }
     configure_infobar_album_menu(&context.info.add_to_album, context.clone());
-    (context.refresh_albums_home)(&albums);
+    // The sidebar shows whole albums; the Albums home follows the active
+    // browsing filters, like every other path that refreshes it.
+    let home = db::browse_albums(&context.connection.borrow()).unwrap_or_default();
+    (context.refresh_albums_home)(&home);
 }
 
 thread_local! {
@@ -63,36 +66,50 @@ fn recount_smart_albums(context: &PhotoActionContext) {
         current.set(current.get() + 1);
         current.get()
     });
+    // The sidebar gets whole-album counts; the Albums home, when shown, gets
+    // counts narrowed by the browsing filters as they were when the recount
+    // started, and drops them if the filters have changed since.
+    let filters = db::filters::Filters::for_browsing(&context.connection.borrow());
+    let wants_home = context.filter.get() == sidebar::SidebarFilter::Albums;
     let apply = {
         let context = context.clone();
-        move |albums: Vec<db::Album>| {
+        move |albums: Vec<db::Album>, home: Option<Vec<db::Album>>| {
             if let Some(sidebar) = context.sidebar.borrow().as_ref() {
                 sidebar::refresh_album_rows(sidebar, &albums, &context.delete_album);
             }
-            if context.filter.get() == sidebar::SidebarFilter::Albums {
-                (context.refresh_albums_home)(&albums);
+            let current = db::filters::Filters::for_browsing(&context.connection.borrow());
+            if let Some(home) = home.filter(|_| {
+                context.filter.get() == sidebar::SidebarFilter::Albums && current == filters
+            }) {
+                (context.refresh_albums_home)(&home);
             }
         }
     };
+    let count = move |connection: &rusqlite::Connection| -> anyhow::Result<(Vec<db::Album>, Option<Vec<db::Album>>)> {
+        let home = if wants_home { Some(db::browse_albums(connection)?) } else { None };
+        Ok((db::albums(connection)?, home))
+    };
     let Ok(path) = db::connection_path(&context.connection.borrow()) else {
         // No file behind the connection (tests): count in place.
-        apply(db::albums(&context.connection.borrow()).unwrap_or_default());
+        if let Ok((albums, home)) = count(&context.connection.borrow()) {
+            apply(albums, home);
+        }
         return;
     };
     let (sender, receiver) = std::sync::mpsc::channel();
     let worker_path = path.clone();
     std::thread::spawn(move || {
-        let albums = db::open_existing(&worker_path).and_then(|connection| db::albums(&connection));
-        let _ = sender.send(albums.ok());
+        let counted = db::open_existing(&worker_path).and_then(|connection| count(&connection));
+        let _ = sender.send(counted.ok());
     });
     let connection = context.connection.clone();
     glib::timeout_add_local(Duration::from_millis(25), move || match receiver.try_recv() {
         Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Ok(Some(albums))
+        Ok(Some((albums, home)))
             if SMART_ALBUM_COUNT_GENERATION.with(Cell::get) == generation
                 && db::connection_path(&connection.borrow()).ok().as_ref() == Some(&path) =>
         {
-            apply(albums);
+            apply(albums, home);
             glib::ControlFlow::Break
         }
         _ => glib::ControlFlow::Break,

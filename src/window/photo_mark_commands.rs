@@ -323,6 +323,114 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn albums_home_keeps_browsing_filters_after_edits_and_recounts() {
+        gtk::init().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "pic-albums-home-filters-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connection = Rc::new(RefCell::new(
+            db::open(&directory.join("library.db")).unwrap(),
+        ));
+        connection
+            .borrow()
+            .execute_batch(
+                "INSERT INTO photos (id, path, favorite, rating) VALUES
+                 (1, '/h/a.jpg', 1, 5), (2, '/h/b.jpg', 1, 0);",
+            )
+            .unwrap();
+        let trips = db::create_album(&connection.borrow(), "Trips").unwrap();
+        db::add_photos_to_album(&connection.borrow(), trips.id, &[1, 2]).unwrap();
+        let mut rules = db::filters::AlbumRules::default();
+        rules.categories.insert(
+            db::filters::Field::Favorite,
+            db::filters::Selection { values: vec!["1".into()], ..Default::default() },
+        );
+        db::create_smart_album(&connection.borrow(), "Loved", &rules).unwrap();
+        // Browsing narrowed to five stars: each album holds one matching photo.
+        db::set_setting(&connection.borrow(), "photo-rating-filter", "5").unwrap();
+
+        let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
+        let home_in = home.clone();
+        let context = PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: Rc::new(InfoBar::new()),
+            lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
+            sidebar: Rc::new(RefCell::new(None)),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            refresh_albums_home: Rc::new(move |albums: &[db::Album]| {
+                home_in
+                    .borrow_mut()
+                    .push(albums.iter().map(|a| (a.name.clone(), a.photo_count)).collect());
+            }),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
+        };
+        let filtered = vec![("Loved".to_string(), 1), ("Trips".to_string(), 1)];
+        let main = glib::MainContext::default();
+        let spin = |done: &dyn Fn() -> bool| {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !done() && std::time::Instant::now() < until {
+                main.iteration(false);
+            }
+        };
+
+        // An album edit refreshes the home with filtered counts.
+        refresh_album_ui(&context);
+        assert_eq!(home.borrow().last(), Some(&filtered));
+
+        // A Smart Album recount (worker) does too.
+        refresh_smart_album_counts(&context);
+        spin(&|| home.borrow().len() == 2);
+        assert_eq!(home.borrow().len(), 2);
+        assert_eq!(home.borrow().last(), Some(&filtered));
+
+        // A recount started under the old filters never overwrites a newer
+        // filter state.
+        recount_smart_albums(&context);
+        db::set_setting(&connection.borrow(), "photo-rating-filter", "").unwrap();
+        let settle = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < settle {
+            main.iteration(false);
+        }
+        assert_eq!(home.borrow().len(), 2);
+
+        // The sidebar's unfiltered list and the manual chooser are unchanged.
+        let whole = db::albums(&connection.borrow())
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.name, a.photo_count))
+            .collect::<Vec<_>>();
+        assert_eq!(whole, [("Loved".to_string(), 2), ("Trips".to_string(), 2)]);
+        let chooser = db::manual_albums(&connection.borrow()).unwrap();
+        assert_eq!(chooser.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Trips"]);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn marks_change_a_whole_selection_or_nothing() {
         gtk::init().unwrap();
         let directory = std::env::temp_dir().join(format!(

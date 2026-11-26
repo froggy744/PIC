@@ -123,6 +123,23 @@ def log_lines(since=0, needle=""):
 def log_len():
     return len(LOG.read_text(errors="replace").splitlines()) if LOG.exists() else 0
 
+def point_registry_at_copy(xdg, original):
+    """The copied `config/pic-rs/libraries.json` still names the original
+    run's databases by absolute path, so PIC would open (and write) the
+    harness library instead of the copy. Point every library that lived
+    under `original` at the same file under `xdg`."""
+    import json
+    registry = xdg / "config/pic-rs/libraries.json"
+    if not registry.exists():
+        return
+    data = json.loads(registry.read_text())
+    original = str(original)
+    for library in data.get("libraries", []):
+        path = library.get("path", "")
+        if path == original or path.startswith(original + "/"):
+            library["path"] = str(xdg) + path[len(original):]
+    registry.write_text(json.dumps(data, indent=2))
+
 def start(prepare=None, fresh=True, size=("1600", "1000")):
     """Copy the harness library, let `prepare(XDG)` adjust the copy (e.g.
     register a second library), then launch PIC and size its window. With
@@ -132,6 +149,7 @@ def start(prepare=None, fresh=True, size=("1600", "1000")):
         if XDG.exists():
             shutil.rmtree(XDG)
         shutil.copytree(RUN / "xdg", XDG)
+        point_registry_at_copy(XDG, RUN / "xdg")
         if prepare is not None:
             prepare(XDG)
     env = os.environ.copy()

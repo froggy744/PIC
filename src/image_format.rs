@@ -236,14 +236,18 @@ pub fn set_raw_jpeg_pair_mode(connection: &Connection, mode: RawJpegPairMode) ->
 }
 
 /// Whether `photo` is one half of a RAW+JPEG pair already in the catalogue:
-/// a photo of the other kind (RAW or JPEG) in the same folder with the same
-/// file stem, not in the Trash, its format shown. The pairing rule of
-/// [`retain_raw_jpeg_pair_mode`], asked for one photo while a scan runs.
+/// a photo of the other kind (RAW or JPEG) in the same folder whose file stem
+/// matches ignoring ASCII letter case, not in the Trash, its format shown.
+/// The pairing rule of [`retain_raw_jpeg_pair_mode`], asked for one photo
+/// while a scan runs.
 ///
-/// Reads only the file's own siblings through the `path` UNIQUE index (the
-/// range `dir/stem.` to `dir/stem/`). The stem is compared as written: a
-/// twin whose stem differs only in letter case is not found here, although
-/// the full list pairs it.
+/// Reads only the file's own siblings through the `path` UNIQUE index: one
+/// range `dir/stem.` to `dir/stem/` per letter-case spelling of the stem.
+/// The index compares case, so every spelling is tried for a stem of up to
+/// [`TWIN_CASE_LETTERS`] letters (camera names such as `DSC_1240`); a longer
+/// stem tries it as written, in lower case and in upper case, so a twin
+/// spelled in some other mixed case is not found here (the full list still
+/// pairs it).
 pub fn has_raw_jpeg_twin(connection: &Connection, photo: &crate::db::Photo) -> bool {
     let Some(format) = for_path(&photo.path) else {
         return false;
@@ -255,35 +259,84 @@ pub fn has_raw_jpeg_twin(connection: &Connection, photo: &crate::db::Photo) -> b
     let Some(dot) = photo.path.rfind('.') else {
         return false;
     };
-    if photo.path[dot..].contains('/') || photo.path.rfind('/').is_some_and(|slash| slash > dot) {
+    let name_start = photo.path.rfind('/').map_or(0, |slash| slash + 1);
+    if name_start > dot {
         return false;
     }
-    let prefix = &photo.path[..=dot];
-    let upper = format!("{}/", &photo.path[..dot]);
+    let directory = &photo.path[..name_start];
+    let stem = &photo.path[name_start..dot];
     let Ok(mut statement) = connection.prepare_cached(
         "SELECT path FROM photos
          WHERE path >= ?1 AND path < ?2 AND id != ?3 AND +folder_id IS ?4 AND trashed = 0",
     ) else {
         return false;
     };
-    let Ok(rows) = statement.query_map(
-        rusqlite::params![prefix, upper, photo.id, photo.folder_id],
-        |row| row.get::<_, String>(0),
-    ) else {
-        return false;
-    };
-    let siblings: Vec<String> = rows.flatten().collect();
-    siblings.into_iter().any(|path| {
-        // Same stem only: `dir/a.jpg` must not pair with `dir/a.b.nef`.
-        let extension = &path[prefix.len()..];
-        if extension.contains('.') || extension.contains('/') {
-            return false;
+    for spelling in stem_case_spellings(stem) {
+        let prefix = format!("{directory}{spelling}.");
+        let upper = format!("{directory}{spelling}/");
+        let Ok(rows) = statement.query_map(
+            rusqlite::params![prefix, upper, photo.id, photo.folder_id],
+            |row| row.get::<_, String>(0),
+        ) else {
+            continue;
+        };
+        let siblings: Vec<String> = rows.flatten().collect();
+        let found = siblings.into_iter().any(|path| {
+            // Same stem only: `dir/a.jpg` must not pair with `dir/a.b.nef`.
+            let extension = &path[prefix.len()..];
+            if extension.contains('.') || extension.contains('/') {
+                return false;
+            }
+            for_path(&path).is_some_and(|twin| {
+                let twin_raw = twin.decoder == DecoderKind::Raw;
+                (if raw { twin.id == "jpeg" } else { twin_raw })
+                    && path_is_enabled(connection, &path)
+            })
+        });
+        if found {
+            return true;
         }
-        for_path(&path).is_some_and(|twin| {
-            let twin_raw = twin.decoder == DecoderKind::Raw;
-            (if raw { twin.id == "jpeg" } else { twin_raw }) && path_is_enabled(connection, &path)
-        })
-    })
+    }
+    false
+}
+
+/// Stems with at most this many ASCII letters are looked up in every
+/// letter-case spelling (2^n index ranges).
+pub const TWIN_CASE_LETTERS: u32 = 6;
+
+/// The spellings of `stem` a twin lookup tries, without repeats: every
+/// letter-case combination up to [`TWIN_CASE_LETTERS`] letters, otherwise as
+/// written, lower case and upper case.
+fn stem_case_spellings(stem: &str) -> Vec<String> {
+    let letters: Vec<usize> = stem
+        .char_indices()
+        .filter(|(_, c)| c.is_ascii_alphabetic())
+        .map(|(index, _)| index)
+        .collect();
+    let mut spellings: Vec<String> = Vec::new();
+    let mut push = |spelling: String| {
+        if !spellings.contains(&spelling) {
+            spellings.push(spelling);
+        }
+    };
+    push(stem.to_owned());
+    if letters.len() as u32 <= TWIN_CASE_LETTERS {
+        for mask in 0u32..(1 << letters.len()) {
+            let mut bytes = stem.as_bytes().to_vec();
+            for (bit, &index) in letters.iter().enumerate() {
+                bytes[index] = if mask & (1 << bit) != 0 {
+                    bytes[index].to_ascii_uppercase()
+                } else {
+                    bytes[index].to_ascii_lowercase()
+                };
+            }
+            push(String::from_utf8(bytes).unwrap_or_default());
+        }
+    } else {
+        push(stem.to_ascii_lowercase());
+        push(stem.to_ascii_uppercase());
+    }
+    spellings
 }
 
 /// Collapse only true RAW+JPEG capture pairs. JPEG-only and RAW-only photos
@@ -377,6 +430,19 @@ mod tests {
     }
 
     #[test]
+    fn twin_lookups_try_each_letter_case_spelling_of_short_stems() {
+        let short = stem_case_spellings("Dsc_1");
+        assert_eq!(short.len(), 8);
+        assert!(short.contains(&"dSc_1".to_owned()) && short.contains(&"DSC_1".to_owned()));
+        assert_eq!(stem_case_spellings("1240"), ["1240"]);
+        assert_eq!(
+            stem_case_spellings("Holiday_Beach"),
+            ["Holiday_Beach", "holiday_beach", "HOLIDAY_BEACH"]
+        );
+        assert_eq!(stem_case_spellings("abcdef").len(), 64);
+    }
+
+    #[test]
     fn a_raw_jpeg_twin_is_the_other_kind_with_the_same_stem_in_the_same_folder() {
         let directory = std::env::temp_dir().join(format!(
             "pic-raw-jpeg-twin-{}-{}",
@@ -399,6 +465,13 @@ mod tests {
             (9, "/lib/c.jpg", 1, 0),
             (10, "/lib/d.png", 1, 0),
             (11, "/lib/d.jpg", 1, 0),
+            // Stems differing only in letter case pair, as in the full list.
+            (12, "/lib/IMG_1.NEF", 1, 0),
+            (13, "/lib/img_1.jpg", 1, 0),
+            (14, "/lib/Dsc_9.jpg", 1, 0),
+            (15, "/lib/dSC_9.nef", 1, 0),
+            (16, "/lib/HOLIDAY_BEACH.NEF", 1, 0),
+            (17, "/lib/holiday_beach.JPG", 1, 0),
         ] {
             connection
                 .execute(
@@ -417,16 +490,50 @@ mod tests {
         assert!(has_raw_jpeg_twin(&connection, &photo(1, "/lib/a.NEF", 1)));
         assert!(has_raw_jpeg_twin(&connection, &photo(2, "/lib/a.jpg", 1)));
         // Standalone RAW and JPEG.
-        assert!(!has_raw_jpeg_twin(&connection, &photo(3, "/lib/solo.nef", 1)));
-        assert!(!has_raw_jpeg_twin(&connection, &photo(4, "/lib/solo2.JPG", 1)));
+        assert!(!has_raw_jpeg_twin(
+            &connection,
+            &photo(3, "/lib/solo.nef", 1)
+        ));
+        assert!(!has_raw_jpeg_twin(
+            &connection,
+            &photo(4, "/lib/solo2.JPG", 1)
+        ));
         // The same name in another folder is not a twin.
-        assert!(!has_raw_jpeg_twin(&connection, &photo(5, "/lib/sub/a.jpg", 2)));
+        assert!(!has_raw_jpeg_twin(
+            &connection,
+            &photo(5, "/lib/sub/a.jpg", 2)
+        ));
         // A twin in the Trash does not pair.
         assert!(!has_raw_jpeg_twin(&connection, &photo(6, "/lib/b.nef", 1)));
         // A longer stem sharing the prefix is not a twin; PNG never pairs.
         assert!(!has_raw_jpeg_twin(&connection, &photo(9, "/lib/c.jpg", 1)));
         assert!(!has_raw_jpeg_twin(&connection, &photo(11, "/lib/d.jpg", 1)));
         assert!(!has_raw_jpeg_twin(&connection, &photo(10, "/lib/d.png", 1)));
+        // Letter case: both arrival orders, mixed case, a long stem.
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(12, "/lib/IMG_1.NEF", 1)
+        ));
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(13, "/lib/img_1.jpg", 1)
+        ));
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(14, "/lib/Dsc_9.jpg", 1)
+        ));
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(15, "/lib/dSC_9.nef", 1)
+        ));
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(16, "/lib/HOLIDAY_BEACH.NEF", 1)
+        ));
+        assert!(has_raw_jpeg_twin(
+            &connection,
+            &photo(17, "/lib/holiday_beach.JPG", 1)
+        ));
         // A hidden RAW format does not pair.
         set_enabled(&connection, for_path("a.nef").unwrap(), false).unwrap();
         assert!(!has_raw_jpeg_twin(&connection, &photo(2, "/lib/a.jpg", 1)));
@@ -438,12 +545,15 @@ mod tests {
                  WHERE path >= ?1 AND path < ?2 AND id != ?3 AND +folder_id IS ?4 AND trashed = 0",
             )
             .unwrap()
-            .query_map(rusqlite::params!["/lib/a.", "/lib/a/", 2, 1], |row| row.get::<_, String>(3))
+            .query_map(rusqlite::params!["/lib/a.", "/lib/a/", 2, 1], |row| {
+                row.get::<_, String>(3)
+            })
             .unwrap()
             .flatten()
             .collect();
         assert!(
-            plan.iter().any(|step| step.contains("sqlite_autoindex_photos") && step.contains("path>?")),
+            plan.iter()
+                .any(|step| step.contains("sqlite_autoindex_photos") && step.contains("path>?")),
             "{plan:?}"
         );
         drop(connection);

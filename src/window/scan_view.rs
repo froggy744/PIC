@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use super::{format_count, scan_may_append_new_photos, ScanJobKind, ScanJobState};
 use crate::db;
+use crate::image_format::RawJpegPairMode;
 use crate::scanner::ScanEvent;
 use crate::sidebar::SidebarFilter;
 
@@ -52,6 +53,11 @@ pub(super) trait ScanViewFacts {
     fn folder_exists(&self, id: i64) -> bool;
     /// Whether the thumbnail pass deferred offline sources.
     fn recovery_deferred(&self) -> bool;
+    /// The RAW+JPEG pair mode (asked once per indexed batch that may append).
+    fn pair_mode(&self) -> RawJpegPairMode;
+    /// Whether a new RAW or JPEG photo's twin (same folder and stem, the other
+    /// kind) is already catalogued (asked only outside Both mode).
+    fn has_pair_twin(&self, photo: &db::Photo) -> bool;
 }
 
 /// One step for the adapter, applied in the order given.
@@ -556,6 +562,8 @@ impl ScanView {
             return;
         }
         let mut reread = Vec::new();
+        // Asked once per batch, and only when a photo may be appended.
+        let mut pair_mode = None;
         for indexed in photos {
             let photo = &indexed.photo;
             if indexed.newly_discovered
@@ -563,6 +571,19 @@ impl ScanView {
                 && appends_new
                 && facts.format_enabled(&photo.path)
             {
+                let mode = *pair_mode.get_or_insert_with(|| facts.pair_mode());
+                if let Some(preferred) = pair_half(photo, mode) {
+                    if facts.has_pair_twin(photo) {
+                        // One half of a pair the full list collapses: never
+                        // show both. A withheld preferred half means the view
+                        // shows the other one, so it is rebuilt at the end
+                        // (or on Stop).
+                        if preferred {
+                            self.view_stale = true;
+                        }
+                        continue;
+                    }
+                }
                 self.pending_photos.push_back(photo.clone());
             } else if !indexed.newly_discovered {
                 // Folder refreshes deliberately avoid a full gallery
@@ -754,6 +775,23 @@ fn passes_after_stop(event: &ScanEvent) -> bool {
     )
 }
 
+/// For a RAW or JPEG photo while pairs collapse (not Both mode): whether it
+/// is the half the mode shows. `None` when pairing does not apply to it.
+fn pair_half(photo: &db::Photo, mode: RawJpegPairMode) -> Option<bool> {
+    if mode == RawJpegPairMode::Both {
+        return None;
+    }
+    let format = crate::image_format::for_path(&photo.path)?;
+    let raw = format.decoder == crate::image_format::DecoderKind::Raw;
+    if !raw && format.id != "jpeg" {
+        return None;
+    }
+    Some(match mode {
+        RawJpegPairMode::PreferRaw => raw,
+        _ => !raw,
+    })
+}
+
 /// Whether the view is the Folder stream (a Folder view without a search).
 fn shows_folder_stream(facts: &dyn ScanViewFacts) -> bool {
     matches!(facts.filter(), SidebarFilter::Folder(_)) && !facts.search_active()
@@ -813,6 +851,7 @@ mod tests {
     use crate::db::filters::{Field, Selection};
     use crate::db::{BrowseScope, Destination, RatingFilter};
     use crate::scanner::IndexedPhoto;
+    use std::cell::RefCell;
 
     struct Facts {
         filter: SidebarFilter,
@@ -823,6 +862,23 @@ mod tests {
         deferred: bool,
         scope_asked: Cell<usize>,
         formats_asked: Cell<usize>,
+        pair_mode: RawJpegPairMode,
+        /// What the scanner has committed so far: (folder, path).
+        catalogue: RefCell<Vec<(Option<i64>, String)>>,
+        twin_lookups: Cell<usize>,
+    }
+
+    impl Facts {
+        /// The scanner commits a batch before it sends the event.
+        fn commit(&self, event: &ScanEvent) {
+            if let ScanEvent::PhotosIndexed { photos, .. } = event {
+                self.catalogue.borrow_mut().extend(
+                    photos
+                        .iter()
+                        .map(|indexed| (indexed.photo.folder_id, indexed.photo.path.clone())),
+                );
+            }
+        }
     }
 
     impl Default for Facts {
@@ -836,6 +892,9 @@ mod tests {
                 deferred: false,
                 scope_asked: Cell::new(0),
                 formats_asked: Cell::new(0),
+                pair_mode: RawJpegPairMode::Both,
+                catalogue: RefCell::default(),
+                twin_lookups: Cell::new(0),
             }
         }
     }
@@ -860,6 +919,22 @@ mod tests {
         }
         fn recovery_deferred(&self) -> bool {
             self.deferred
+        }
+        fn pair_mode(&self) -> RawJpegPairMode {
+            self.pair_mode
+        }
+        /// The same stem in the same folder, the other kind (RAW / JPEG).
+        fn has_pair_twin(&self, photo: &db::Photo) -> bool {
+            self.twin_lookups.set(self.twin_lookups.get() + 1);
+            let split = |path: &str| {
+                let (stem, extension) = path.rsplit_once('.').unwrap();
+                (stem.to_owned(), extension.eq_ignore_ascii_case("jpg"))
+            };
+            let (stem, jpeg) = split(&photo.path);
+            self.catalogue.borrow().iter().any(|(folder, path)| {
+                let (other_stem, other_jpeg) = split(path);
+                *folder == photo.folder_id && other_stem == stem && other_jpeg != jpeg
+            })
         }
     }
 
@@ -2095,9 +2170,161 @@ mod tests {
         let now = Instant::now();
         let mut effects = Vec::new();
         for event in events {
+            facts.commit(event);
             effects.extend(step(view, job, 7, event, facts, now));
         }
         effects
+    }
+
+    fn one(id: i64, folder: i64, path: &str) -> ScanEvent {
+        indexed(&[(id, folder, path, true)])
+    }
+
+    #[test]
+    fn a_new_pair_never_shows_both_halves_and_stop_shows_the_preferred_one() {
+        let now = Instant::now();
+        let (raw, jpeg) = (one(1, 1, "/p/a.NEF"), one(2, 1, "/p/a.jpg"));
+        // (mode, first, second) -> the live half; whether Stop rebuilds.
+        for (mode, first, second, live, stop_rebuilds) in [
+            (RawJpegPairMode::PreferRaw, &raw, &jpeg, 1, false),
+            (RawJpegPairMode::PreferRaw, &jpeg, &raw, 2, true),
+            (RawJpegPairMode::PreferJpeg, &jpeg, &raw, 2, false),
+            (RawJpegPairMode::PreferJpeg, &raw, &jpeg, 1, true),
+        ] {
+            let case = format!("{mode:?} first={first:?}");
+            let facts = Facts {
+                pair_mode: mode,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut job = job_with_queue(ScanJobKind::Refresh);
+            run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[first.clone(), second.clone()],
+            );
+            assert_eq!(drain_appends(&mut view, 7, now), [live], "{case}");
+            // Stop right after the second half is catalogued.
+            job.stop_requested = true;
+            let stopped = run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[ScanEvent::Cancelled { imported: 2 }],
+            );
+            let expected = if stop_rebuilds { (1, 0) } else { (0, 0) };
+            assert_eq!(grid_rebuilds(&stopped), expected, "{case}");
+
+            // The same order finishing normally: an import's end of indexing
+            // rebuilds the gallery from the catalogue (the full list pairs).
+            let facts = Facts {
+                pair_mode: mode,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut import = self::job(ScanJobKind::Import);
+            let end = run_events(
+                &mut view,
+                &mut import,
+                &facts,
+                &[
+                    first.clone(),
+                    second.clone(),
+                    ScanEvent::IndexingFinished { imported: 2 },
+                ],
+            );
+            assert_eq!(drain_appends(&mut view, 7, now), [live], "{case}");
+            assert_eq!(grid_rebuilds(&end), (1, 0), "{case}");
+            let finished = run_events(
+                &mut view,
+                &mut import,
+                &facts,
+                &[ScanEvent::Finished {
+                    imported: 2,
+                    failed: 0,
+                }],
+            );
+            assert_eq!(grid_rebuilds(&finished), (0, 0), "{case}: reconciled once");
+        }
+    }
+
+    #[test]
+    fn both_halves_in_one_batch_wait_for_the_rebuild() {
+        let now = Instant::now();
+        let facts = Facts {
+            pair_mode: RawJpegPairMode::PreferRaw,
+            ..Facts::default()
+        };
+        let mut view = ScanView::new(now);
+        let mut job = job_with_queue(ScanJobKind::Refresh);
+        run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[indexed(&[
+                (1, 1, "/p/a.NEF", true),
+                (2, 1, "/p/a.jpg", true),
+            ])],
+        );
+        assert!(drain_appends(&mut view, 7, now).is_empty());
+        job.stop_requested = true;
+        let stopped = run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[ScanEvent::Cancelled { imported: 2 }],
+        );
+        assert_eq!(grid_rebuilds(&stopped), (1, 0));
+    }
+
+    #[test]
+    fn unpaired_files_and_both_mode_append_as_before() {
+        let now = Instant::now();
+        let batches = [
+            one(1, 1, "/p/solo.NEF"),
+            one(2, 1, "/p/other.jpg"),
+            // The same name in another folder is not a twin.
+            one(3, 1, "/p/a.NEF"),
+            one(4, 2, "/q/a.jpg"),
+            // PNG never pairs: no lookup.
+            one(5, 1, "/p/a.png"),
+        ];
+        for (mode, lookups) in [(RawJpegPairMode::PreferRaw, 4), (RawJpegPairMode::Both, 0)] {
+            let facts = Facts {
+                pair_mode: mode,
+                ..Facts::default()
+            };
+            let mut view = ScanView::new(now);
+            let mut job = job_with_queue(ScanJobKind::Refresh);
+            run_events(&mut view, &mut job, &facts, &batches);
+            assert_eq!(
+                drain_appends(&mut view, 7, now),
+                [1, 2, 3, 4, 5],
+                "{mode:?}"
+            );
+            assert_eq!(facts.twin_lookups.get(), lookups, "{mode:?}");
+            job.stop_requested = true;
+            let stopped = run_events(
+                &mut view,
+                &mut job,
+                &facts,
+                &[ScanEvent::Cancelled { imported: 5 }],
+            );
+            assert_eq!(grid_rebuilds(&stopped), (0, 0), "{mode:?}");
+        }
+        // Both mode shows both halves of a pair live.
+        let facts = Facts::default();
+        let mut view = ScanView::new(now);
+        let mut job = job(ScanJobKind::Import);
+        run_events(
+            &mut view,
+            &mut job,
+            &facts,
+            &[one(1, 1, "/p/a.NEF"), one(2, 1, "/p/a.jpg")],
+        );
+        assert_eq!(drain_appends(&mut view, 7, now), [1, 2]);
+        assert_eq!(facts.twin_lookups.get(), 0);
     }
 
     #[test]

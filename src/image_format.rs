@@ -235,6 +235,57 @@ pub fn set_raw_jpeg_pair_mode(connection: &Connection, mode: RawJpegPairMode) ->
     crate::db::set_setting(connection, RAW_JPEG_PAIR_MODE_SETTING_KEY, mode.key())
 }
 
+/// Whether `photo` is one half of a RAW+JPEG pair already in the catalogue:
+/// a photo of the other kind (RAW or JPEG) in the same folder with the same
+/// file stem, not in the Trash, its format shown. The pairing rule of
+/// [`retain_raw_jpeg_pair_mode`], asked for one photo while a scan runs.
+///
+/// Reads only the file's own siblings through the `path` UNIQUE index (the
+/// range `dir/stem.` to `dir/stem/`). The stem is compared as written: a
+/// twin whose stem differs only in letter case is not found here, although
+/// the full list pairs it.
+pub fn has_raw_jpeg_twin(connection: &Connection, photo: &crate::db::Photo) -> bool {
+    let Some(format) = for_path(&photo.path) else {
+        return false;
+    };
+    let raw = format.decoder == DecoderKind::Raw;
+    if !raw && format.id != "jpeg" {
+        return false;
+    }
+    let Some(dot) = photo.path.rfind('.') else {
+        return false;
+    };
+    if photo.path[dot..].contains('/') || photo.path.rfind('/').is_some_and(|slash| slash > dot) {
+        return false;
+    }
+    let prefix = &photo.path[..=dot];
+    let upper = format!("{}/", &photo.path[..dot]);
+    let Ok(mut statement) = connection.prepare_cached(
+        "SELECT path FROM photos
+         WHERE path >= ?1 AND path < ?2 AND id != ?3 AND +folder_id IS ?4 AND trashed = 0",
+    ) else {
+        return false;
+    };
+    let Ok(rows) = statement.query_map(
+        rusqlite::params![prefix, upper, photo.id, photo.folder_id],
+        |row| row.get::<_, String>(0),
+    ) else {
+        return false;
+    };
+    let siblings: Vec<String> = rows.flatten().collect();
+    siblings.into_iter().any(|path| {
+        // Same stem only: `dir/a.jpg` must not pair with `dir/a.b.nef`.
+        let extension = &path[prefix.len()..];
+        if extension.contains('.') || extension.contains('/') {
+            return false;
+        }
+        for_path(&path).is_some_and(|twin| {
+            let twin_raw = twin.decoder == DecoderKind::Raw;
+            (if raw { twin.id == "jpeg" } else { twin_raw }) && path_is_enabled(connection, &path)
+        })
+    })
+}
+
 /// Collapse only true RAW+JPEG capture pairs. JPEG-only and RAW-only photos
 /// remain visible in every mode.
 pub fn retain_raw_jpeg_pair_mode(photos: &mut Vec<crate::db::Photo>, mode: RawJpegPairMode) {
@@ -323,6 +374,80 @@ mod tests {
             }
         }
         assert_eq!(for_path("photo.txt"), None);
+    }
+
+    #[test]
+    fn a_raw_jpeg_twin_is_the_other_kind_with_the_same_stem_in_the_same_folder() {
+        let directory = std::env::temp_dir().join(format!(
+            "pic-raw-jpeg-twin-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connection = crate::db::open(&directory.join("library.db")).unwrap();
+        for (id, path, folder, trashed) in [
+            (1, "/lib/a.NEF", 1, 0),
+            (2, "/lib/a.jpg", 1, 0),
+            (3, "/lib/solo.nef", 1, 0),
+            (4, "/lib/solo2.JPG", 1, 0),
+            (5, "/lib/sub/a.jpg", 2, 0),
+            (6, "/lib/b.nef", 1, 0),
+            (7, "/lib/b.jpg", 1, 1),
+            (8, "/lib/c.b.nef", 1, 0),
+            (9, "/lib/c.jpg", 1, 0),
+            (10, "/lib/d.png", 1, 0),
+            (11, "/lib/d.jpg", 1, 0),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO photos(id, path, folder_id, trashed) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![id, path, folder, trashed],
+                )
+                .unwrap();
+        }
+        let photo = |id: i64, path: &str, folder: i64| crate::db::Photo {
+            id,
+            path: path.into(),
+            folder_id: Some(folder),
+            ..crate::db::Photo::default()
+        };
+        // RAW-first and JPEG-first: either half finds the other.
+        assert!(has_raw_jpeg_twin(&connection, &photo(1, "/lib/a.NEF", 1)));
+        assert!(has_raw_jpeg_twin(&connection, &photo(2, "/lib/a.jpg", 1)));
+        // Standalone RAW and JPEG.
+        assert!(!has_raw_jpeg_twin(&connection, &photo(3, "/lib/solo.nef", 1)));
+        assert!(!has_raw_jpeg_twin(&connection, &photo(4, "/lib/solo2.JPG", 1)));
+        // The same name in another folder is not a twin.
+        assert!(!has_raw_jpeg_twin(&connection, &photo(5, "/lib/sub/a.jpg", 2)));
+        // A twin in the Trash does not pair.
+        assert!(!has_raw_jpeg_twin(&connection, &photo(6, "/lib/b.nef", 1)));
+        // A longer stem sharing the prefix is not a twin; PNG never pairs.
+        assert!(!has_raw_jpeg_twin(&connection, &photo(9, "/lib/c.jpg", 1)));
+        assert!(!has_raw_jpeg_twin(&connection, &photo(11, "/lib/d.jpg", 1)));
+        assert!(!has_raw_jpeg_twin(&connection, &photo(10, "/lib/d.png", 1)));
+        // A hidden RAW format does not pair.
+        set_enabled(&connection, for_path("a.nef").unwrap(), false).unwrap();
+        assert!(!has_raw_jpeg_twin(&connection, &photo(2, "/lib/a.jpg", 1)));
+
+        // The lookup reads the path index, not the whole table or folder.
+        let plan: Vec<String> = connection
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT path FROM photos
+                 WHERE path >= ?1 AND path < ?2 AND id != ?3 AND +folder_id IS ?4 AND trashed = 0",
+            )
+            .unwrap()
+            .query_map(rusqlite::params!["/lib/a.", "/lib/a/", 2, 1], |row| row.get::<_, String>(3))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert!(
+            plan.iter().any(|step| step.contains("sqlite_autoindex_photos") && step.contains("path>?")),
+            "{plan:?}"
+        );
+        drop(connection);
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

@@ -96,6 +96,12 @@ impl ScanViewFacts for WindowFacts<'_> {
     fn recovery_deferred(&self) -> bool {
         self.0.thumbnail_recovery_deferred.get()
     }
+    fn pair_mode(&self) -> crate::image_format::RawJpegPairMode {
+        crate::image_format::raw_jpeg_pair_mode(&self.0.context.connection.borrow())
+    }
+    fn has_pair_twin(&self, photo: &db::Photo) -> bool {
+        crate::image_format::has_raw_jpeg_twin(&self.0.context.connection.borrow(), photo)
+    }
 }
 
 impl ScanTimer {

@@ -47,7 +47,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 16 | Photo change: one notification, one fan-out | Strong | merged | merge `41d31b9c` (`refactor/photo-change`) | `src/window/photo_change.rs` (pure: `ChangeKind`, `ChangeView`, `FanOut`), `src/window/photo_change_widgets.rs` (GTK adapter `photo_changed`) |
 | 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
-| 19 | Scan events as a reducer | Worth exploring | in progress (`refactor/scan-events`) | none | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
+| 19 | Scan events as a reducer | Worth exploring | done on `refactor/scan-events`, not merged | none | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
 
 ## Outstanding work
@@ -756,7 +756,7 @@ Started 2026-11-26 at `main` @ `5a39d0a7` on `refactor/collection-navigation`. D
 
 Also seen in 15: the `Folder(current_folder_id)` arm is dead (the closure returns early for Folder), and whether its folder pages should be the Folder stream instead of single-folder flat pages is 18's decision (15 decision D3). Moving it out of `build()` into a pure "next page" decision plus a GTK adapter is what makes those testable; write the table tests first.
 
-### 19 · Scan events as a reducer (in progress)
+### 19 · Scan events as a reducer (done on branch, not merged)
 Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q1-Q5 approved by the owner 2026-11-26; the agent's refinements are marked (agent).
 
 #### Before (at `b8e3dda8`, `build.rs:5697-6417`)
@@ -767,6 +767,7 @@ Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q
 - Q1: a reducer. `ScanView` (`scan_view.rs`, pure) holds the per-generation state (counters, network flag, failure shown, the pending append queue, pending sidebar counts and their throttle, the dirty-thumbnail queue); it returns `ScanEffect` lists the adapter applies in order. Refresh-prepare events stay outside (job startup, not showing a scan). (agent) The reducer takes the job as `&mut ScanJobState`, a plain value, and makes the `Finished` / `Cancelled` job changes itself, instead of returning job effects: the totals it reports are read back in the same step, and effects would repeat the job arithmetic in the adapter.
 - Q2: behaviour-preserving. Suspected drift gets its own test seen red, its own commit, and the owner's approval before behaviour changes (see "Suspected bugs" below).
 - Q3: the reducer sees the view as plain values, never SQLite or GTK. (agent) Through a small `ScanViewFacts` trait (sidebar filter, search active, browse scope, format enabled, folder exists, recovery deferred) that the adapter answers lazily, so the same queries run at the same moments as today (the browse scope once per indexed batch, the format per new photo) and an idle tick does no extra work. The test fake is the second adapter.
+- (agent, found while wiring) Admission is its own step, `ScanView::admit`, before `on_event`: onboarding holds the scan job and must see each event before the reducer changes the job (Finished, Cancelled) and outside its `RefCell` borrow, as before.
 - Q4: `src/window/scan_view.rs` (pure) and `src/window/scan_view_widgets.rs` (GTK adapter); `build()` only wires the timer.
 - Q5: `PIC_WATCH` / `PICASA_TRACE` / `SCAN FAILED` / `SCAN COMPLETE` lines keep their exact text and are printed by the adapter; the reducer returns the numbers.
 - Owner constraints: timer interval, per-tick event and time caps, batch sizes, throttles, cancellation, generation isolation and trace output unchanged; uses the existing `BrowseScope`, `PhotoChange` and album-count refresh.
@@ -776,9 +777,15 @@ Started 2026-11-26 at `main` @ `b8e3dda8` on `refactor/scan-events`. Decisions Q
 - RAW+JPEG pairing: appended photos skip pairing, so in pair mode the hidden half of a pair may show until the next rebuild.
 
 #### Stages
-1. Pure `scan_view.rs`, table and event-sequence tests first (seen red against a stub).
-2. `scan_view_widgets.rs` adapter; the tick body leaves `build()`.
-3. Docs (GLOSSARY, AUDIT-INDEX) and verification.
+1. Pure `scan_view.rs`, table and event-sequence tests first: 19 tests, all seen red against a stub (`e39e6d45`).
+2. `scan_view_widgets.rs` adapter; the tick body (~745 lines) leaves `build()`, which now only fills `ScanTimerParts` and calls `install`. The append gate stays `scan_may_append_new_photos` (`library.rs`), reused. The owner script's Library-counts allowance moved from `build.rs` to the adapter (`7367e87d`). No new owner rule: the status widgets are also written by the Refresh button and job startup, so the adapter is not their only writer.
+3. Docs: GLOSSARY **Scan view**, AUDIT-INDEX rows.
+
+#### Verification (2026-11-26)
+- `cargo check --locked` and `--tests`: no warnings.
+- Unit: `window::scan_view` 19 passed (generation isolation, Stop gate, append admission table, format asked lazily, append batches with updates and removals of queued photos, search and generation drops, sidebar-count throttle, progress throttle and thumbnail batches, network progress, Maintenance, end-of-indexing and end-of-job rebuild tables, completion messages, cancellation, removed folders, sidebar folder rows, visible-thumbnail status); `scan_appends_new_photos_only_to_an_unfiltered_view` passes.
+- `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits; `--self-test` ok.
+- Not run: no display test drives a real scan through the window, and the GUI harness `import` suite needs a release build (not authorised). Open: a by-hand import, refresh and Stop check, or that suite.
 
 ### Round three (2026-11-26): deferred, not rejected
 The owner deferred all seven candidates: the bugs the review found are fixed one at a time instead of starting another refactoring cycle. The candidates stay valid; revisit them in this order when a refactor is wanted: 14 → 15 → 17 → 16 → 18, then 19 and 20.

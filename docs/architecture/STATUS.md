@@ -574,6 +574,7 @@ Owner safeguards (2026-11-26): scan batching kept (one scope per indexed batch);
 - Xvfb also: `save_as_smart_album_copies_the_active_filters`, `rating_filter_refresh_invalidates_previous_folder_membership`, `metadata_panel_navigation_auto_closes_and_allows_manual_reopen`: pass.
 - `scripts/check-presentation-owners.sh`: only the four known `open_files.rs` hits.
 - Not run: GUI harness. The owner's by-hand check replaced the planned smoke check.
+- Saved for later: `scripts/browse-scope-checks/run.sh` (rating picker, metadata panel count, Ratings under Unrated, Smart Albums saved as `0` and `unrated`, search, library switch with a stale rating; private Xvfb, copy of a GUI-harness library). Not run yet: its AT-SPI selectors may need adjusting on the first run.
 
 #### Follow-ups
 - The rating is still held twice (session row for queries, cell for photo marks and the offline watch); one owner when 17/20 give the views a scope.

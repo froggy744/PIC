@@ -1849,27 +1849,33 @@ fn scroll_folder_row_into_view(scrolled: &gtk::ScrolledWindow, row: &gtk::ListBo
 /// Tree mode returns only the rows that are presently visible in the expanded
 /// tree. Imported-only mode naturally returns just the explicitly imported
 /// roots because those are the only rows built for that mode.
-pub fn visible_folder_ids(scrolled: &gtk::ScrolledWindow) -> Vec<i64> {
-    let Some(list) = stored_widget::<gtk::ListBox>(scrolled, FOLDER_LIST_KEY) else {
-        return Vec::new();
-    };
-
-    let mut ids = Vec::new();
-    let mut child = list.first_child();
-    while let Some(widget) = child {
-        let next = widget.next_sibling();
-        if let Ok(row) = widget.downcast::<gtk::ListBoxRow>() {
+/// The destinations the sidebar shows, in its order: library rows, album rows
+/// (manual and Smart), folder rows. Rows hidden by the sidebar's visibility
+/// settings, rating rows while Ratings is collapsed and folder rows hidden in
+/// a collapsed tree are left out; a collapsed section heading keeps its rows.
+pub fn navigation_destinations(scrolled: &gtk::ScrolledWindow) -> Vec<SidebarFilter> {
+    let mut destinations = Vec::new();
+    for key in [LIBRARY_LIST_KEY, ALBUM_LIST_KEY, FOLDER_LIST_KEY] {
+        let Some(list) = stored_widget::<gtk::ListBox>(scrolled, key) else {
+            continue;
+        };
+        let mut child = list.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            let Ok(row) = widget.downcast::<gtk::ListBoxRow>() else {
+                continue;
+            };
+            if !row.is_visible() {
+                continue;
+            }
             let filter = unsafe {
                 row.data::<SidebarFilter>("picasa-filter")
                     .map(|filter| *filter.as_ref())
             };
-            if let Some(SidebarFilter::Folder(folder_id)) = filter {
-                ids.push(folder_id);
-            }
+            destinations.extend(filter);
         }
-        child = next;
     }
-    ids
+    destinations
 }
 
 pub fn set_folder_display_mode(scrolled: &gtk::ScrolledWindow, mode: FolderDisplayMode) -> bool {

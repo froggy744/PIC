@@ -2177,67 +2177,6 @@ impl SectionedFolderView {
         });
     }
 
-    fn scroll_to_index(self: &Rc<Self>, index: u32, header: bool) -> bool {
-        if self.is_wall() {
-            return self.wall_scroll_to(index, header, false);
-        }
-        self.refresh();
-        let section_index = self.section_index_for_photo(index);
-        let ranges = self.group_ranges.borrow();
-        let geometry = self.geometry.borrow();
-        let row = section_index.and_then(|section_index| {
-            let range = ranges.get(section_index)?;
-            let geom = geometry.get(section_index)?;
-            Some(if header {
-                (geom.header_y, SECTIONED_HEADER_HEIGHT)
-            } else {
-                let local = index as usize - range.start;
-                let row_index = local as u32 / self.current_columns.get().max(1);
-                let row_height = f64::from(folder_line_height(
-                    self.tile_height.get(),
-                    self.show_file_names.get(),
-                ));
-                (
-                    geom.first_photo_y + f64::from(row_index) * row_height,
-                    row_height,
-                )
-            })
-        });
-        drop(geometry);
-        drop(ranges);
-        let Some((row_top, row_height)) = row else {
-            return false;
-        };
-        let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
-            return false;
-        };
-        // Folder navigation can switch the Stack page and replace the model in
-        // the same main-loop turn. At that point the ScrolledWindow may still
-        // have its old (often zero) adjustment bounds. A clamped set_value()
-        // used to look like success and stop Open in Folder's retry loop even
-        // though the requested row remained thousands of pixels away.
-        if !self.root.is_mapped() || !scrolled.is_mapped() {
-            return false;
-        }
-        let adjustment = scrolled.vadjustment();
-        let page = adjustment.page_size();
-        if page <= 0.0 {
-            return false;
-        }
-        let upper = (adjustment.upper() - page).max(adjustment.lower());
-        adjustment.set_value(row_top.clamp(adjustment.lower(), upper));
-        self.refresh();
-        // The adjustment's upper bound can lag one allocation behind the new
-        // section geometry. Report success only after the row is actually in
-        // the viewport so the caller retries after GTK updates its bounds.
-        viewport_intersects_row(
-            row_top,
-            row_height,
-            adjustment.value(),
-            adjustment.page_size(),
-        )
-    }
-
     fn scroll_to_index_smooth(self: &Rc<Self>, index: u32, header: bool) -> bool {
         if self.is_wall() {
             return self.wall_scroll_to(index, header, false);

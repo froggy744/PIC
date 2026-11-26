@@ -17,6 +17,56 @@
     };
 
     let nav_request_sequence = Rc::new(Cell::new(0_u64));
+    // The destination bookkeeping a sidebar click and collection navigation
+    // share: leave the date overview, take the new destination, its toolbar
+    // controls and section layout, save it as the last view and select its
+    // sidebar row.
+    let enter_destination: Rc<dyn Fn(sidebar::SidebarFilter)> = {
+        let filter = filter.clone();
+        let info = info.clone();
+        let connection = connection.clone();
+        let gallery = gallery.clone();
+        let date_browser_exit = date_browser_discard_slot.clone();
+        let browser_slot = date_browser_slot.clone();
+        let browser_active = date_browser_active.clone();
+        let browser_resume = date_browser_resume.clone();
+        let date_browser_button = date_browser_button.clone();
+        let rating_filter_scope = rating_filter_scope_slot.clone();
+        let sidebar_selection = sidebar_selection_slot.clone();
+        Rc::new(move |new_filter| {
+            if filter.get() == sidebar::SidebarFilter::All
+                && new_filter != sidebar::SidebarFilter::All
+                && browser_active.get()
+            {
+                if let Some(browser) = browser_slot.borrow().as_ref() {
+                    if let Some(bucket) = browser.current_bucket() {
+                        let photo_id = gallery.selected_photo_ids(None).first().copied()
+                            .or_else(|| gallery.viewport_center_photo().map(|photo| photo.id()));
+                        browser_resume.replace(Some((bucket, photo_id)));
+                    }
+                }
+            }
+            if let Some(exit) = date_browser_exit.borrow().as_ref() {
+                exit();
+            }
+            filter.set(new_filter);
+            date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);
+            date_browser_button.set_sensitive(true);
+            if let Some(sync) = rating_filter_scope.borrow().as_ref() {
+                sync();
+            }
+            restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
+            if let Err(error) =
+                record_session(&*connection.borrow(), SessionChange::View(new_filter))
+            {
+                eprintln!("Could not save current view: {error}");
+            }
+            if let Some(sidebar) = sidebar_selection.borrow().as_ref() {
+                sidebar::set_active_filter(sidebar, new_filter);
+            }
+        })
+    };
+    enter_destination_slot.replace(Some(enter_destination.clone()));
     let album_list_for_destination = album_list.clone();
     let destination_click_with_target: Rc<dyn Fn(sidebar::SidebarFilter, bool, bool) -> Option<u64>> = {
         let search_entry = search_entry_slot.clone();
@@ -25,7 +75,6 @@
         let debounce = search_debounce.clone();
         let cleared_query = cleared_search_query.clone();
         let filter = filter.clone();
-        let info = info.clone();
         let connection = connection.clone();
         let folder_cache = folder_cache.clone();
         let gallery = gallery.clone();
@@ -33,13 +82,7 @@
         let front = front.clone();
         let sort = sort.clone();
         let group_mode = group_mode.clone();
-        let date_browser_exit = date_browser_discard_slot.clone();
-        let browser_slot = date_browser_slot.clone();
-        let browser_active = date_browser_active.clone();
         let browser_resume = date_browser_resume.clone();
-        let date_browser_button = date_browser_button.clone();
-        let rating_filter_scope = rating_filter_scope_slot.clone();
-        let sidebar_selection = sidebar_selection_slot.clone();
         let main_stack = main_stack.clone();
         let open_in_folder_exact_target = open_in_folder_exact_target.clone();
         let search_result_folder_on_close = search_result_folder_on_close.clone();
@@ -48,6 +91,7 @@
         let nav_request_sequence = nav_request_sequence.clone();
         let nav_fade_begin = nav_fade_begin.clone();
         let nav_fade_cancel = nav_fade_cancel.clone();
+        let enter_destination = enter_destination.clone();
         Rc::new(move |new_filter, exact_photo_target, center_folder_target| {
             let nav_request = if crate::nav_transition_trace::enabled() {
                 let next = nav_request_sequence.get().wrapping_add(1);
@@ -136,36 +180,7 @@
                     cleared_query_for_timeout.replace(None);
                 }
             });
-            if filter.get() == sidebar::SidebarFilter::All
-                && new_filter != sidebar::SidebarFilter::All
-                && browser_active.get()
-            {
-                if let Some(browser) = browser_slot.borrow().as_ref() {
-                    if let Some(bucket) = browser.current_bucket() {
-                        let photo_id = gallery.selected_photo_ids(None).first().copied()
-                            .or_else(|| gallery.viewport_center_photo().map(|photo| photo.id()));
-                        browser_resume.replace(Some((bucket, photo_id)));
-                    }
-                }
-            }
-            if let Some(exit) = date_browser_exit.borrow().as_ref() {
-                exit();
-            }
-            filter.set(new_filter);
-            date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);
-            date_browser_button.set_sensitive(true);
-            if let Some(sync) = rating_filter_scope.borrow().as_ref() {
-                sync();
-            }
-            restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
-            if let Err(error) =
-                record_session(&*connection.borrow(), SessionChange::View(new_filter))
-            {
-                eprintln!("Could not save current view: {error}");
-            }
-            if let Some(sidebar) = sidebar_selection.borrow().as_ref() {
-                sidebar::set_active_filter(sidebar, new_filter);
-            }
+            enter_destination(new_filter);
             if new_filter == sidebar::SidebarFilter::Library {
                 gallery.set_selected_photo_ids(&[]);
                 main_stack.set_visible_child_name("library");

@@ -1753,40 +1753,6 @@ impl Gallery {
         self.scroll_to_folder(folder_id, folder_path)
     }
 
-    pub fn select_last_photo(&self) {
-        let count = self.store.n_items();
-        if count == 0 {
-            return;
-        }
-        let position = count - 1;
-        self.selection.select_item(position, true);
-        if self.using_virtual_photo_surface() {
-            self.sectioned_folder.scroll_to_index(position, false);
-            if let Some(photo) = self.store.item(position).and_downcast::<PhotoObject>() {
-                self.sectioned_folder.focus_photo(photo.id());
-            }
-        } else if self.group_mode.get() == GroupMode::Folder
-            && !crate::grid::folder_gridview_experiment_enabled()
-        {
-            if let Some(row) = self.folder_row_index_for_photo(
-                self.store
-                    .item(position)
-                    .and_downcast::<PhotoObject>()
-                    .map(|photo| photo.id())
-                    .unwrap_or_default(),
-            ) {
-                self.folder_root
-                    .scroll_to(row, gtk::ListScrollFlags::FOCUS, None);
-            }
-        } else {
-            self.root.scroll_to(
-                position,
-                gtk::ListScrollFlags::SELECT | gtk::ListScrollFlags::FOCUS,
-                None,
-            );
-        }
-    }
-
     pub fn photo_objects(&self) -> Vec<PhotoObject> {
         self.current_photos.borrow().clone()
     }

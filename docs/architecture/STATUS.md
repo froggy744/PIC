@@ -45,7 +45,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 14 | Browse scope: one value for "what am I browsing" | Strong | merged | merge `16fa04e7` (`refactor/browse-scope`) | `src/db/browse_scope.rs` (pure: `BrowseScope`, `RatingFilter`, `BrowseSnapshot`), `src/window/library.rs` (sidebar mapping, Files check) |
 | 15 | One photo-list pipeline (grid, startup, library switch, navigation) | Strong | merged | merge `456325ac` (`refactor/photo-list-pipeline`) | `src/window/photo_list.rs` (pipeline, plain values), `src/window/library.rs` and `build.rs` (GTK adapters) |
 | 16 | Photo change: one notification, one fan-out | Strong | deferred | none | `src/window/photo_mark_commands.rs`, `src/window/photo_actions.rs`, `src/window/build.rs`, `src/window/albums.rs` |
-| 17 | Album list: one owner of the albums as shown | Strong | in progress (`refactor/album-list`) | none | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
+| 17 | Album list: one owner of the albums as shown | Strong | merged | merge `2d7a5e27` (`refactor/album-list`) | `src/window/album_list.rs` (pure: changes, plan, current results), `src/window/album_list_widgets.rs` (GTK adapter `AlbumList`) |
 | 18 | Collection navigation out of `build()` | Strong | deferred (test gap recorded, see its section) | none | `src/window/build.rs` |
 | 19 | Scan events as a reducer | Worth exploring | deferred | none | `src/window/build.rs` |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | deferred | none | `src/window.rs` |
@@ -538,7 +538,9 @@ The rest of the ~200 `Style::` uses are per-style *drawing* (the Settings previe
 - The owner checked Cover Flow and the other styles by hand: working.
 - **Pre-existing, found on 2026-11-24:** GUI harness `editing` failed "Editor Undo/Redo sequences" and "Editor Reset" on `954a99db` too (27/29). The owner confirmed undo, redo and Reset work by hand; the cause was the harness clicking moved buttons, fixed on `fix/gui-harness-editor-checks` (see Next). Undo history is per editing session by design; it does not survive closing the photo.
 
-### 17 · Album list (in progress, `refactor/album-list`)
+### 17 · Album list (merged 2026-11-26)
+Merged into `main` 2026-11-26 (merge `2d7a5e27`), approved by the owner. Open: the follow-ups below and the pre-existing album view test failure. Next in order: 16.
+
 Started 2026-11-26 at `main` @ `43b42762`. Decisions E1-E8 approved by the owner.
 
 #### Before (at `43b42762`)

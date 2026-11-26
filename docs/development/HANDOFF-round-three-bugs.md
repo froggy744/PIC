@@ -25,7 +25,7 @@ The bugs were read from the code during the review. None of them has been reprod
 | 4 | Fixed | `d3d2252a` | `startup_restores_history_in_history_order` |
 | 5 | Fixed | `ab33310c` | `scan_appends_new_photos_only_to_an_unfiltered_view` |
 
-**Done** (2026-11-26): all five fixed. The branch is pushed and waits for the owner's merge.
+**Done** (2026-11-26): all five fixed and merged into `main` (merge `4db4685f`); the branch is deleted.
 
 Notes from the fixes:
 - Bug 1 also covers the display: on Ratings and Rating(n) the toolbar rating button is insensitive with the tooltip "Rating filter is not used in Ratings", and the metadata row's scope drops the rating so its counts match the grid. The per-destination query is now `collection_photos` (`library.rs`); bug 4 can reuse it.

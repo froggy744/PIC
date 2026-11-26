@@ -1491,50 +1491,58 @@ fn show_delete_confirmation(
 
     let parent_for_response = parent.clone();
     dialog.connect_response(Some("delete"), move |_, _| {
-        for id in &selection {
-            // Resolve the on-disk path from the database instead of trusting
-            // grid tiles: menu actions must not depend on tile recycling.
-            let path = match db::photo(&context.connection.borrow(), *id) {
-                Ok(Some(record)) => record.path,
-                Ok(None) => continue,
-                Err(error) => {
-                    show_error(
-                        &parent_for_response,
-                        "Could not delete photo",
-                        &error.to_string(),
-                    );
-                    return;
-                }
-            };
+        if let Err((heading, message)) = trash_photos(&context, &selection) {
+            show_error(&parent_for_response, heading, &message);
+        }
+    });
+    dialog.present(Some(parent));
+}
 
-            if let Err(error) = db::set_trashed(&context.connection.borrow(), *id, true) {
-                show_error(
-                    &parent_for_response,
-                    "Could not delete photo",
-                    &error.to_string(),
-                );
-                return;
+/// Move the photos to the system Trash and mark them trashed, then show the
+/// change: the grid, the Library and Smart Album counts. Stops at the first
+/// failure and returns the heading and message to show; photos trashed
+/// before it are still shown as gone.
+fn trash_photos(
+    context: &PhotoActionContext,
+    selection: &[i64],
+) -> Result<(), (&'static str, String)> {
+    let mut result = Ok(());
+    let mut trashed = 0;
+    for id in selection {
+        // Resolve the on-disk path from the database instead of trusting
+        // grid tiles: menu actions must not depend on tile recycling.
+        let path = match db::photo(&context.connection.borrow(), *id) {
+            Ok(Some(record)) => record.path,
+            Ok(None) => continue,
+            Err(error) => {
+                result = Err(("Could not delete photo", error.to_string()));
+                break;
             }
+        };
 
-            if let Err(error) = crate::source::file(&path).trash(gio::Cancellable::NONE) {
-                let _ = db::set_trashed(&context.connection.borrow(), *id, false);
-                show_error(
-                    &parent_for_response,
-                    "Could not move photo to Trash",
-                    &error.to_string(),
-                );
-                return;
-            }
+        if let Err(error) = db::set_trashed(&context.connection.borrow(), *id, true) {
+            result = Err(("Could not delete photo", error.to_string()));
+            break;
         }
 
+        if let Err(error) = crate::source::file(&path).trash(gio::Cancellable::NONE) {
+            let _ = db::set_trashed(&context.connection.borrow(), *id, false);
+            result = Err(("Could not move photo to Trash", error.to_string()));
+            break;
+        }
+        trashed += 1;
+    }
+
+    if result.is_ok() || trashed > 0 {
         if let Some(lightbox) = context.lightbox.upgrade() {
             lightbox.close();
         }
         context.info.clear_photo();
-        refresh_photo_actions_grid(&context);
-        refresh_smart_album_counts(&context);
-    });
-    dialog.present(Some(parent));
+        refresh_photo_actions_grid(context);
+        // Smart Album and Library counts, as photo marks refresh them.
+        photo_mark_commands::update_counts(context);
+    }
+    result
 }
 
 fn refresh_photo_actions_grid(context: &PhotoActionContext) {
@@ -2815,5 +2823,103 @@ mod photo_actions_tests {
         window.close();
         drop(connection);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Trashing photos updates the sidebar Library counts, as marking does.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn trashing_photos_updates_library_counts() {
+        // A private Trash: for files on the home filesystem GIO trashes into
+        // $XDG_DATA_HOME/Trash, so the user's own Trash is never touched.
+        // (It refuses to trash on tmpfs, so the files live under target/.)
+        let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+        let directory = target.join(format!(
+            "pic-trash-counts-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let photos = directory.join("photos");
+        std::fs::create_dir_all(&photos).unwrap();
+        std::env::set_var("XDG_DATA_HOME", directory.join("data"));
+        gtk::init().unwrap();
+        let connection = Rc::new(RefCell::new(db::open(&directory.join("library.db")).unwrap()));
+        for (id, name, favorite) in [(1, "a.jpg", 1), (2, "b.jpg", 1), (3, "c.jpg", 0)] {
+            let path = photos.join(name);
+            std::fs::write(&path, [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+            connection
+                .borrow()
+                .execute(
+                    "INSERT INTO photos (id, path, favorite) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![id, path.to_string_lossy(), favorite],
+                )
+                .unwrap();
+        }
+        let sidebar = sidebar::library_sidebar_for_test(
+            db::sidebar_counts(&connection.borrow()).unwrap(),
+        );
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "3");
+        let context = PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: Rc::new(InfoBar::new()),
+            lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
+            sidebar: Rc::new(RefCell::new(Some(sidebar.clone()))),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            refresh_albums_home: Rc::new(|_| {}),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
+        };
+
+        trash_photos(&context, &[1, 3]).unwrap();
+        assert!(!photos.join("a.jpg").exists() && !photos.join("c.jpg").exists());
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "1");
+        assert_eq!(
+            sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::Favorites),
+            "1"
+        );
+
+        // A failure part-way still shows the photos already trashed.
+        std::fs::remove_file(photos.join("b.jpg")).unwrap();
+        connection
+            .borrow()
+            .execute(
+                "INSERT INTO photos (id, path) VALUES (4, ?1)",
+                rusqlite::params![photos.join("d.jpg").to_string_lossy()],
+            )
+            .unwrap();
+        std::fs::write(photos.join("d.jpg"), [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+        sidebar::update_library_counts(&sidebar, db::sidebar_counts(&connection.borrow()).unwrap());
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "2");
+        assert!(trash_photos(&context, &[4, 2]).is_err());
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "1");
+        // Let the background grid and Smart Album refreshes finish first.
+        drop(context);
+        let main = glib::MainContext::default();
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < until {
+            main.iteration(false);
+        }
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

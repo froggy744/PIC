@@ -220,7 +220,8 @@ fn show_updated(context: &PhotoActionContext, shown: &PhotoObject, lightbox_show
     }
 }
 
-fn update_counts(context: &PhotoActionContext) {
+/// Refresh the Smart Album and sidebar Library counts after photos change.
+pub(super) fn update_counts(context: &PhotoActionContext) {
     refresh_smart_album_counts(context);
     let Some(sidebar) = context.sidebar.borrow().as_ref().cloned() else {
         return;

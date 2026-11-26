@@ -1515,6 +1515,29 @@ pub fn update_library_counts(scrolled: &gtk::ScrolledWindow, counts: SidebarCoun
     }
 }
 
+/// A sidebar holding only the Library list, for tests outside this module
+/// that check what `update_library_counts` shows.
+#[cfg(test)]
+pub fn library_sidebar_for_test(counts: SidebarCounts) -> gtk::ScrolledWindow {
+    let no_args: Rc<dyn Fn()> = Rc::new(|| {});
+    let list = gtk::ListBox::new();
+    let sidebar = gtk::ScrolledWindow::new();
+    unsafe {
+        sidebar.set_data(LIBRARY_LIST_KEY, list.clone());
+    }
+    populate_library(&list, counts, &no_args, &no_args, &sidebar);
+    sidebar
+}
+
+/// The count a Library row shows, for tests outside this module.
+#[cfg(test)]
+pub fn library_count_for_test(scrolled: &gtk::ScrolledWindow, filter: SidebarFilter) -> String {
+    let list = stored_widget::<gtk::ListBox>(scrolled, LIBRARY_LIST_KEY).unwrap();
+    let row = row_for_filter(&list, filter).unwrap();
+    let label = unsafe { row.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY).unwrap() };
+    unsafe { label.as_ref() }.text().to_string()
+}
+
 /// Refresh only album names after an album edit. Avoid rebuilding the folder
 /// tree, which may be receiving progressive scan updates at the same time.
 pub fn refresh_album_rows(

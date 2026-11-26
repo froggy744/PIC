@@ -563,6 +563,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         Rc::new(RefCell::new(None));
     let library_navigation_slot: Rc<RefCell<Option<Rc<dyn Fn(sidebar::SidebarFilter)>>>> =
         Rc::new(RefCell::new(None));
+    // Set by the toolbar: shows whether its rating filter applies to the
+    // current destination. Called wherever the destination changes.
+    let rating_filter_scope_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
     let folder_navigation_slot: Rc<RefCell<Option<Rc<dyn Fn(i64, i64)>>>> =
         Rc::new(RefCell::new(None));
     // Open in Folder keeps this exact target alive briefly so a sidebar
@@ -7075,6 +7079,7 @@ fn start_photo_export_single(
         let leave_snapshot = leave_snapshot.clone();
         let exit_date_browser = discard_date_browser.clone();
         let date_browser_button = date_browser_button.clone();
+        let rating_filter_scope_for_switch = rating_filter_scope_slot.clone();
         let nav_fade_cancel = nav_fade_cancel.clone();
         let connection = connection.clone();
         let scan_job = scan_job.clone();
@@ -7241,6 +7246,9 @@ fn start_photo_export_single(
             // fires when another choice was active).
             if let Some(panel) = metadata_panel_for_switch.upgrade() {
                 panel.clear_rating_filter();
+            }
+            if let Some(sync) = rating_filter_scope_for_switch.borrow().as_ref() {
+                sync();
             }
             let display_mode = sidebar::FolderDisplayMode::from_setting(
                 db::setting(&connection.borrow(), sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)

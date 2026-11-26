@@ -247,33 +247,8 @@ fn refresh_grid_inner(
 
         let folder_stream = search.is_empty()
             && matches!(filter, sidebar::SidebarFilter::Folder(_));
-        let mut photos = if !search.is_empty() {
-            // An active search is a library-wide view, regardless of the
-            // destination that was selected before typing began.
-            db::browse_photos(&connection, None, false, Some(&search)).unwrap_or_default()
-        } else if filter == sidebar::SidebarFilter::History {
-            db::browse_history_photos(&connection).unwrap_or_default()
-        } else if let sidebar::SidebarFilter::Album(album_id) = filter {
-            db::browse_photos_in_album(&connection, album_id, None).unwrap_or_default()
-        } else {
-            let (folder_id, favorites) = match filter {
-                sidebar::SidebarFilter::All | sidebar::SidebarFilter::RecentlyAdded => {
-                    (None, false)
-                }
-                sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_) => {
-                    (None, false)
-                }
-                sidebar::SidebarFilter::Favorites => (None, true),
-                // Picasa-style Folder mode is a single continuous stream.
-                // The selected folder is a scroll destination, not a query
-                // boundary, so load every indexed folder exactly once.
-                sidebar::SidebarFilter::Folder(_) => (None, false),
-                sidebar::SidebarFilter::Albums => return,
-                sidebar::SidebarFilter::Library => return,
-                sidebar::SidebarFilter::Album(_) => unreachable!(),
-                sidebar::SidebarFilter::History => unreachable!(),
-            };
-            db::browse_photos(&connection, folder_id, favorites, None).unwrap_or_default()
+        let Some(mut photos) = collection_photos(&connection, filter, &search) else {
+            return;
         };
 
         retain_enabled_formats(&connection, &mut photos);
@@ -601,6 +576,54 @@ fn scroll_gallery_to_folder_when_ready(
     });
 }
 
+/// The photos the database returns for a sidebar destination (or a search),
+/// before format, RAW+JPEG, Recently Added and collection rating filtering.
+/// `None` for destinations that show no photo grid (Albums, Library).
+fn collection_photos(
+    connection: &Connection,
+    filter: sidebar::SidebarFilter,
+    search: &str,
+) -> Option<Vec<db::Photo>> {
+    let photos = if !search.is_empty() {
+        // An active search is a library-wide view, regardless of the
+        // destination that was selected before typing began.
+        db::browse_photos(connection, None, false, Some(search)).unwrap_or_default()
+    } else if filter == sidebar::SidebarFilter::History {
+        db::browse_history_photos(connection).unwrap_or_default()
+    } else if let sidebar::SidebarFilter::Album(album_id) = filter {
+        db::browse_photos_in_album(connection, album_id, None).unwrap_or_default()
+    } else if !toolbar_rating_applies(filter) {
+        // The sidebar rating destinations choose their own ratings
+        // (`apply_collection_rating_filter`), so the toolbar rating must not
+        // narrow the query first; the metadata filters still apply.
+        db::photos_limited_filtered(
+            connection,
+            None,
+            false,
+            None,
+            -1,
+            &db::filters::Filters::load(connection),
+        )
+        .unwrap_or_default()
+    } else {
+        let (folder_id, favorites) = match filter {
+            sidebar::SidebarFilter::All | sidebar::SidebarFilter::RecentlyAdded => (None, false),
+            sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_) => unreachable!(),
+            sidebar::SidebarFilter::Favorites => (None, true),
+            // Picasa-style Folder mode is a single continuous stream.
+            // The selected folder is a scroll destination, not a query
+            // boundary, so load every indexed folder exactly once.
+            sidebar::SidebarFilter::Folder(_) => (None, false),
+            sidebar::SidebarFilter::Albums => return None,
+            sidebar::SidebarFilter::Library => return None,
+            sidebar::SidebarFilter::Album(_) => unreachable!(),
+            sidebar::SidebarFilter::History => unreachable!(),
+        };
+        db::browse_photos(connection, folder_id, favorites, None).unwrap_or_default()
+    };
+    Some(photos)
+}
+
 fn limit_recently_added(
     connection: &Connection,
     filter: sidebar::SidebarFilter,
@@ -653,6 +676,26 @@ fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
     }
     if let Some(rating) = filter.rating() {
         photos.retain(|photo| photo.rating == rating);
+    }
+}
+
+/// Whether the toolbar rating filter narrows this destination. The sidebar
+/// rating destinations (Ratings, Rating(n)) choose their own ratings and
+/// ignore it, in the query and in `apply_collection_rating_filter`.
+fn toolbar_rating_applies(collection: sidebar::SidebarFilter) -> bool {
+    !matches!(
+        collection,
+        sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_)
+    )
+}
+
+/// The toolbar rating button's tooltip: the active filter, or why it has no
+/// effect on this destination.
+fn rating_filter_tooltip(collection: sidebar::SidebarFilter, value: RatingFilter) -> &'static str {
+    if toolbar_rating_applies(collection) {
+        value.tooltip()
+    } else {
+        "Rating filter is not used in Ratings"
     }
 }
 
@@ -1447,23 +1490,58 @@ mod photo_action_tests {
                 (5,'/photos/trashed.jpg',1,0,4,1);",
         ).unwrap();
 
-        let mut ratings = db::browse_photos(&connection, None, false, None).unwrap();
-        apply_collection_rating_filter(
-            &mut ratings,
-            sidebar::SidebarFilter::Ratings,
-            RatingFilter::Unrated,
-        );
-        let mut rating_ids = ratings.iter().map(|photo| photo.id).collect::<Vec<_>>();
-        rating_ids.sort_unstable();
-        assert_eq!(rating_ids, [2, 3, 4]);
+        // The toolbar rating is saved, as the toolbar does, so the SQL query
+        // sees it too; the sidebar rating destinations must still ignore it.
+        for (toolbar_key, toolbar) in [
+            ("unrated", RatingFilter::Unrated),
+            ("3", RatingFilter::Three),
+            ("all", RatingFilter::All),
+        ] {
+            db::set_setting(&connection, crate::window::RATING_FILTER_SETTING_KEY, toolbar_key)
+                .unwrap();
 
-        let mut threes = db::browse_photos(&connection, None, false, None).unwrap();
-        apply_collection_rating_filter(
-            &mut threes,
-            sidebar::SidebarFilter::Rating(3),
-            RatingFilter::Unrated,
-        );
-        assert_eq!(threes.iter().map(|photo| photo.id).collect::<Vec<_>>(), [3]);
+            let mut ratings =
+                crate::window::collection_photos(&connection, sidebar::SidebarFilter::Ratings, "")
+                    .unwrap();
+            apply_collection_rating_filter(&mut ratings, sidebar::SidebarFilter::Ratings, toolbar);
+            let mut rating_ids = ratings.iter().map(|photo| photo.id).collect::<Vec<_>>();
+            rating_ids.sort_unstable();
+            assert_eq!(rating_ids, [2, 3, 4], "Ratings with toolbar {toolbar_key}");
+
+            let mut fives =
+                crate::window::collection_photos(&connection, sidebar::SidebarFilter::Rating(5), "")
+                    .unwrap();
+            apply_collection_rating_filter(&mut fives, sidebar::SidebarFilter::Rating(5), toolbar);
+            assert_eq!(
+                fives.iter().map(|photo| photo.id).collect::<Vec<_>>(),
+                [4],
+                "Rating(5) with toolbar {toolbar_key}"
+            );
+        }
+        db::set_setting(&connection, crate::window::RATING_FILTER_SETTING_KEY, "all").unwrap();
+
+        // The toolbar button says so where its filter does not apply.
+        for collection in [sidebar::SidebarFilter::Ratings, sidebar::SidebarFilter::Rating(3)] {
+            assert!(!crate::window::toolbar_rating_applies(collection));
+            assert_eq!(
+                crate::window::rating_filter_tooltip(collection, RatingFilter::Unrated),
+                "Rating filter is not used in Ratings"
+            );
+        }
+        for collection in [
+            sidebar::SidebarFilter::All,
+            sidebar::SidebarFilter::Favorites,
+            sidebar::SidebarFilter::RecentlyAdded,
+            sidebar::SidebarFilter::History,
+            sidebar::SidebarFilter::Album(1),
+            sidebar::SidebarFilter::Folder(1),
+        ] {
+            assert!(crate::window::toolbar_rating_applies(collection));
+            assert_eq!(
+                crate::window::rating_filter_tooltip(collection, RatingFilter::Unrated),
+                RatingFilter::Unrated.tooltip()
+            );
+        }
 
         let mut favourites = db::browse_photos(&connection, None, true, None).unwrap();
         apply_collection_rating_filter(

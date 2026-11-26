@@ -38,6 +38,7 @@
         let browser_active = date_browser_active.clone();
         let browser_resume = date_browser_resume.clone();
         let date_browser_button = date_browser_button.clone();
+        let rating_filter_scope = rating_filter_scope_slot.clone();
         let sidebar_selection = sidebar_selection_slot.clone();
         let main_stack = main_stack.clone();
         let albums_home = albums_home.clone();
@@ -156,6 +157,9 @@
             filter.set(new_filter);
             date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);
             date_browser_button.set_sensitive(true);
+            if let Some(sync) = rating_filter_scope.borrow().as_ref() {
+                sync();
+            }
             restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
             if let Err(error) =
                 record_session(&*connection.borrow(), SessionChange::View(new_filter))

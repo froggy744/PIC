@@ -299,36 +299,6 @@ pub fn album_photos_page(connection: &Connection, album_id: i64, limit: i64) -> 
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Rewrite Smart Album source-folder rules after a folder path moved.
-fn rewrite_album_rule_folders(connection: &Connection, old: &str, new: &str) -> Result<()> {
-    let rows = connection
-        .prepare("SELECT id, rules FROM albums WHERE rules IS NOT NULL")?
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    for (id, json) in rows {
-        let Ok(mut rules) = serde_json::from_str::<filters::AlbumRules>(&json) else {
-            continue;
-        };
-        let Some(selection) = rules.categories.get_mut(&filters::Field::SourceFolder) else {
-            continue;
-        };
-        let mut changed = false;
-        for value in &mut selection.values {
-            if value == old {
-                *value = new.to_owned();
-                changed = true;
-            }
-        }
-        if changed {
-            connection.execute(
-                "UPDATE albums SET rules = ?1 WHERE id = ?2",
-                params![rules.to_json()?, id],
-            )?;
-        }
-    }
-    Ok(())
-}
-
 /// Rename an album while retaining the same validation as album creation.
 pub fn rename_album(connection: &Connection, album_id: i64, name: &str) -> Result<()> {
     let name = name.trim();

@@ -892,3 +892,87 @@ fn normal_window_shrinks_like_immersive_by_folding_header_tools() {
     window.close();
     let _ = std::fs::remove_file(path);
 }
+
+/// The toolbar rating filter has no effect on the sidebar rating
+/// destinations, so its button must say so there and come back afterwards.
+#[test]
+#[ignore = "requires a GTK display; run individually"]
+fn toolbar_rating_filter_shows_it_is_off_in_ratings() {
+    adw::init().unwrap();
+    let app = adw::Application::builder()
+        .application_id("io.pic.ToolbarRatingScopeTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let path =
+        std::env::temp_dir().join(format!("pic-toolbar-rating-scope-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let connection = db::open(&path).unwrap();
+    for (key, value) in [
+        (LAST_VIEW_SETTING_KEY, "all"),
+        ("onboarding-never-show", "true"),
+        (WINDOW_WIDTH_SETTING_KEY, "1400"),
+        (WINDOW_HEIGHT_SETTING_KEY, "900"),
+    ] {
+        db::set_setting(&connection, key, value).unwrap();
+    }
+    let window = build(&app, connection);
+    window.present();
+    settle();
+    let widgets = descendants(window.upcast_ref());
+    let rating_button = widgets
+        .iter()
+        .filter_map(|widget| widget.downcast_ref::<gtk::MenuButton>())
+        .find(|button| {
+            button
+                .popover()
+                .and_then(|popover| popover.child())
+                .is_some_and(|child| child.has_css_class("rating-filter-popover-content"))
+        })
+        .cloned()
+        .expect("toolbar rating filter button");
+    let rating_choice = |label: &str| {
+        descendants(rating_button.popover().unwrap().upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::CheckButton>().ok())
+            .find(|check| check.label().as_deref() == Some(label))
+            .unwrap()
+    };
+    let select_destination = |destination: sidebar::SidebarFilter| {
+        let row = widgets
+            .iter()
+            .filter_map(|widget| widget.downcast_ref::<gtk::ListBoxRow>())
+            .find(|row| {
+                unsafe { row.data::<sidebar::SidebarFilter>("picasa-filter") }
+                    .is_some_and(|value| unsafe { *value.as_ref() } == destination)
+            })
+            .cloned()
+            .expect("sidebar row");
+        row.parent()
+            .and_downcast::<gtk::ListBox>()
+            .unwrap()
+            .select_row(Some(&row));
+        settle();
+    };
+
+    rating_choice("Unrated").set_active(true);
+    settle();
+    assert!(rating_button.is_sensitive());
+    assert_eq!(rating_button.tooltip_text().as_deref(), Some("Rating filter: Unrated"));
+
+    for destination in [sidebar::SidebarFilter::Ratings, sidebar::SidebarFilter::Rating(4)] {
+        select_destination(destination);
+        assert!(!rating_button.is_sensitive(), "{destination:?}");
+        assert_eq!(
+            rating_button.tooltip_text().as_deref(),
+            Some("Rating filter is not used in Ratings"),
+            "{destination:?}"
+        );
+    }
+
+    select_destination(sidebar::SidebarFilter::All);
+    assert!(rating_button.is_sensitive());
+    assert_eq!(rating_button.tooltip_text().as_deref(), Some("Rating filter: Unrated"));
+    window.close();
+    settle();
+    let _ = std::fs::remove_file(&path);
+}

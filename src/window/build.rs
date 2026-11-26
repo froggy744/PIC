@@ -123,38 +123,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         grid::GroupMode::None
     }));
     let startup_photos_started = Instant::now();
-    let mut photos = match initial_filter {
-        sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
-        sidebar::SidebarFilter::Album(album_id) => {
-            db::browse_photos_in_album(&connection.borrow(), album_id, None).unwrap_or_default()
-        }
-        sidebar::SidebarFilter::Favorites => {
-            db::browse_photos(&connection.borrow(), None, true, None).unwrap_or_default()
-        }
-        _ => db::browse_photos(&connection.borrow(), None, false, None).unwrap_or_default(),
-    };
-    crate::startup_trace::mark("startup_photo_query", Some(startup_photos_started));
-    retain_enabled_formats(&connection.borrow(), &mut photos);
-    limit_recently_added(
+    let photos = startup_photos(
         &connection.borrow(),
         initial_filter,
-        &mut photos,
+        rating_filter.get(),
+        sort.get(),
+        &folders,
     );
-    apply_collection_rating_filter(&mut photos, initial_filter, rating_filter.get());
-    if matches!(initial_filter, sidebar::SidebarFilter::Folder(_)) {
-        let display_mode = sidebar::FolderDisplayMode::from_setting(
-            db::setting(
-                &connection.borrow(),
-                sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY,
-            )
-            .ok()
-            .flatten()
-            .as_deref(),
-        );
-        sort_folder_stream(&mut photos, &folders, sort.get(), display_mode);
-    } else {
-        sort_photos(&mut photos, sort.get());
-    }
+    crate::startup_trace::mark("startup_photo_query", Some(startup_photos_started));
     let startup_photos = Rc::new(photos);
     crate::startup_trace::mark("database_photos_sorted", Some(build_started));
     if std::env::var_os("PIC_STARTUP_TRACE").is_some() {
@@ -562,6 +538,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let album_home_click_slot: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> =
         Rc::new(RefCell::new(None));
     let library_navigation_slot: Rc<RefCell<Option<Rc<dyn Fn(sidebar::SidebarFilter)>>>> =
+        Rc::new(RefCell::new(None));
+    // Set by the toolbar: shows whether its rating filter applies to the
+    // current destination. Called wherever the destination changes.
+    let rating_filter_scope_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
     let folder_navigation_slot: Rc<RefCell<Option<Rc<dyn Fn(i64, i64)>>>> =
         Rc::new(RefCell::new(None));
@@ -4662,34 +4642,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         });
 
-    let db_for_rotate = connection.clone();
-    let info_rotate = info.clone();
-    let gallery_for_rotate = gallery.clone();
-    let lightbox_for_rotate = lightbox.clone();
-    let properties_for_rotate = properties.clone();
     let edit_editor_for_rotate = edit_editor.clone();
     let front_for_rotate = front.clone();
 
-    let smart_rotate_context = action_context.clone();
+    let rotate_context = action_context.clone();
     let rotate_photo: Rc<dyn Fn(bool)> = Rc::new(move |counter_clockwise| {
-        let Some(photo) = info_rotate.current_photo() else {
+        let Some((photo, rotation)) = rotate_current_photo(&rotate_context, counter_clockwise)
+        else {
             return;
         };
-        let rotation = (photo.rotation() + if counter_clockwise { 270 } else { 90 }) % 360;
-
-        if let Err(error) = db::set_rotation(&db_for_rotate.borrow(), photo.id(), rotation) {
-            eprintln!("Could not rotate photo: {error}");
-            return;
-        }
-        photo.set_rotation(rotation);
-        info_rotate.photo_updated(&photo);
-        // The inspector is a snapshot of the selected photo's metadata;
-        // refresh it after the database and PhotoObject rotation are updated.
-        properties_for_rotate.show_photo(PropertiesSurface::Gallery, Some(&photo));
-        gallery_for_rotate.refresh_rotated_photo(&photo.path());
-        lightbox_for_rotate.refresh_current();
-        // Rotation counts as an edit for the Edited rule.
-        smart_albums_changed(&smart_rotate_context, db::filters::Field::Edited);
         if front_for_rotate.current() == Front::Editor {
             if let Some(editor) = edit_editor_for_rotate.borrow().as_ref() {
                 if editor.photo_id() == photo.id() {
@@ -6560,6 +6521,9 @@ fn start_photo_export_single(
 
                     let search_active = !search_for_events.borrow().is_empty();
                     let filters_active = !db::filters::Filters::load(&connection_for_events.borrow()).is_empty();
+                    // Updates of shown photos still apply in place below; only
+                    // appending new ones also needs no toolbar rating.
+                    let appends_new = scan_may_append_new_photos(&connection_for_events.borrow());
                     if watch_trace {
                         let new = photos.iter().filter(|indexed| indexed.newly_discovered).count();
                         let matching = photos
@@ -6575,13 +6539,14 @@ fn start_photo_export_single(
                             scan_job_for_events.borrow().kind,
                             filter_for_events.get(),
                             photos.len(),
-                            if search_active || filters_active { 0 } else { matching },
+                            if search_active || !appends_new { 0 } else { matching },
                         );
                     }
                     if !search_active && !filters_active {
                         for indexed in photos {
                             let photo = &indexed.photo;
                             if indexed.newly_discovered
+                                && appends_new
                                 && crate::image_format::path_is_enabled(
                                     &connection_for_events.borrow(),
                                     &photo.path,
@@ -7075,6 +7040,7 @@ fn start_photo_export_single(
         let leave_snapshot = leave_snapshot.clone();
         let exit_date_browser = discard_date_browser.clone();
         let date_browser_button = date_browser_button.clone();
+        let rating_filter_scope_for_switch = rating_filter_scope_slot.clone();
         let nav_fade_cancel = nav_fade_cancel.clone();
         let connection = connection.clone();
         let scan_job = scan_job.clone();
@@ -7241,6 +7207,9 @@ fn start_photo_export_single(
             // fires when another choice was active).
             if let Some(panel) = metadata_panel_for_switch.upgrade() {
                 panel.clear_rating_filter();
+            }
+            if let Some(sync) = rating_filter_scope_for_switch.borrow().as_ref() {
+                sync();
             }
             let display_mode = sidebar::FolderDisplayMode::from_setting(
                 db::setting(&connection.borrow(), sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)

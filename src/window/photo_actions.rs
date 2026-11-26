@@ -1491,50 +1491,88 @@ fn show_delete_confirmation(
 
     let parent_for_response = parent.clone();
     dialog.connect_response(Some("delete"), move |_, _| {
-        for id in &selection {
-            // Resolve the on-disk path from the database instead of trusting
-            // grid tiles: menu actions must not depend on tile recycling.
-            let path = match db::photo(&context.connection.borrow(), *id) {
-                Ok(Some(record)) => record.path,
-                Ok(None) => continue,
-                Err(error) => {
-                    show_error(
-                        &parent_for_response,
-                        "Could not delete photo",
-                        &error.to_string(),
-                    );
-                    return;
-                }
-            };
+        if let Err((heading, message)) = trash_photos(&context, &selection) {
+            show_error(&parent_for_response, heading, &message);
+        }
+    });
+    dialog.present(Some(parent));
+}
 
-            if let Err(error) = db::set_trashed(&context.connection.borrow(), *id, true) {
-                show_error(
-                    &parent_for_response,
-                    "Could not delete photo",
-                    &error.to_string(),
-                );
-                return;
+/// Move the photos to the system Trash and mark them trashed, then show the
+/// change: the grid, the Library and Smart Album counts. Stops at the first
+/// failure and returns the heading and message to show; photos trashed
+/// before it are still shown as gone.
+fn trash_photos(
+    context: &PhotoActionContext,
+    selection: &[i64],
+) -> Result<(), (&'static str, String)> {
+    let mut result = Ok(());
+    let mut trashed = 0;
+    for id in selection {
+        // Resolve the on-disk path from the database instead of trusting
+        // grid tiles: menu actions must not depend on tile recycling.
+        let path = match db::photo(&context.connection.borrow(), *id) {
+            Ok(Some(record)) => record.path,
+            Ok(None) => continue,
+            Err(error) => {
+                result = Err(("Could not delete photo", error.to_string()));
+                break;
             }
+        };
 
-            if let Err(error) = crate::source::file(&path).trash(gio::Cancellable::NONE) {
-                let _ = db::set_trashed(&context.connection.borrow(), *id, false);
-                show_error(
-                    &parent_for_response,
-                    "Could not move photo to Trash",
-                    &error.to_string(),
-                );
-                return;
-            }
+        if let Err(error) = db::set_trashed(&context.connection.borrow(), *id, true) {
+            result = Err(("Could not delete photo", error.to_string()));
+            break;
         }
 
+        if let Err(error) = crate::source::file(&path).trash(gio::Cancellable::NONE) {
+            let _ = db::set_trashed(&context.connection.borrow(), *id, false);
+            result = Err(("Could not move photo to Trash", error.to_string()));
+            break;
+        }
+        trashed += 1;
+    }
+
+    if result.is_ok() || trashed > 0 {
         if let Some(lightbox) = context.lightbox.upgrade() {
             lightbox.close();
         }
         context.info.clear_photo();
-        refresh_photo_actions_grid(&context);
-        refresh_smart_album_counts(&context);
-    });
-    dialog.present(Some(parent));
+        refresh_photo_actions_grid(context);
+        // Smart Album and Library counts, as photo marks refresh them.
+        photo_mark_commands::update_counts(context);
+    }
+    result
+}
+
+/// Rotate the current photo a quarter turn and show it everywhere it is on
+/// screen: the InfoBar, Properties, the gallery tile, the viewer and the
+/// Smart Albums' Edited rule. Returns the photo and its new rotation, for
+/// the editor; `None` when there is no current photo or saving failed.
+fn rotate_current_photo(
+    context: &PhotoActionContext,
+    counter_clockwise: bool,
+) -> Option<(crate::photo_object::PhotoObject, i32)> {
+    let photo = context.info.current_photo()?;
+    let rotation = (photo.rotation() + if counter_clockwise { 270 } else { 90 }) % 360;
+
+    if let Err(error) = db::set_rotation(&context.connection.borrow(), photo.id(), rotation) {
+        eprintln!("Could not rotate photo: {error}");
+        return None;
+    }
+    photo.set_rotation(rotation);
+    // The inspector is a snapshot of the photo's metadata; refresh the
+    // panel in front after the database and PhotoObject rotation are updated.
+    photo_mark_commands::show_changed_photo(context, &photo);
+    if let Some(gallery) = context.gallery.borrow().upgrade() {
+        gallery.refresh_rotated_photo(&photo.path());
+    }
+    if let Some(lightbox) = context.lightbox.upgrade() {
+        lightbox.refresh_current();
+    }
+    // Rotation counts as an edit for the Edited rule.
+    smart_albums_changed(context, db::filters::Field::Edited);
+    Some((photo, rotation))
 }
 
 fn refresh_photo_actions_grid(context: &PhotoActionContext) {
@@ -2815,5 +2853,189 @@ mod photo_actions_tests {
         window.close();
         drop(connection);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Trashing photos updates the sidebar Library counts, as marking does.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn trashing_photos_updates_library_counts() {
+        // A private Trash: for files on the home filesystem GIO trashes into
+        // $XDG_DATA_HOME/Trash, so the user's own Trash is never touched.
+        // (It refuses to trash on tmpfs, so the files live under target/.)
+        let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+        let directory = target.join(format!(
+            "pic-trash-counts-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let photos = directory.join("photos");
+        std::fs::create_dir_all(&photos).unwrap();
+        std::env::set_var("XDG_DATA_HOME", directory.join("data"));
+        gtk::init().unwrap();
+        let connection = Rc::new(RefCell::new(db::open(&directory.join("library.db")).unwrap()));
+        for (id, name, favorite) in [(1, "a.jpg", 1), (2, "b.jpg", 1), (3, "c.jpg", 0)] {
+            let path = photos.join(name);
+            std::fs::write(&path, [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+            connection
+                .borrow()
+                .execute(
+                    "INSERT INTO photos (id, path, favorite) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![id, path.to_string_lossy(), favorite],
+                )
+                .unwrap();
+        }
+        let sidebar = sidebar::library_sidebar_for_test(
+            db::sidebar_counts(&connection.borrow()).unwrap(),
+        );
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "3");
+        let context = PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: Rc::new(InfoBar::new()),
+            lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
+            sidebar: Rc::new(RefCell::new(Some(sidebar.clone()))),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            refresh_albums_home: Rc::new(|_| {}),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: std::rc::Weak::new(),
+        };
+
+        trash_photos(&context, &[1, 3]).unwrap();
+        assert!(!photos.join("a.jpg").exists() && !photos.join("c.jpg").exists());
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "1");
+        assert_eq!(
+            sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::Favorites),
+            "1"
+        );
+
+        // A failure part-way still shows the photos already trashed.
+        std::fs::remove_file(photos.join("b.jpg")).unwrap();
+        connection
+            .borrow()
+            .execute(
+                "INSERT INTO photos (id, path) VALUES (4, ?1)",
+                rusqlite::params![photos.join("d.jpg").to_string_lossy()],
+            )
+            .unwrap();
+        std::fs::write(photos.join("d.jpg"), [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+        sidebar::update_library_counts(&sidebar, db::sidebar_counts(&connection.borrow()).unwrap());
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "2");
+        assert!(trash_photos(&context, &[4, 2]).is_err());
+        assert_eq!(sidebar::library_count_for_test(&sidebar, sidebar::SidebarFilter::All), "1");
+        // Let the background grid and Smart Album refreshes finish first.
+        drop(context);
+        let main = glib::MainContext::default();
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < until {
+            main.iteration(false);
+        }
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Rotating in the viewer refreshes the viewer's Properties panel and
+    /// leaves the gallery panel on its own photo.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn rotating_in_the_viewer_refreshes_the_viewer_properties() {
+        gtk::init().unwrap();
+        let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
+        connection.borrow().execute_batch(db::SCHEMA).unwrap();
+        connection
+            .borrow()
+            .execute_batch(
+                "INSERT INTO folders(id,path,name) VALUES (1,'/photos','photos');
+                 INSERT INTO photos(id,path,folder_id) VALUES
+                    (1,'/photos/gallery.jpg',1),(2,'/photos/viewer.jpg',1);",
+            )
+            .unwrap();
+        let object = |id| {
+            crate::photo_object::PhotoObject::from_photo(
+                &db::photo(&connection.borrow(), id).unwrap().unwrap(),
+            )
+        };
+        let (gallery_photo, viewer_photo) = (object(1), object(2));
+
+        let stack = gtk::Stack::new();
+        stack.add_named(&gtk::Box::new(gtk::Orientation::Vertical, 0), Some("photos"));
+        stack.set_visible_child_name("photos");
+        let lightbox = Rc::new(crate::lightbox::Lightbox::new());
+        lightbox.root.set_visible(true);
+        let front = FrontSurface::new(
+            &stack,
+            &lightbox,
+            Rc::new(Cell::new(false)),
+            Rc::new(RefCell::new(None)),
+        );
+        assert_eq!(front.current(), Front::Lightbox);
+        let info = Rc::new(InfoBar::new());
+        // The viewer's photo is the shown one (front inputs are FrontMirrors').
+        info.photo_updated(&viewer_photo);
+        let properties = PropertiesWidgets::new(info.clone());
+        properties.show_photo(PropertiesSurface::Gallery, Some(&gallery_photo));
+
+        let context = PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            rating_filter: Rc::new(Cell::new(RatingFilter::All)),
+            info: info.clone(),
+            lightbox: Rc::downgrade(&lightbox),
+            front: Rc::downgrade(&front),
+            sidebar: Rc::new(RefCell::new(None)),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            refresh_albums_home: Rc::new(|_| {}),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|_| {}),
+            window: glib::WeakRef::new(),
+            context_menu_host: Rc::new(RefCell::new(None)),
+            operation_progress: OperationProgressUi::new(),
+            properties: Rc::downgrade(&properties),
+        };
+
+        let (rotated, rotation) = rotate_current_photo(&context, false).unwrap();
+        assert_eq!((rotated.id(), rotation), (2, 90));
+        assert_eq!(db::photo(&connection.borrow(), 2).unwrap().unwrap().rotation, 90);
+        assert_eq!(
+            properties.photo_for_test(PropertiesSurface::Lightbox).map(|photo| photo.id()),
+            Some(2),
+            "the viewer panel shows the rotated photo"
+        );
+        assert_eq!(
+            properties.photo_for_test(PropertiesSurface::Gallery).map(|photo| photo.id()),
+            Some(1),
+            "the gallery panel keeps its own photo"
+        );
     }
 }

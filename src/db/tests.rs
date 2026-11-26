@@ -1781,23 +1781,6 @@ mod tests {
     }
 
     #[test]
-    fn moved_folder_paths_follow_into_smart_album_rules() {
-        let connection = smart_album_catalog();
-        let mut rules = filters::AlbumRules::default();
-        rules.categories.insert(
-            filters::Field::SourceFolder,
-            filters::Selection { values: vec!["/a".into(), "/b".into()], ..Default::default() },
-        );
-        let album = create_smart_album(&connection, "Folders", &rules).unwrap();
-        rewrite_album_rule_folders(&connection, "/a", "/moved/a").unwrap();
-        let saved = album_rules(&connection, album.id).unwrap().unwrap();
-        assert_eq!(
-            saved.categories[&filters::Field::SourceFolder].values,
-            vec!["/moved/a".to_string(), "/b".to_string()]
-        );
-    }
-
-    #[test]
     fn existing_albums_stay_manual_after_the_rules_migration() {
         let connection = Connection::open_in_memory().unwrap();
         connection

@@ -208,6 +208,12 @@ pub(super) fn reload_shown_photo(context: &PhotoActionContext) {
     show_updated(context, &shown, lightbox_shown(context));
 }
 
+/// `shown`'s facts changed (a mark, a rotation): rewrite the InfoBar and the
+/// Properties panel of the surface in front (the viewer's while it is shown).
+pub(super) fn show_changed_photo(context: &PhotoActionContext, shown: &PhotoObject) {
+    show_updated(context, shown, lightbox_shown(context));
+}
+
 fn show_updated(context: &PhotoActionContext, shown: &PhotoObject, lightbox_shown: bool) {
     context.info.photo_updated(shown);
     if let Some(properties) = context.properties.upgrade() {
@@ -220,7 +226,8 @@ fn show_updated(context: &PhotoActionContext, shown: &PhotoObject, lightbox_show
     }
 }
 
-fn update_counts(context: &PhotoActionContext) {
+/// Refresh the Smart Album and sidebar Library counts after photos change.
+pub(super) fn update_counts(context: &PhotoActionContext) {
     refresh_smart_album_counts(context);
     let Some(sidebar) = context.sidebar.borrow().as_ref().cloned() else {
         return;

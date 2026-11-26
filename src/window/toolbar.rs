@@ -342,7 +342,20 @@
         RatingFilter::Corrupt => "dialog-warning-symbolic",
         _ => "starred-symbolic",
     });
-    rating_filter_button.set_tooltip_text(Some(rating_filter.get().tooltip()));
+    // The sidebar rating destinations ignore this filter, so the button is
+    // insensitive there and its tooltip says why.
+    let sync_rating_filter_scope: Rc<dyn Fn()> = {
+        let button = rating_filter_button.clone();
+        let filter = filter.clone();
+        let rating_filter = rating_filter.clone();
+        Rc::new(move || {
+            let collection = filter.get();
+            button.set_sensitive(toolbar_rating_applies(collection));
+            button.set_tooltip_text(Some(rating_filter_tooltip(collection, rating_filter.get())));
+        })
+    };
+    sync_rating_filter_scope();
+    rating_filter_scope_slot.replace(Some(sync_rating_filter_scope.clone()));
 
     let rating_filter_popover = gtk::Popover::new();
     let rating_filter_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -431,7 +444,7 @@
                 RatingFilter::Corrupt => "dialog-warning-symbolic",
                 _ => "starred-symbolic",
             });
-            rating_filter_button.set_tooltip_text(Some(value.tooltip()));
+            rating_filter_button.set_tooltip_text(Some(rating_filter_tooltip(filter.get(), value)));
             if let Err(error) =
                 db::set_setting(&connection.borrow(), RATING_FILTER_SETTING_KEY, value.key())
             {
@@ -485,10 +498,15 @@
                     favorites: search.is_empty()
                         && filter.get() == sidebar::SidebarFilter::Favorites,
                     search,
-                    rating: db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default(),
+                    // Match the grid: Ratings and Rating(n) ignore it.
+                    rating: if toolbar_rating_applies(filter.get()) {
+                        db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    },
                 }
             })
         },

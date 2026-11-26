@@ -1453,6 +1453,58 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_catalogues_photos_in_new_subfolders() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!(
+            "pic-refresh-new-subfolders-{}-{unique}",
+            std::process::id()
+        ));
+        let root = workspace.join("photos");
+        fs::create_dir_all(root.join("shoot")).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let write_jpeg = |path: &Path| {
+            image::RgbImage::new(16, 12)
+                .save_with_format(path, image::ImageFormat::Jpeg)
+                .unwrap();
+        };
+        write_jpeg(&root.join("shoot/a.jpg"));
+        let root_path = root.to_str().unwrap();
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+
+        // After the import: a new subfolder of the root, and a new folder
+        // nested in a known one.
+        fs::create_dir_all(root.join("solo")).unwrap();
+        fs::create_dir_all(root.join("shoot/new/deeper")).unwrap();
+        write_jpeg(&root.join("solo/b.jpg"));
+        write_jpeg(&root.join("shoot/new/deeper/c.jpg"));
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+
+        let paths = db::photos(&connection, None, false, None)
+            .unwrap()
+            .into_iter()
+            .map(|photo| photo.path)
+            .collect::<HashSet<_>>();
+        for name in ["shoot/a.jpg", "solo/b.jpg", "shoot/new/deeper/c.jpg"] {
+            assert!(paths.contains(root.join(name).to_str().unwrap()), "{name}: {paths:?}");
+        }
+        let folders = db::folders(&connection)
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.path)
+            .collect::<HashSet<_>>();
+        for name in ["solo", "shoot/new", "shoot/new/deeper"] {
+            assert!(folders.contains(root.join(name).to_str().unwrap()), "{name}: {folders:?}");
+        }
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
     fn authorized_refresh_detects_added_modified_moved_and_removed_photos() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -2197,12 +2197,22 @@ mod app_tests {
             .into_iter()
             .find(|w| w.has_css_class("metadata-explorer"))
             .unwrap();
+        // The explorer columns show only in ALL mode; every opening starts
+        // with the individual filter buttons.
+        let all = walk(&root)
+            .into_iter()
+            .find(|w| w.has_css_class("metadata-filter-all"))
+            .unwrap()
+            .downcast::<gtk::ToggleButton>()
+            .unwrap();
+        all.set_active(true);
         wait_until(|| {
             walk(&explorer)
                 .iter()
                 .filter_map(|w| w.downcast_ref::<gtk::CheckButton>())
                 .any(|b| b.label().as_deref() == Some("nikon z 5 (2)"))
         });
+        all.set_active(false);
         let camera = walk(&root)
             .into_iter()
             .filter_map(|w| w.downcast::<gtk::MenuButton>().ok())

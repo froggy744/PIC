@@ -152,17 +152,21 @@ fn offline_preview_uses_selected_thumbnail_cache_and_applies_rotation() {
     settle();
     assert_eq!(
         (texture(&lightbox).width(), texture(&lightbox).height()),
-        (120, 160)
+        (60, 80)
     );
     assert_eq!((selected.width(), selected.height()), (4000, 3000));
     // A corrupt selected-quality cache cannot fall back to an unselected sibling.
     std::fs::write(&cache, b"not an image").unwrap();
     lightbox.refresh_current();
     settle();
+    assert!(lightbox.picture.paintable().is_none());
     assert_eq!(
-        (texture(&lightbox).width(), texture(&lightbox).height()),
-        (60, 80)
+        lightbox.offline.notice.label(),
+        "Original unavailable — no cached preview"
     );
+    image::RgbImage::from_pixel(80, 60, image::Rgb([20, 90, 180]))
+        .save_with_format(&cache, image::ImageFormat::Jpeg)
+        .unwrap();
     let mut recipe = crate::edit::EditRecipe::default();
     recipe.crop.right = 0.5;
     selected.set_edit_recipe(recipe.encode());

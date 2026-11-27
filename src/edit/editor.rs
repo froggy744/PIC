@@ -3935,7 +3935,16 @@ mod panel_tests {
             tile_min_height >= 80,
             "preview needs a visible minimum height at the narrow tile width"
         );
-        assert!(tile_picture.height() >= tile_min_height);
+        // The size request covers the border box; `height()` is the content
+        // box, 4px smaller with the preview's 2px CSS border.
+        let tile_bounds = tile_picture
+            .compute_bounds(&tile_picture)
+            .expect("an allocated tile has bounds");
+        assert!(
+            tile_bounds.height() >= tile_min_height as f32,
+            "tile picture border box is {}px tall, minimum {tile_min_height}",
+            tile_bounds.height(),
+        );
 
         let top_level_tab_labels = buttons
             .iter()
@@ -3953,7 +3962,8 @@ mod panel_tests {
                 "Filters".to_string(),
                 "Crop".to_string(),
                 "Overlays".to_string(),
-                "Text".to_string()
+                "Text".to_string(),
+                "Draw".to_string()
             ]
         );
 
@@ -3998,10 +4008,14 @@ mod panel_tests {
             "Landscape",
             "Portrait",
         ] {
+            // The crop presets live on the sidebar's Crop page, not the toolbar.
             assert!(
-                buttons
-                    .iter()
-                    .any(|button| button.label().as_deref() == Some(label)),
+                descendants(&sidebar).iter().any(|widget| {
+                    widget
+                        .clone()
+                        .downcast::<gtk::ToggleButton>()
+                        .is_ok_and(|button| button.label().as_deref() == Some(label))
+                }),
                 "missing crop control {label}"
             );
         }

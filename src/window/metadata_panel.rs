@@ -2,6 +2,7 @@
 use super::*;
 use db::filters::{Facet, Field, Filters};
 use db::{BrowseScope, Destination};
+use super::metadata_panel_presentation as presentation;
 use std::sync::{
     atomic::{AtomicBool, Ordering as AtomicOrdering},
     Arc,
@@ -169,7 +170,7 @@ pub(super) struct MetadataPanel {
     filter_controls: gtk::Box,
     individual_controls: gtk::ScrolledWindow,
     lightbox_open: Cell<bool>,
-    workspace_visible: Cell<bool>,
+    immersive: Cell<bool>,
     navigation_view: RefCell<Option<(String, sidebar::SidebarFilter)>>,
     connection: Rc<RefCell<Connection>>,
     scope: Rc<dyn Fn() -> BrowseScope>,
@@ -390,7 +391,7 @@ impl MetadataPanel {
             // Clear all never jump left next to ALL.
             individual_controls: controls_scroll,
             lightbox_open: Cell::new(false),
-            workspace_visible: Cell::new(true),
+            immersive: Cell::new(false),
             navigation_view: RefCell::new(None),
             connection,
             scope,
@@ -689,8 +690,10 @@ impl MetadataPanel {
         self.lightbox_open.set(open);
         self.sync_view();
     }
-    pub fn set_workspace_visible(&self, visible: bool) {
-        self.workspace_visible.set(visible);
+    /// Immersive Mode suspends the panel; leaving it shows the panel again
+    /// only if its toggle is still on for the current view.
+    pub fn set_immersive(&self, immersive: bool) {
+        self.immersive.set(immersive);
         self.sync_view();
     }
     pub fn set_navigation_view(&self, page: &str, filter: sidebar::SidebarFilter) {
@@ -708,27 +711,25 @@ impl MetadataPanel {
             .replace(Some((page.to_owned(), filter)));
         // Close on entry, rather than forbidding the panel in these views:
         // the user can still explicitly open it after navigating.
-        if !self.pin_button.is_active()
-            && (page != "photos"
-                || !matches!(
-                    filter,
-                    sidebar::SidebarFilter::All | sidebar::SidebarFilter::Folder(_)
-                ))
-        {
+        if presentation::closes_on_entry(page, filter, self.pin_button.is_active()) {
             self.button.set_active(false);
         }
-        self.set_workspace_visible(!matches!(page, "edit" | "collage"));
+        self.sync_view();
     }
+    /// The only writer of the panel's visibility (candidate 24); the
+    /// decision is `window::metadata_panel_presentation`.
     fn sync_view(&self) {
-        self.button.set_visible(self.workspace_visible.get());
-        let pinned_index = self.pin_button.is_active()
-            && self.navigation_view.borrow().as_ref().is_some_and(|(page, _)| {
-                matches!(page.as_str(), "library" | "albums")
-            });
-        let show_panel = self.workspace_visible.get()
-            && self.button.is_active()
-            && !self.lightbox_open.get()
-            && !pinned_index;
+        let navigation_view = self.navigation_view.borrow();
+        let page = navigation_view.as_ref().map_or("", |(page, _)| page.as_str());
+        self.button.set_visible(presentation::toggle_shown(page));
+        let show_panel = presentation::panel_shown(&presentation::PanelInputs {
+            page,
+            toggled: self.button.is_active(),
+            pinned: self.pin_button.is_active(),
+            lightbox_open: self.lightbox_open.get(),
+            immersive: self.immersive.get(),
+        });
+        drop(navigation_view);
         self.root.set_visible(show_panel);
         let show_all = self.all_button.is_active();
         self.individual_controls.set_visible(!show_all);

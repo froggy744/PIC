@@ -232,7 +232,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_for_grid = lightbox.clone();
     let front_for_grid_selection = front.clone();
     let properties_for_grid_selection = properties.clone();
-    let filter = Rc::new(Cell::new(initial_filter));
+    let filter = NavigationFilter::new(initial_filter);
     let search_text = Rc::new(RefCell::new(String::new()));
     let search_entry_slot: Rc<RefCell<Option<gtk::SearchEntry>>> = Rc::new(RefCell::new(None));
     let search_suppressed = Rc::new(Cell::new(false));
@@ -4903,21 +4903,6 @@ fn start_photo_export_single(
         let panel_for_close = metadata_panel.clone();
         lightbox.set_close_started_handler(move || {
             panel_for_close.set_lightbox_open(false);
-        });
-    }
-    {
-        let panel_for_navigation = Rc::downgrade(&metadata_panel);
-        let filter_for_navigation = filter.clone();
-        // Several sidebar destinations share the photos stack page. Observe
-        // their filter changes before painting, too, without closing a panel
-        // that the user manually reopened in the same destination.
-        main_stack.add_tick_callback(move |stack, _| {
-            let Some(panel) = panel_for_navigation.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let page = stack.visible_child_name();
-            panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
-            glib::ControlFlow::Continue
         });
     }
 

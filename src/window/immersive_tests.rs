@@ -1013,3 +1013,67 @@ fn immersive_suspends_properties_without_transient_visibility() {
     window.close();
     settle();
 }
+
+fn widget_with_class(root: &gtk::Widget, class: &str) -> gtk::Widget {
+    descendants(root)
+        .into_iter()
+        .find(|widget| widget.has_css_class(class))
+        .unwrap_or_else(|| panic!("no widget with .{class}"))
+}
+
+fn main_stack(root: &gtk::Widget) -> gtk::Stack {
+    descendants(root)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Stack>().ok())
+        .find(|stack| stack.child_by_name("photos").is_some() && stack.child_by_name("albums").is_some())
+        .expect("main stack missing")
+}
+
+/// Candidate 24's bug: the filter panel was open in All Photos, Immersive
+/// Mode began, the Albums home closed the panel's toggle, Immersive Mode
+/// ended. The panel must follow its toggle, not what it showed on entry.
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn leaving_immersive_shows_the_metadata_panel_only_when_toggled() {
+    let (window, _) = immersive_window(false, "grid");
+    let root = window.clone().upcast::<gtk::Widget>();
+    let toggle = widget_with_class(&root, "metadata-filter-toggle")
+        .downcast::<gtk::ToggleButton>()
+        .unwrap();
+    let panel = widget_with_class(&root, "metadata-filter-panel");
+    let stack = main_stack(&root);
+
+    toggle.set_active(true);
+    settle();
+    assert!(panel.is_visible(), "the Filters toggle opens the panel in All Photos");
+
+    // Every show/hide of the panel while Immersive Mode is entered and left.
+    let transitions: Rc<RefCell<Vec<bool>>> = Rc::default();
+    {
+        let transitions = transitions.clone();
+        panel.connect_visible_notify(move |panel| transitions.borrow_mut().push(panel.is_visible()));
+    }
+    enter_immersive(&window);
+    assert!(!panel.is_visible(), "Immersive Mode hides the panel");
+    assert_eq!(transitions.borrow().as_slice(), &[false], "one hide on entry, no flash");
+    enter_immersive(&window);
+    assert!(panel.is_visible() && toggle.is_active(), "leaving resumes an open panel");
+
+    enter_immersive(&window);
+    stack.set_visible_child_name("albums");
+    settle();
+    assert!(!toggle.is_active(), "the Albums home closes an unpinned panel");
+    assert!(!panel.is_visible());
+    enter_immersive(&window);
+    assert_eq!(
+        stack.visible_child_name().as_deref(),
+        Some("albums"),
+        "Immersive Mode left on the Albums home"
+    );
+    assert!(
+        !panel.is_visible(),
+        "leaving Immersive Mode must not show a panel whose toggle is off"
+    );
+    window.close();
+    settle();
+}

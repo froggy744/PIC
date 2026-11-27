@@ -25,11 +25,12 @@ use crate::db;
 use crate::grid;
 use crate::lightbox::Lightbox;
 use crate::sidebar::SidebarFilter;
+use super::navigation_filter::NavigationFilter;
 
 /// What the adapter reads and drives.
 pub(super) struct CollectionNavigationParts {
     pub(super) connection: Rc<RefCell<rusqlite::Connection>>,
-    pub(super) filter: Rc<Cell<SidebarFilter>>,
+    pub(super) filter: Rc<NavigationFilter>,
     pub(super) search: Rc<RefCell<String>>,
     pub(super) sort: Rc<Cell<PhotoSort>>,
     pub(super) group_mode: Rc<Cell<grid::GroupMode>>,
@@ -358,7 +359,7 @@ mod tests {
     struct Fixture {
         directory: std::path::PathBuf,
         connection: Rc<RefCell<rusqlite::Connection>>,
-        filter: Rc<Cell<SidebarFilter>>,
+        filter: Rc<NavigationFilter>,
         search: Rc<RefCell<String>>,
         gallery: Rc<grid::Gallery>,
         lightbox: Rc<crate::lightbox::Lightbox>,
@@ -381,7 +382,7 @@ mod tests {
             db::open(&directory.join("library.db")).unwrap(),
         ));
         connection.borrow().execute_batch(setup).unwrap();
-        let filter = Rc::new(Cell::new(All));
+        let filter = NavigationFilter::new(All);
         let search = Rc::new(RefCell::new(String::new()));
         let sort = Rc::new(Cell::new(PhotoSort {
             field: SortField::Name,

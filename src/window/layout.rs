@@ -2276,22 +2276,31 @@
     search.set_max_width_chars(40);
     // Keep Search usable while the status yields space in narrow windows.
     search.set_size_request(180, -1);
-    search.set_hexpand(true);
     search.add_css_class("unified-search-entry");
     search_entry_slot.replace(Some(search.clone()));
+    // `search_area` fills the header's title space so the status row can
+    // measure how much room the header has. The themed pill inside it sits
+    // centred at its natural width (the entry's 40 characters), so idle
+    // Search stays compact and the status revealer widens it, animated,
+    // around the centre when a notification appears.
     let search_area = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    search_area.add_css_class("search-status-area");
-    // Theme the shared surface, rather than the editable half alone.
-    search_area.add_css_class("search-field");
     search_area.set_valign(gtk::Align::Center);
-    search_area.set_size_request(180, -1);
     search_area.set_hexpand(true);
-    search_area.append(&search);
+    let search_pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    search_pill.add_css_class("search-status-area");
+    // Theme the shared surface, rather than the editable half alone.
+    search_pill.add_css_class("search-field");
+    search_pill.set_valign(gtk::Align::Center);
+    search_pill.set_halign(gtk::Align::Center);
+    search_pill.set_hexpand(true);
+    search_pill.set_size_request(180, -1);
+    search_pill.append(&search);
+    search_area.append(&search_pill);
     // Refresh/export/batch status lives in the header title area beside the
     // search entry (hidden when idle), so it never resizes the photo grid.
-    // The search entry keeps hexpand and its 180px floor; the status row
-    // degrades (bar → label → all) before that floor is threatened.
-    search_area.append(operation_progress.slot());
+    // The search entry keeps its 180px floor; the status row degrades
+    // (bar → label → all) before that floor is threatened.
+    search_pill.append(operation_progress.slot());
     operation_progress.watch_space(&search_area);
     operation_progress.connect_dismiss();
     let (suggestion_popover, suggestion_list) = folder_suggestion_popup(&search);

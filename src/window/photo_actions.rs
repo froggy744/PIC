@@ -1277,6 +1277,7 @@ fn prepare_wallpaper(
             edit_recipe,
             source_width,
             source_height,
+            0,
         )?;
         let wallpaper = compose_wallpaper(image, target_size.0, target_size.1);
         crate::edit::render::save_jpeg(&wallpaper, &destination, 95)?;

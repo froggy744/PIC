@@ -500,6 +500,7 @@ fn trace_stage_summary(path: &Path) -> Result<String> {
     let mut lines = Vec::new();
     for stage in [
         "decode_rotate",
+        "prefit",
         "geometry",
         "tone",
         "overlays",

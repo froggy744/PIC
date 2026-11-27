@@ -2031,6 +2031,9 @@ impl<C: Fn() -> bool> crate::edit::render::RenderObserver for ViewerRenderTrace<
             RenderStage::Geometry => viewer_trace(format!(
                 "stage=geometry elapsed_ms={elapsed_ms:.3} size={width}x{height} uri={uri}"
             )),
+            RenderStage::Fit => viewer_trace(format!(
+                "stage=fit elapsed_ms={elapsed_ms:.3} size={width}x{height} uri={uri}"
+            )),
             RenderStage::Tone => viewer_trace(format!(
                 "stage=tone elapsed_ms={elapsed_ms:.3} size={width}x{height} uri={uri}"
             )),

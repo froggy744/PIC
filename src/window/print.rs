@@ -391,6 +391,7 @@ pub(crate) fn print_photos<W: IsA<gtk::Window>>(
                     &request.edit_recipe,
                     request.source_width,
                     request.source_height,
+                    0,
                 )
                 .map(downscale_for_print)
                 .ok()

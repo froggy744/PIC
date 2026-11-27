@@ -185,6 +185,9 @@ pub struct ExportJob {
     pub source_width: i64,
     pub source_height: i64,
     pub file_name: String,
+    /// Long edge the export is fitted to (0: full size), so the render can
+    /// work at output size. Set by the export itself, not by callers.
+    pub max_edge: u32,
 }
 
 impl ExportJob {
@@ -204,6 +207,7 @@ impl ExportJob {
             source_width,
             source_height,
             file_name: export_file_name(original_name, edited),
+            max_edge: 0,
         }
     }
 }
@@ -223,6 +227,7 @@ pub fn render_job(job: &ExportJob) -> Result<RgbaImage> {
         &job.edit_recipe,
         job.source_width,
         job.source_height,
+        job.max_edge,
     )
 }
 
@@ -373,7 +378,10 @@ where
         );
     }
     let stage_started = std::time::Instant::now();
-    let rendered = render(job)?;
+    let rendered = render(&ExportJob {
+        max_edge,
+        ..job.clone()
+    })?;
     if trace {
         eprintln!(
             "PIC_EXPORT stage=render_callback elapsed_ms={:.3} size={}x{}",
@@ -1215,6 +1223,7 @@ mod tests {
                 source_width: 4,
                 source_height: 4,
                 file_name: export_file_name(&format!("photo-{index}.jpg"), index % 2 == 0),
+                max_edge: 0,
             })
             .collect();
         for index in [0, 1, 3, 4] {
@@ -1592,6 +1601,7 @@ mod tests {
             "",
             i64::from(display_width),
             i64::from(display_height),
+            0,
         )
         .expect("render the original RAW at full size without edits");
         assert!(
@@ -1611,7 +1621,7 @@ mod tests {
             "full-size Export must match the native viewer source, not a cached thumbnail"
         );
         let stale_catalog_export =
-            super::super::render::render_for_export(&reference, 0, "", 640, 427)
+            super::super::render::render_for_export(&reference, 0, "", 640, 427, 0)
                 .expect("stale thumbnail-sized catalog bounds must not limit RAW Export");
         assert_eq!(
             stale_catalog_export, full_reference,
@@ -1800,6 +1810,7 @@ mod tests {
                 source_width: 4,
                 source_height: 4,
                 file_name: format!("photo-{index}.jpg"),
+                max_edge: 0,
             })
             .collect();
         let cancel = AtomicBool::new(true);
@@ -1840,6 +1851,7 @@ mod tests {
                 source_width: 4,
                 source_height: 4,
                 file_name: "same_edit.jpg".into(),
+                max_edge: 0,
             })
             .collect();
         std::fs::write(dir.join("src.jpg"), b"x").unwrap();

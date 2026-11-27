@@ -92,6 +92,8 @@ pub fn apply_recipe(image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
 pub enum RenderStage {
     LibraryRotation,
     Geometry,
+    /// Shrinking to the export size; reported only when it ran.
+    Fit,
     Tone,
     Overlays,
 }
@@ -127,6 +129,22 @@ pub fn render_decoded(
     recipe: &EditRecipe,
     observer: &mut dyn RenderObserver,
 ) -> Option<RgbaImage> {
+    render_decoded_fitted(image, rotation, recipe, 0, observer)
+}
+
+/// [`render_decoded`] for an output whose long edge will be at most
+/// `max_edge` (0: full size). When the recipe looks the same at any size
+/// ([`renders_the_same_when_shrunk`]), the image is shrunk to `max_edge`
+/// right after geometry, so tone and overlays run on the output pixels; the
+/// result is then exactly what fitting the full-size render would give in
+/// dimensions, without the full-size tone work.
+pub fn render_decoded_fitted(
+    image: RgbaImage,
+    rotation: i32,
+    recipe: &EditRecipe,
+    max_edge: u32,
+    observer: &mut dyn RenderObserver,
+) -> Option<RgbaImage> {
     let stage_started = std::time::Instant::now();
     let image = apply_library_rotation(image, rotation);
     if observer.cancelled() {
@@ -144,6 +162,22 @@ pub fn render_decoded(
         return None;
     }
     observer.stage_done(RenderStage::Geometry, stage_started.elapsed(), &image);
+
+    let image = if max_edge > 0
+        && image.width().max(image.height()) > max_edge
+        && renders_the_same_when_shrunk(recipe)
+    {
+        let stage_started = std::time::Instant::now();
+        let image = super::export_batch::fit_max_edge(image, max_edge)
+            .expect("resizing a valid RGBA image cannot fail");
+        if observer.cancelled() {
+            return None;
+        }
+        observer.stage_done(RenderStage::Fit, stage_started.elapsed(), &image);
+        image
+    } else {
+        image
+    };
 
     let stage_started = std::time::Instant::now();
     let image = {
@@ -215,12 +249,18 @@ pub fn render_for_viewer(
 /// Keep GTK/GLib objects out of this API so callers can safely run the heavy
 /// decode/render work on a `std::thread`. `PhotoObject` is a GTK object and is
 /// intentionally neither `Send` nor `Sync`.
+///
+/// `max_edge` is the long edge the export will be fitted to (0: full size).
+/// When the recipe looks the same at any size, the image is shrunk to that
+/// size after geometry, so tone and overlays run on the output pixels
+/// instead of the full sensor resolution.
 pub fn render_for_export(
     reference: &str,
     rotation: i32,
     edit_recipe: &str,
     source_width: i64,
     source_height: i64,
+    max_edge: u32,
 ) -> Result<RgbaImage> {
     let trace = std::env::var_os("PICASA_TRACE").is_some();
     let render_started = std::time::Instant::now();
@@ -266,7 +306,7 @@ pub fn render_for_export(
         recipe: &recipe,
         decode_elapsed,
     };
-    let output = render_decoded(decoded, rotation, &recipe, &mut observer)
+    let output = render_decoded_fitted(decoded, rotation, &recipe, max_edge, &mut observer)
         .expect("export renders are never cancelled mid-photo");
     if trace {
         eprintln!(
@@ -277,6 +317,25 @@ pub fn render_for_export(
         );
     }
     Ok(output)
+}
+
+/// Whether `recipe` gives the same picture, up to resampling, when the image
+/// is shrunk before it renders. Effects sized in output pixels do not:
+/// sharpen's 1.1 px radius, smooth's 5×5 window, per-pixel grain (also in
+/// the Disposable Film, Digicam Flash and Old Photo looks) and Newspaper's
+/// 4×4 dither. Everything else is per pixel or sized relative to the image.
+pub fn renders_the_same_when_shrunk(recipe: &EditRecipe) -> bool {
+    use filters::FilterPreset;
+    recipe.sharpen <= 0.001
+        && recipe.smooth <= 0.001
+        && recipe.grain <= 0.001
+        && !matches!(
+            recipe.filter,
+            FilterPreset::DisposableFilm
+                | FilterPreset::DigicamFlash
+                | FilterPreset::OldPhoto
+                | FilterPreset::Newspaper
+        )
 }
 
 /// Export's `PIC_EXPORT stage=` lines. `decode_rotate` keeps its old meaning
@@ -301,6 +360,10 @@ impl RenderObserver for ExportTrace<'_> {
             ),
             RenderStage::Geometry => eprintln!(
                 "PIC_EXPORT stage=geometry elapsed_ms={:.3} size={width}x{height}",
+                ms(elapsed),
+            ),
+            RenderStage::Fit => eprintln!(
+                "PIC_EXPORT stage=prefit elapsed_ms={:.3} size={width}x{height}",
                 ms(elapsed),
             ),
             RenderStage::Tone => eprintln!(
@@ -1629,16 +1692,17 @@ mod tests {
             .push(super::super::model::OverlaySpec::new_centered(
                 "nonexistent-pic-overlay-unique-test-asset",
             ));
-        let error = render_for_export("/unused-original.jpg", 0, &recipe.encode(), 120, 80)
+        let error = render_for_export("/unused-original.jpg", 0, &recipe.encode(), 120, 80, 0)
             .unwrap_err()
             .to_string();
         assert!(error.contains("required image overlay asset"), "{error}");
 
         // A deliberately hidden overlay is not part of the exported recipe.
         recipe.overlays[0].visible = false;
-        let hidden_error = render_for_export("/unused-original.jpg", 0, &recipe.encode(), 120, 80)
-            .unwrap_err()
-            .to_string();
+        let hidden_error =
+            render_for_export("/unused-original.jpg", 0, &recipe.encode(), 120, 80, 0)
+                .unwrap_err()
+                .to_string();
         assert!(!hidden_error.contains("required image overlay asset"));
     }
 
@@ -1659,7 +1723,8 @@ mod tests {
             .save(&path)
             .unwrap();
         for rotation in [90, 180, 270] {
-            let output = render_for_export(path.to_str().unwrap(), rotation, "", 120, 80).unwrap();
+            let output =
+                render_for_export(path.to_str().unwrap(), rotation, "", 120, 80, 0).unwrap();
             let expected = apply_library_rotation(source.clone(), rotation);
             assert_eq!(
                 output.dimensions(),
@@ -1699,7 +1764,7 @@ mod tests {
             arrow_end: true,
         });
         let output =
-            render_for_export(path.to_str().unwrap(), 0, &recipe.encode(), 160, 100).unwrap();
+            render_for_export(path.to_str().unwrap(), 0, &recipe.encode(), 160, 100, 0).unwrap();
         assert_eq!(output.dimensions(), (160, 100));
         assert!(
             output
@@ -1766,6 +1831,61 @@ mod tests {
             );
         }
         std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn export_fits_after_geometry_only_when_the_recipe_allows_it() {
+        let source = RgbaImage::from_fn(400, 300, |x, y| {
+            Rgba([(x % 251) as u8, (y % 241) as u8, 150, 255])
+        });
+        let tone_only = EditRecipe {
+            exposure: 0.3,
+            straighten: 2.0,
+            crop: CropRect {
+                left: 0.1,
+                top: 0.05,
+                right: 0.95,
+                bottom: 0.9,
+            },
+            ..EditRecipe::default()
+        };
+        assert!(renders_the_same_when_shrunk(&tone_only));
+        for rotation in [0, 90] {
+            let fitted =
+                render_decoded_fitted(source.clone(), rotation, &tone_only, 100, &mut NoObserver)
+                    .unwrap();
+            let full_then_fit = crate::edit::export_batch::fit_max_edge(
+                render_decoded(source.clone(), rotation, &tone_only, &mut NoObserver).unwrap(),
+                100,
+            )
+            .unwrap();
+            assert_eq!(
+                fitted.dimensions(),
+                full_then_fit.dimensions(),
+                "fitting early must not change the export size"
+            );
+        }
+
+        for sized in [
+            EditRecipe {
+                sharpen: 0.5,
+                ..tone_only.clone()
+            },
+            EditRecipe {
+                grain: 0.2,
+                ..tone_only.clone()
+            },
+            EditRecipe {
+                filter: filters::FilterPreset::Newspaper,
+                ..tone_only.clone()
+            },
+        ] {
+            assert!(!renders_the_same_when_shrunk(&sized));
+            let full = render_decoded(source.clone(), 0, &sized, &mut NoObserver).unwrap();
+            let kept =
+                render_decoded_fitted(source.clone(), 0, &sized, 100, &mut NoObserver).unwrap();
+            assert_eq!(kept, full, "size-dependent effects render at full size");
+        }
     }
 
     #[test]

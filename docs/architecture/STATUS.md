@@ -50,7 +50,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 18 | Collection navigation out of `build()` | Strong | merged | merge `ecc8e954` (`refactor/collection-navigation`) | `src/window/collection_navigation.rs` (pure), `src/window/collection_navigation_widgets.rs` (GTK adapter) |
 | 19 | Scan events as a reducer | Worth exploring | merged | merge `db8d6588` (`refactor/scan-events`) | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | merged (test fixture only) | merge `f598440d` (`refactor/photo-action-context-fixture`) | `src/window.rs` (`#[cfg(test)] PhotoActionContext::for_tests`) |
-| 21 | Workspace session: one owner for Editor and Collage open/close | Strong | proposed | | |
+| 21 | Workspace session: one owner for Editor and Collage open/close | Strong | in progress (`refactor/workspace-session`) | | `src/window/workspace_session.rs` (pure), `src/window/workspace_session_widgets.rs` (GTK adapter `Workspace`) |
 | 22 | Tone stage as one deep module (CPU kernel, GLSL kernel, neutrality) | Strong | proposed | | |
 | 23 | Window keyboard dispatch: one key → command table | Strong | proposed | | |
 | 24 | Metadata panel presentation: Immersive Mode as an input | Strong | proposed (recommended first) | | |
@@ -877,6 +877,20 @@ Context: `layout.rs`, `toolbar.rs`, `immersive.rs` and `shortcuts.rs` are `inclu
 - **27 · Export/Print targets.** Target choice written 3 times with different outside-library rules (`build.rs:4548-4653`, `photo_actions.rs:950-958`); `ExportJob::from_record(path, rotation, …)` 4 times. Suspected: Export does nothing when the anchor is not in the gallery model.
 - **28 · Look choice and layer selection.** Exclusive look rule written 4 times (`controls.rs:74-89`, `editor.rs:2081, 2138, 2196`); overlay/text/drawing selection lives outside `EditSession`, undo and Reset don't revalidate it.
 - **29 · Render from a cached preview.** RAW aspect fix → rotation → `apply_recipe` repeated in 6 callers; the lightbox worker and `render_for_export` repeat `apply_recipe`'s stage order inline. Copies agree today.
+
+### 21 · Workspace session
+**Decisions (2026-11-27, by the owner):**
+1. **One way back.** Back, Done and the InfoBar Edit toggle (and Draw, which closes through it) all call the open editor's one close, which takes the route from `WorkspaceSession::close_editor`: an outside photo → the viewer (on a Save Copy result when there is one), a collage tile → the collage (tile refreshed), the Library index → Library, else the gallery with `restore_view`. Before, the toggle had only Collage or Photos.
+2. **Pure `WorkspaceSession`** (`window/workspace_session.rs`) replaces the `collage_add_mode` and `collage_editing` cells: `collage: Option<CollagePhase { Open, AddingPhotos }>`, `editor: Option<EditOrigin { OutsideViewer, Collage, Library, Photos }>` and a one-shot collage edit request; `open_editor`, `close_editor -> ReturnRoute`, `back_label`, `leave_page(page) -> Teardown { end_editor, drop_collage }`, and the collage moves. Table tests inline.
+3. **One collage teardown.** `Workspace::drop_collage` (save the draft, clear the grid selection, detach) serves the collage's Close and the page teardown; Close also leaves collage selection mode. Collage re-entry only saves the draft (`Workspace::save_collage_draft`).
+4. **Edit key slots** are set in `Workspace::editor_ready` and cleared in one place (`clear_edit_keys`, from `open_editor` and `end_editor_session`). Space keeps its "editor in front" check for the fade-in.
+5. **Out of scope:** the editor's opening (placeholder, viewer fade, `edit_open_serial`, the preview wait; candidate 26) and the Draw tab logic. Owner rule `workspace-session`.
+6. **Decided by the agent:** leaving a collage-owned editor for a page other than the collage now also ends the collage (its draft is saved). Before, the collage editor stayed attached until the next page change.
+7. **Branch from `main`, not after 24.** The merge of 24 into `main` was refused by the auto-mode permission check (2026-11-27); 21 does not depend on it. Merging both touches the table rows of this file.
+
+**Bug confirmed and fixed.** Outside photo → editor → InfoBar Edit: the gallery showed instead of the viewer. Test `edit_toggle_returns_an_outside_photo_to_the_viewer` (`open_files.rs`), red on the old code at its final assertion, green after. (Save Copy itself closes through Back's route, so it never lost its result; the lost result was only on the toggle path, which had no viewer route at all.)
+
+**Verification (2026-11-27, at `c70dc7ac`):** `cargo check --all-targets` clean; `workspace_session` unit tests pass. Display tests (Xvfb, one process each): 34/34 pass, among them both `open_files` window tests, the 11 `immersive_window_tests`, the responsive window tests, collection navigation, the collage sizing test, the onboarding tour (browse, albums, edit, collage) and `album_view_modes_preserve_albums_and_click_navigation`. Owner script: `--self-test` ok (5 new `workspace-session` cases); the check shows only the 4 known `open_files.rs` session-state hits. GUI harness `viewer` COMPLETE 19/19. GUI harness `editing`: 24 checks pass, then the pre-existing "Exposure change to render" timeout (same on `main`, see 24). `scripts/front-surface-checks/run.sh`: 16/16.
 
 Rejected this round: `include!` → modules alone; toolbar.rs; Immersive chrome geometry; navigation crossfade; search session cells (overlap with browse scope); export spine, EditSession undo core, editor close/save, collage editor, viewer retention (already deep). 7 stays closed (still no user-visible effect).
 

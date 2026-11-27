@@ -1,5 +1,21 @@
 # RAW editor performance investigation plan
 
+> **Status (2026-11-27): parked.** The in-place crop (`dec797a0`) was the
+> one cheap win; it cut RAW decode and develop from 774 ms to 655 ms and peak
+> RSS from 819 MiB to 642 MiB. The remaining decode cost is spread across
+> stages of 50–150 ms each, the opening stand-in already hides the wait, and
+> no lag was reported in use. Not done: step 2 (warm slider response), a
+> post-fix live measurement of editor opening, and attribution of the roughly
+> 346 ms before decode starts and the roughly 370 ms after upload in the
+> 1,559 ms first-frame run. Resume from those only if NEF editing feels slow
+> in practice, starting with the slider.
+>
+> The text logs and scripts cited below as `/tmp/...` were copied to
+> `reports/benchmarks/raw-editor-2026-11-27/` (gitignored, local only).
+> Binaries, RPMs and photo copies were not copied. The three editor traces
+> were renamed `editor-trace-branch.log`, `editor-trace-main.log` and
+> `editor-trace-live.log`.
+
 > Use the existing traces and focused tests to establish the baseline. Record the evidence before choosing a product change.
 
 **Goal** Measure RAW editor opening and warm slider response on PIC's current code.
@@ -270,9 +286,9 @@ PICASA_TRACE=1 cargo run --locked -- /path/to/photo.NEF 2>&1 | tee /tmp/pic-nef-
    file, recipe and zoom on the parent commit if anything looks different.
 4. For repeatable measurements, use a fresh process per open and the same
    build profile on both commits. Record `nef_scene_v2` and
-   `source_upload_ms` separately. The more detailed
-   `nef_prepare_demosaic` marker requires the uncommitted investigation
-   timers. The release benchmark above measures decode and develop only.
+   `source_upload_ms` separately, along with the more detailed
+   `nef_sensor_unpack` and `nef_prepare_demosaic` markers (commit
+   `ee792980`). The release benchmark above measures decode and develop only.
 
 Run the real-file parity test for each additional fixture to compare the
 dimensions and every RGB float sample against rawler's allocating crop.

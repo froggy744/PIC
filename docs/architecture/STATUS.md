@@ -905,6 +905,8 @@ Owner, 2026-11-27: 22, 25 and 29 are one project, "a proper CPU/GPU edit/export 
 
 **Reproducible exports (branch `fix/export-icc-date`, 2026-11-27).** `export_srgb_profile` (`edit/render.rs`) writes a fixed creation date (2026-01-01) into the embedded sRGB profile's header instead of lcms2's current time, so the same export is byte-identical every time; lcms2 leaves the profile ID zero, so nothing else covers the date. Test `export_profile_has_a_fixed_date_and_stays_a_valid_srgb_profile`.
 
+**Stale display test fixed (same branch, 2026-11-27).** `editor_toolbar_has_tool_tabs_and_sidebar_keeps_crop_workspace` (failing since before round four) had three stale expectations, no product bug: it compared the filter tile's content height (80) with its border-box size request (84; the `.filter-tile-preview` CSS border is 2 px), it expected five tabs without Draw, and it looked for the crop presets in the toolbar after they moved to the sidebar's Crop page. It now measures the border box, lists Draw and searches the sidebar. Passes (Xvfb).
+
 **Project result (branch `refactor/render-pipeline`, not merged):** NEF highlight fix `39d0c9bc` (merged earlier), TurboJPEG encode `fb1ecc89`, A one render pipeline `dff0f506`, B fit after geometry `3b19ccf1` and source-pixel effects `9c3fae23`/`23a58355`, C tone module `a2d237f6`, D half-size NEF develop `a63134b0`.
 
 Open owner decisions: a release-build benchmark (AGENTS.md: no `--release` unless asked); whether `editor-quality.yml`'s path filter should cover `src/lightbox/**` and `src/thumbnail/**`.

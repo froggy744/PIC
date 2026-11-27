@@ -22,6 +22,8 @@ pub(super) enum CollagePhase {
 pub(super) enum EditOrigin {
     /// A photo outside the library, opened from the viewer.
     OutsideViewer,
+    /// A library photo, opened from the viewer (over Photos or Library).
+    Viewer,
     /// A collage tile; the collage editor waits behind the photo editor.
     Collage,
     /// The Library index.
@@ -110,14 +112,21 @@ impl WorkspaceSession {
     }
 
     /// The editor opens. A photo outside the library always returns to the
-    /// viewer; otherwise a collage request, then the Library index, then the
-    /// gallery.
-    pub(super) fn open_editor(&mut self, outside_library: bool, from_library: bool) -> EditOrigin {
+    /// viewer; otherwise a collage request, then the viewer it was opened
+    /// from, then the Library index, then the gallery.
+    pub(super) fn open_editor(
+        &mut self,
+        outside_library: bool,
+        from_viewer: bool,
+        from_library: bool,
+    ) -> EditOrigin {
         let collage = std::mem::take(&mut self.collage_edit_requested);
         let origin = if outside_library {
             EditOrigin::OutsideViewer
         } else if collage {
             EditOrigin::Collage
+        } else if from_viewer {
+            EditOrigin::Viewer
         } else if from_library {
             EditOrigin::Library
         } else {
@@ -138,7 +147,7 @@ impl WorkspaceSession {
         match self.editor? {
             EditOrigin::Collage => Some(("Back to Collage", "Return to the collage")),
             EditOrigin::Library => Some(("Back to Library", "Return to the Library index")),
-            EditOrigin::OutsideViewer | EditOrigin::Photos => None,
+            EditOrigin::OutsideViewer | EditOrigin::Viewer | EditOrigin::Photos => None,
         }
     }
 
@@ -146,7 +155,7 @@ impl WorkspaceSession {
     /// `None` when no editor is open.
     pub(super) fn close_editor(&mut self) -> Option<ReturnRoute> {
         Some(match self.editor.take()? {
-            EditOrigin::OutsideViewer => ReturnRoute::Viewer,
+            EditOrigin::OutsideViewer | EditOrigin::Viewer => ReturnRoute::Viewer,
             EditOrigin::Collage => ReturnRoute::Collage,
             EditOrigin::Library => ReturnRoute::Library,
             EditOrigin::Photos => ReturnRoute::Photos,
@@ -186,24 +195,26 @@ mod tests {
 
     #[test]
     fn open_editor_origin_table() {
-        // (outside, collage request, from library, origin)
+        // (outside, collage request, from viewer, from library, origin)
         let cases = [
-            (false, false, false, EditOrigin::Photos),
-            (false, false, true, EditOrigin::Library),
-            (false, true, false, EditOrigin::Collage),
-            (false, true, true, EditOrigin::Collage),
-            (true, false, false, EditOrigin::OutsideViewer),
-            (true, true, true, EditOrigin::OutsideViewer),
+            (false, false, false, false, EditOrigin::Photos),
+            (false, false, false, true, EditOrigin::Library),
+            (false, false, true, false, EditOrigin::Viewer),
+            (false, false, true, true, EditOrigin::Viewer),
+            (false, true, false, false, EditOrigin::Collage),
+            (false, true, false, true, EditOrigin::Collage),
+            (true, false, true, false, EditOrigin::OutsideViewer),
+            (true, true, true, true, EditOrigin::OutsideViewer),
         ];
-        for (outside, collage, library, origin) in cases {
+        for (outside, collage, viewer, library, origin) in cases {
             let mut s = session();
             if collage {
                 s.request_collage_edit();
             }
             assert_eq!(
-                s.open_editor(outside, library),
+                s.open_editor(outside, viewer, library),
                 origin,
-                "{outside} {collage} {library}"
+                "{outside} {collage} {viewer} {library}"
             );
             assert_eq!(s.editor(), Some(origin));
         }
@@ -213,6 +224,7 @@ mod tests {
     fn every_origin_has_one_way_back() {
         for (origin, route, label) in [
             (EditOrigin::OutsideViewer, ReturnRoute::Viewer, None),
+            (EditOrigin::Viewer, ReturnRoute::Viewer, None),
             (
                 EditOrigin::Collage,
                 ReturnRoute::Collage,
@@ -240,9 +252,9 @@ mod tests {
     fn a_collage_request_is_used_once() {
         let mut s = session();
         s.request_collage_edit();
-        assert_eq!(s.open_editor(false, false), EditOrigin::Collage);
+        assert_eq!(s.open_editor(false, false, false), EditOrigin::Collage);
         s.close_editor();
-        assert_eq!(s.open_editor(false, false), EditOrigin::Photos);
+        assert_eq!(s.open_editor(false, false, false), EditOrigin::Photos);
     }
 
     #[test]
@@ -251,7 +263,7 @@ mod tests {
         s.collage_opened();
         s.request_collage_edit();
         s.editor_open_failed();
-        assert_eq!(s.open_editor(false, false), EditOrigin::Photos);
+        assert_eq!(s.open_editor(false, false, false), EditOrigin::Photos);
     }
 
     #[test]

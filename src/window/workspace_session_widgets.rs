@@ -128,11 +128,16 @@ impl Workspace {
     }
 
     /// The editor opens on a loaded photo; any earlier editor's keys go.
-    pub(super) fn open_editor(&self, outside_library: bool, from_library: bool) -> EditOrigin {
+    pub(super) fn open_editor(
+        &self,
+        outside_library: bool,
+        from_viewer: bool,
+        from_library: bool,
+    ) -> EditOrigin {
         self.clear_edit_keys();
         self.session
             .borrow_mut()
-            .open_editor(outside_library, from_library)
+            .open_editor(outside_library, from_viewer, from_library)
     }
 
     pub(super) fn editor_open_failed(&self) {

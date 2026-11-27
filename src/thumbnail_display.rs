@@ -639,7 +639,18 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     image = crate::edit::render::apply_library_rotation(image, request.rotation);
     let recipe = crate::edit::EditRecipe::decode(&request.edit_recipe);
     if !recipe.is_default() {
-        image = crate::edit::render::apply_recipe(image, &recipe);
+        let size = crate::edit::render::RenderSize {
+            source_long_edge: request.source_width.max(request.source_height).max(0) as u32,
+            max_edge: 0,
+        };
+        image = crate::edit::render::render_sized(
+            image,
+            0,
+            &recipe,
+            size,
+            &mut crate::edit::render::NoObserver,
+        )
+        .expect("a render nobody cancels always completes");
     }
 
     DisplayOutcome::Loaded {

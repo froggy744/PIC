@@ -2316,7 +2316,18 @@ pub(crate) fn raw_cached_thumbnail(photo: &PhotoObject, path: &str) -> Option<gt
     image = crate::thumbnail_display::crop_raw_cached_preview(image, source_width, source_height);
     image = crate::edit::render::apply_library_rotation(image, rotation);
     if !recipe.is_default() {
-        image = crate::edit::render::apply_recipe(image, &recipe);
+        let size = crate::edit::render::RenderSize {
+            source_long_edge: source_width.max(source_height).max(0) as u32,
+            max_edge: 0,
+        };
+        image = crate::edit::render::render_sized(
+            image,
+            0,
+            &recipe,
+            size,
+            &mut crate::edit::render::NoObserver,
+        )
+        .expect("a render nobody cancels always completes");
     }
 
     let width = image.width() as i32;

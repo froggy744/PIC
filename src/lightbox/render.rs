@@ -33,6 +33,7 @@ fn ensure_zoom_texture(
         edit_recipe: edit_recipe.clone(),
         target_width,
         target_height,
+        source_long_edge: photo.width().max(photo.height()).max(0) as u32,
     };
     let cancel_active = active_lease
         .borrow()
@@ -231,6 +232,7 @@ fn start_zoom_texture(
         edit_recipe: edit_recipe.clone(),
         target_width,
         target_height,
+        source_long_edge: photo.width().max(photo.height()).max(0) as u32,
     };
     let (request, lease, claim) = claim_viewer_request(&key, true);
     // The newest render of the photo in front may refill its retained pixels.
@@ -540,6 +542,7 @@ fn show_photo(
         edit_recipe: edit_recipe_text.clone(),
         target_width,
         target_height,
+        source_long_edge: photo.width().max(photo.height()).max(0) as u32,
     };
     // Keep a matching prefetch alive: the foreground lease below promotes it.
     // Other speculative requests lose their leases before they can occupy a
@@ -1053,10 +1056,15 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                     rotation: worker_key.rotation,
                     uri: viewer_trace_uri(&worker_key.path),
                 };
-                let image = crate::edit::render::render_decoded(
+                let size = crate::edit::render::RenderSize {
+                    source_long_edge: worker_key.source_long_edge,
+                    max_edge: 0,
+                };
+                let image = crate::edit::render::render_sized(
                     image,
                     worker_key.rotation,
                     &recipe,
+                    size,
                     &mut observer,
                 )
                 .ok_or_else(|| anyhow::anyhow!("viewer request cancelled during render"))?;
@@ -1386,6 +1394,7 @@ fn prefetch_display_texture(
         edit_recipe: edit_recipe_text.clone(),
         target_width,
         target_height,
+        source_long_edge: photo.width().max(photo.height()).max(0) as u32,
     };
     let (request, lease, claim) = claim_viewer_request(&key, false);
     viewer_trace(format!(

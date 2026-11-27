@@ -60,6 +60,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 27 | Photo action targets for Export and Print | Worth exploring | fixed (`65b34d44`) | | |
 | 28 | Creative look choice and layer selection in EditSession | Worth exploring | fixed (`65b34d44`) | | |
 | 29 | Render from a cached preview (keep the chokepoint whole) | Speculative | closed, no change (`1005cbda`); moved to the render pipeline project (A) | | |
+| 30 | Lightbox zoom shows the NEF sensor develop | Worth exploring | saved for later (2026-11-27), not started | | `src/thumbnail/viewer.rs` (`decode_local_raw_for_viewer`, `viewer_nef_source_cache_lookup`), `src/lightbox/render.rs` (`viewer_zoom_decode_target`) |
 
 ## Outstanding work
 
@@ -933,6 +934,15 @@ Owner's plan: 27/28/26/25 as small bug fixes, not deepening refactors; 29 and 22
 - **#268 · A half-typed search survives the return to the grid.** Two gaps. (1) Closing the viewer after typing over it kept the query: the viewer's close preparation (`build.rs`) now calls `clear_search_after_result`, as picking a suggested photo does, so the grid returns on the viewed photo's folder. Display test `closing_the_viewer_clears_a_half_typed_search` (`immersive_tests.rs`), red before, green after. (2) After a click on a result tile focus left the search field, so Escape did nothing: new `KeyCommand::ClearSearch` (`key_dispatch.rs`, context `search_active`) after the viewer's Escape and before Immersive Mode, only when no text field has focus; `shortcuts.rs` emits the entry's `stop-search`. Table cases in `escape_closes_one_layer_at_a_time`. Clicking a tile and scrolling keeps the results (by design). `search_entry_slot` moved above the shortcuts include in `build.rs`.
 
 **Verification (2026-11-27):** `cargo check` clean; `infobar::presentation` 6/6 and `key_dispatch` 5/5 unit tests pass; the display test above passes (Xvfb). Owner script: the 4 known `open_files.rs` hits plus `build.rs:3333` `[front-surface]`, both identical on `main` before this change. The Escape-after-tile-click path has no window test.
+
+### 30 · Lightbox zoom shows the NEF sensor develop (saved for later, 2026-11-27)
+Owner: "save for later candidate". Nothing changed in code.
+
+- **Today (Nikon NEF):** grid and lightbox Fit show the embedded camera JPEG; wheel/slider zoom (up to `LIGHTBOX_MAX_ZOOM_FACTOR` = 2× Fit) shows the same JPEG decoded larger; lightbox 1:1, the editor and export show PIC's sensor develop (`develop_nef_sensor_frame`, scene renderer). `decode_local_raw_for_viewer` develops the sensor only when the request equals the full source size (`viewer_requests_native_pixels`), and `viewer_nef_source_cache_lookup` never serves a cached sensor frame to a smaller request, on purpose.
+- **Problems:** (1) the look (colour, contrast, sharpening) jumps between zoom and 1:1; (2) an edited NEF's recipe, set in the editor on the sensor develop, is drawn in the lightbox on the camera JPEG, so Fit/zoom can differ from the editor and export.
+- **Not affected:** other RAW brands use the embedded preview everywhere (editor and export too); a sensor develop for them is a separate project (render pipeline D).
+- **Proposal:** keep Fit on the embedded JPEG (owner decision 2026-11-27, render pipeline project). Zoom above Fit uses the sensor develop, keeping the camera JPEG on screen until it is ready; zoom and 1:1 then share one cached frame (a D800 frame, 108-145 MB, fits the 192 MiB `VIEWER_NEF_SOURCE_CACHE_BYTES`). Cost about 0.65 s per photo in release (parked RAW editor investigation). Size: small to medium; check with a display test "zoom then 1:1 keeps the same pixels".
+- **Owner decisions before starting:** (a) edited NEFs on the sensor develop at Fit too (fixes problem 2 fully, but goes against the Fit decision for edited photos); (b) `nef_scene::develop_half` (about 4× cheaper, 5-6% less edge contrast) for zoom levels it covers with 1.5× oversampling.
 
 ### 21 · Workspace session
 **Decisions (2026-11-27, by the owner):**

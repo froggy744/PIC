@@ -249,8 +249,6 @@ impl MetadataPanel {
         middle.add_css_class("metadata-filter-middle");
         middle.set_hexpand(true);
         let controls_scroll = gtk::ScrolledWindow::new();
-        controls_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-        controls_scroll.set_propagate_natural_width(false);
         controls_scroll.set_min_content_width(1);
         controls_scroll.set_max_content_height(42);
         controls_scroll.set_hexpand(true);
@@ -281,18 +279,18 @@ impl MetadataPanel {
         filters_popover.set_child(Some(&filters_scroll));
         filters_button.set_popover(Some(&filters_popover));
         controls_scroll.set_child(Some(&controls));
+        filter_strip_scrolling(&controls_scroll);
         middle.append(&controls_scroll);
         let chips = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         chips.add_css_class("metadata-selected-chips");
         let chips_scroll = gtk::ScrolledWindow::new();
         chips_scroll.add_css_class("metadata-chips-scroll");
-        chips_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-        chips_scroll.set_propagate_natural_width(false);
         chips_scroll.set_min_content_width(1);
         chips_scroll.set_max_content_height(42);
         chips_scroll.set_hexpand(true);
         chips_scroll.set_child(Some(&chips));
         chips_scroll.set_visible(false);
+        filter_strip_scrolling(&chips_scroll);
         middle.append(&chips_scroll);
         toolbar.append(&middle);
 
@@ -1698,6 +1696,41 @@ impl MetadataPanel {
     }
 }
 
+/// The filter strips are one button tall, so any scrollbar (overlay or not)
+/// lands on the buttons' labels and takes their clicks. They scroll without
+/// one: touchpad swipes through the scrolled window itself (an `External`
+/// policy still scrolls), and a vertical mouse wheel is turned into
+/// horizontal movement here, only while the strip overflows.
+fn filter_strip_scrolling(scroll: &gtk::ScrolledWindow) {
+    scroll.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    scroll.set_overlay_scrolling(false);
+    scroll.set_propagate_natural_width(false);
+    let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+    wheel.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let weak = scroll.downgrade();
+    wheel.connect_scroll(move |controller, dx, dy| {
+        let Some(scroll) = weak.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        let adjustment = scroll.hadjustment();
+        let end = adjustment.upper() - adjustment.page_size();
+        // Mostly horizontal input (a sideways swipe) is the scrolled
+        // window's own; a strip that fits leaves the wheel to its parents.
+        if dy == 0.0 || dx.abs() >= dy.abs() || end <= adjustment.lower() {
+            return glib::Propagation::Proceed;
+        }
+        let step = if controller.unit() == gtk::gdk::ScrollUnit::Wheel {
+            // GTK's own wheel step for a scrolled window.
+            dy * adjustment.page_size().powf(2.0 / 3.0)
+        } else {
+            dy
+        };
+        adjustment.set_value((adjustment.value() + step).clamp(adjustment.lower(), end));
+        glib::Propagation::Stop
+    });
+    scroll.add_controller(wheel);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1930,6 +1963,144 @@ mod tests {
             {
                 std::fs::create_dir_all(&path).unwrap();
                 save_snapshot(&window, &path.join(format!("standard-gtk4-{width}.png")));
+            }
+        }
+        window.close();
+    }
+
+    /// Real X11 clicks (xdotool) on every filter button at several widths:
+    /// the strip has no scrollbar to take them, the wheel still scrolls it,
+    /// and the summary (photo count, Clear) does not move with it.
+    #[test]
+    #[ignore = "requires an X11 GTK display (Xvfb) and xdotool; run with --ignored --test-threads=1"]
+    fn every_filter_button_takes_a_real_click_at_any_width() {
+        adw::init().unwrap();
+        crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(db::SCHEMA).unwrap();
+        let panel = MetadataPanel::new(
+            Rc::new(RefCell::new(c)),
+            Rc::new(BrowseScope::default),
+            Rc::new(|| {}),
+            Rc::new(|_| {}),
+        );
+        let title = format!("pic-filter-strip-{}", std::process::id());
+        let window = gtk::Window::builder()
+            .title(title.as_str())
+            .default_width(1400)
+            .default_height(300)
+            .build();
+        window.set_child(Some(&panel.root));
+        window.present();
+        panel.root.set_visible(true);
+        settle();
+        let output = std::process::Command::new("xdotool")
+            .args(["search", "--sync", "--name", title.as_str()])
+            .output()
+            .expect("xdotool");
+        let xid = String::from_utf8(output.stdout).unwrap();
+        let xid = xid.lines().next().expect("test window id").to_string();
+        let strip = &panel.individual_controls;
+        let toolbar = strip.ancestor(gtk::Box::static_type()).unwrap();
+        let toolbar = toolbar.parent().unwrap();
+        let summary = descendants(&toolbar)
+            .into_iter()
+            .find(|w| w.has_css_class("metadata-filter-summary"))
+            .unwrap();
+        let wide_height = strip.height();
+        // 1400: everything fits; 900 and 600: the middle left on a 1366 px
+        // screen with the sidebars open (the bug report). Much narrower, the
+        // strip is thinner than one button and nothing is clickable anyway.
+        for width in [1400, 900, 600] {
+            window.set_default_size(width, 300);
+            settle();
+            assert_eq!(strip.height(), wide_height, "row height changed at {width}");
+            assert!(
+                !strip.hscrollbar().is_child_visible() || !strip.hscrollbar().is_visible(),
+                "a scrollbar is shown at {width}"
+            );
+            let adjustment = strip.hadjustment();
+            let summary_x = summary.compute_bounds(&window).unwrap().x();
+            let buttons: Vec<gtk::MenuButton> = descendants(&strip.child().unwrap())
+                .into_iter()
+                .filter_map(|w| w.downcast::<gtk::MenuButton>().ok())
+                .filter(|b| b.is_visible())
+                .collect();
+            assert!(buttons.len() >= 9, "expected every filter button, got {}", buttons.len());
+            for button in &buttons {
+                // Bring the button into view as a wheel or swipe would.
+                let inner = button.compute_bounds(&strip.child().unwrap()).unwrap();
+                let wanted = f64::from(inner.x()) + adjustment.value() - 8.0;
+                adjustment.set_value(
+                    wanted.clamp(adjustment.lower(), adjustment.upper() - adjustment.page_size()),
+                );
+                settle();
+                let bounds = button.compute_bounds(&window).unwrap();
+                let (x, y) = (
+                    f64::from(bounds.x() + bounds.width() / 2.0),
+                    f64::from(bounds.y() + bounds.height() / 2.0),
+                );
+                let picked = window.pick(x, y, gtk::PickFlags::DEFAULT).unwrap();
+                assert!(
+                    &picked == button.upcast_ref::<gtk::Widget>() || picked.is_ancestor(button),
+                    "at {width} px GTK routes a click on {:?} to {}",
+                    button.label(),
+                    picked.css_name()
+                );
+                let status = std::process::Command::new("xdotool")
+                    .args([
+                        "mousemove",
+                        "--window",
+                        xid.as_str(),
+                        &format!("{}", x.round() as i32),
+                        &format!("{}", y.round() as i32),
+                        "click",
+                        "1",
+                    ])
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                while !button.is_active() && std::time::Instant::now() < deadline {
+                    settle();
+                }
+                assert!(
+                    button.is_active(),
+                    "a real click at {width} px did not open {:?}",
+                    button.label()
+                );
+                button.set_active(false);
+                settle();
+                assert_eq!(
+                    summary.compute_bounds(&window).unwrap().x(),
+                    summary_x,
+                    "photo count and Clear moved while the strip scrolled at {width}"
+                );
+            }
+            if adjustment.upper() > adjustment.page_size() + 1.0 {
+                // A vertical mouse wheel over the strip scrolls it sideways.
+                adjustment.set_value(adjustment.lower());
+                settle();
+                let first = buttons[0].compute_bounds(&window).unwrap();
+                std::process::Command::new("xdotool")
+                    .args([
+                        "mousemove",
+                        "--window",
+                        xid.as_str(),
+                        &format!("{}", (first.x() + first.width() / 2.0) as i32),
+                        &format!("{}", (first.y() + first.height() / 2.0) as i32),
+                        "click",
+                        "5",
+                    ])
+                    .status()
+                    .unwrap();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                while adjustment.value() <= adjustment.lower()
+                    && std::time::Instant::now() < deadline
+                {
+                    settle();
+                }
+                assert!(adjustment.value() > adjustment.lower(), "wheel did not scroll at {width}");
             }
         }
         window.close();

@@ -191,9 +191,37 @@ fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Colo
         [1.0; 4]
     };
     camera.data.par_iter_mut().for_each(|pixel| {
-        *pixel = apply_camera_calibration(*pixel, wb, &scene_matrix);
+        *pixel = develop_pixel(*pixel, wb, &scene_matrix);
     });
     Ok(camera)
+}
+
+/// Sensor level (rawler scales the white level to 1.0) where clipping starts
+/// to be trusted, and where a photosite is certainly saturated.
+const SENSOR_CLIP_START: f32 = 0.90;
+const SENSOR_CLIP_FULL: f32 = 0.98;
+
+fn develop_pixel(camera: [f32; 3], wb: [f32; 4], matrix: &CameraMatrix) -> [f32; 3] {
+    apply_camera_calibration(clip_saturated_highlights(camera, wb), [1.0; 4], matrix)
+}
+
+/// White-balance a sensor pixel without inventing colour in saturated areas.
+/// A saturated photosite only says "at least white"; multiplying it by the
+/// red and blue WB gains turns a blown sky or wall magenta. Where the
+/// brightest channel nears the sensor white level, each balanced channel is
+/// capped at the lowest balanced white level, so a fully clipped pixel is
+/// neutral white. Pixels below the start level keep their full headroom.
+fn clip_saturated_highlights(camera: [f32; 3], wb: [f32; 4]) -> [f32; 3] {
+    let balanced = std::array::from_fn::<f32, 3, _>(|channel| camera[channel] * wb[channel]);
+    let peak = camera.iter().copied().fold(0.0f32, f32::max);
+    if !(peak > SENSOR_CLIP_START) {
+        return balanced;
+    }
+    let ramp =
+        ((peak - SENSOR_CLIP_START) / (SENSOR_CLIP_FULL - SENSOR_CLIP_START)).clamp(0.0, 1.0);
+    let weight = ramp * ramp * (3.0 - 2.0 * ramp);
+    let white = wb[..3].iter().copied().fold(f32::INFINITY, f32::min);
+    balanced.map(|value| value + weight * (value.min(white) - value))
 }
 
 const SAMPLE_STRIDE: usize = 64;
@@ -374,6 +402,24 @@ mod tests {
         }
         let white = apply_camera_calibration([1.0; 3], [1.0; 4], &m);
         assert!(white.iter().all(|v| (*v - 1.0).abs() < 0.0001));
+    }
+
+    #[test]
+    fn sensor_clipped_highlights_stay_neutral_after_white_balance() {
+        // Typical daylight Nikon multipliers: red and blue are boosted, so a
+        // pixel clipped on all three photosites would turn magenta.
+        let identity: CameraMatrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let wb = [2.1, 1.0, 1.6, f32::NAN];
+        let clipped = develop_pixel([1.0, 1.0, 1.0], wb, &identity);
+        assert!(
+            (clipped[0] - clipped[1]).abs() < 1e-4 && (clipped[2] - clipped[1]).abs() < 1e-4,
+            "a fully clipped sensor pixel must render neutral, got {clipped:?}"
+        );
+        let unclipped = develop_pixel([0.6, 0.2, 0.1], wb, &identity);
+        assert!(
+            (unclipped[0] - 1.26).abs() < 1e-4,
+            "unclipped colours keep their highlight headroom, got {unclipped:?}"
+        );
     }
 
     #[test]

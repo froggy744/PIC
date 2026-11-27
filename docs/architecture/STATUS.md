@@ -5,7 +5,8 @@ The single source of truth for the deepening candidates from the architecture re
 - Round one, candidates 1-8: [`architecture-review-2026-11-22.html`](architecture-review-2026-11-22.html), taken at `main` @ `5356ef20`.
 - Round two, re-checks 5-8 and adds 9-12: [`architecture-review-2026-11-23.html`](architecture-review-2026-11-23.html), taken at `main` @ `07cabed4`. The report labels the new candidates N1-N4; they are 9-12 here.
 - Round three, candidates 14-20: [`architecture-review-2026-11-26.html`](architecture-review-2026-11-26.html), taken at `feature/smart-albums` @ `13855231` (main + Smart Albums). All deferred, see "Round three" below.
-- Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. Proposed, none started; see "Round four" below.
+- Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. 21, 23, 24 merged; 25-29 and 22 done as small fixes or closed; see "Round four" below.
+- Render pipeline project (22 + 29 + 25 as one), candidates A-F: [`architecture-review-2026-11-27-render-pipeline.html`](architecture-review-2026-11-27-render-pipeline.html), taken at `main` @ `244645eb`, with export benchmarks. Branch `refactor/render-pipeline`; see "Render pipeline project" below.
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -51,14 +52,14 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 19 | Scan events as a reducer | Worth exploring | merged | merge `db8d6588` (`refactor/scan-events`) | `src/window/scan_view.rs` (pure reducer), `src/window/scan_view_widgets.rs` (GTK adapter) |
 | 20 | PhotoActionContext shrinks (follows 14, 16, 17) | Speculative | merged (test fixture only) | merge `f598440d` (`refactor/photo-action-context-fixture`) | `src/window.rs` (`#[cfg(test)] PhotoActionContext::for_tests`) |
 | 21 | Workspace session: one owner for Editor and Collage open/close | Strong | merged | merge `1ec939c2` (`refactor/workspace-session`) | `src/window/workspace_session.rs` (pure), `src/window/workspace_session_widgets.rs` (GTK adapter `Workspace`) |
-| 22 | Tone stage as one deep module (CPU kernel, GLSL kernel, neutrality) | Strong | proposed | | |
+| 22 | Tone stage as one deep module (CPU kernel, GLSL kernel, neutrality) | Strong | small fix merged (`1005cbda`); deepening moved to the render pipeline project (C) | | |
 | 23 | Window keyboard dispatch: one key → command table | Strong | merged | merge `9af46dec` (`refactor/key-dispatch`) | `src/window/key_dispatch.rs` (pure), `src/window/shortcuts.rs` (GTK adapter) |
 | 24 | Metadata panel presentation: Immersive Mode as an input | Strong | merged | merge `e7cc16f1` (`refactor/metadata-panel-presentation`) | `src/window/metadata_panel_presentation.rs` (pure), `src/window/metadata_panel.rs` (GTK adapter, `sync_view`), `src/window/navigation_filter.rs` |
-| 25 | Lightbox front request: one invalidation per reason | Worth exploring | proposed | | |
-| 26 | Editor opening phase | Worth exploring | proposed | | |
-| 27 | Photo action targets for Export and Print | Worth exploring | proposed | | |
-| 28 | Creative look choice and layer selection in EditSession | Worth exploring | proposed | | |
-| 29 | Render from a cached preview (keep the chokepoint whole) | Speculative | proposed | | |
+| 25 | Lightbox front request: one invalidation per reason | Worth exploring | closed, no change (`65b34d44`); moved to the render pipeline project (F) | | |
+| 26 | Editor opening phase | Worth exploring | small fix merged (`65b34d44`) | | |
+| 27 | Photo action targets for Export and Print | Worth exploring | fixed (`65b34d44`) | | |
+| 28 | Creative look choice and layer selection in EditSession | Worth exploring | fixed (`65b34d44`) | | |
+| 29 | Render from a cached preview (keep the chokepoint whole) | Speculative | closed, no change (`1005cbda`); moved to the render pipeline project (A) | | |
 
 ## Outstanding work
 
@@ -877,6 +878,30 @@ Context: `layout.rs`, `toolbar.rs`, `immersive.rs` and `shortcuts.rs` are `inclu
 - **27 · Export/Print targets.** Target choice written 3 times with different outside-library rules (`build.rs:4548-4653`, `photo_actions.rs:950-958`); `ExportJob::from_record(path, rotation, …)` 4 times. Suspected: Export does nothing when the anchor is not in the gallery model.
 - **28 · Look choice and layer selection.** Exclusive look rule written 4 times (`controls.rs:74-89`, `editor.rs:2081, 2138, 2196`); overlay/text/drawing selection lives outside `EditSession`, undo and Reset don't revalidate it.
 - **29 · Render from a cached preview.** RAW aspect fix → rotation → `apply_recipe` repeated in 6 callers; the lightbox worker and `render_for_export` repeat `apply_recipe`'s stage order inline. Copies agree today.
+
+### Render pipeline project (started 2026-11-27, branch `refactor/render-pipeline`)
+Owner, 2026-11-27: 22, 25 and 29 are one project, "a proper CPU/GPU edit/export fix", including the lightbox for RAW. Report: [`architecture-review-2026-11-27-render-pipeline.html`](architecture-review-2026-11-27-render-pipeline.html). Nothing changed in code yet.
+
+**Baseline (export benchmark, debug profile, scratch copies of the library under the scratchpad; real libraries untouched, sources fingerprinted unchanged, outputs byte-identical across worker counts).** Recipe: crop, 1.5° straighten, exposure, contrast, highlights/shadows, whites/blacks, temperature, saturation, vibrance, sharpen, clarity, grain, vignette; JPEG q92, max edge 3840, 12 cores.
+- 11 × 12 MP JPEG: 816 ms/photo at 1 worker (decode 70, geometry 102, tone 287, encode 345); 435 ms/photo at 6 workers; 3000 ≈ 22 min.
+- 8 × 36 MP Nikon D800 NEF (Work library): 3468 ms/photo at 1 worker (decode 1746 of which sensor develop 1262, geometry 316, tone 842, fit 227, encode 294); 1999 ms/photo at 6 workers, 5.4 GB peak; 3000 ≈ 100 min.
+- Findings: JPEG export encodes with the `image` crate's encoder after a single-threaded `flatten_jpeg_alpha` (`edit/render.rs:1270-1312`), not TurboJPEG; geometry and tone run at full source size before `fit_max_edge`; tone already uses rayon and saturates the CPU at 4-6 workers; non-Nikon RAW exports use the embedded preview (`thumbnail/viewer.rs:1035`); the NEF develop is 16-bit but quantised to RGBA8 before the recipe; sharpen's σ is 1.1 output pixels, so the viewer at Fit and a full-size export differ; "neutral" is decided with 5 different epsilons.
+- Owner, 2026-11-27: the embedded RAW preview for thumbnails and the viewer at Fit is deliberate (a sensor develop is too slow for the UI); keep it.
+- **Fixed (uncommitted), NEF blown highlights turned magenta.** Owner's export of `DSC_8024.NEF` (Nikon Z 5, noir + all autos) showed the blown area outside the door as flat grey with white halos. Exporting the parts separately showed the sensor develop itself causes it (no recipe needed): `nef_scene::develop_scene_linear` multiplied saturated photosites by the red/blue WB gains, so a clipped (1,1,1) became (2.1,1,1.6), magenta; noir then mapped magenta to grey. New `clip_saturated_highlights` (`thumbnail/nef_scene.rs`) caps each balanced channel at the lowest balanced white level where the brightest sensor channel is above 0.90 (full at 0.98, smoothstep), so clipped areas are white and unclipped colours keep their headroom. Affects every NEF sensor develop: export, viewer 1:1, editor. Unit test `sensor_clipped_highlights_stay_neutral_after_white_balance`, red before ([2.1, 1.0, 1.6]), green after; re-export of DSC_8024 checked by eye (`errors/DSC_8024_edit_fixed.jpg`).
+
+**Candidates (report labels):** A one render pipeline module (was 29), B scale-aware render (resize before tone for capped exports; effect radii in source units), C tone module (was 22), D developed source (preview vs sensor by purpose), E GPU render adapter outside the editor (speculative), F lightbox invalidation (was 25).
+
+**Plan, one commit per stage:**
+1. Baseline: done (above).
+2. Export JPEG encode through TurboJPEG with the same EXIF and sRGB ICC; parallel alpha flatten. Check: PSNR against the old encoder, export metadata tests, benchmark.
+3. A. Pixels byte-identical to the baseline outputs.
+4. B. User-visible: owner approves before/after screenshots and the PSNR against today's export.
+5. C. The 6 GL parity tests under Xvfb pass; CPU outputs identical except listed near-zero epsilon cases.
+6. D. Measured on the Work NEFs: half-size develop for capped exports, 16-bit hand-off, other brands.
+7. E, only if tone still dominates on a release build.
+8. F, folded into D or E.
+
+Open owner decisions: a release-build benchmark (AGENTS.md: no `--release` unless asked); whether `editor-quality.yml`'s path filter should cover `src/lightbox/**` and `src/thumbnail/**`.
 
 ### Round four small fixes (merged 2026-11-27, merge `65b34d44` of `fix/round-four-small`)
 Owner's plan: 27/28/26/25 as small bug fixes, not deepening refactors; 29 and 22 deferred to a GPU/editor export-speed project.

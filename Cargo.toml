@@ -33,6 +33,9 @@ walkdir = "2"
 gl = "0.14"
 libloading = "0.8"
 
+[patch.crates-io]
+rawler = { path = "third-party/rawler" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

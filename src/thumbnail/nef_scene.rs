@@ -165,7 +165,7 @@ fn develop_scene_linear(
     // Ask the existing RAW decoder only for its standardized, scaled sensor
     // demosaic and geometric cropping. PIC owns this candidate's camera
     // calibration, keeping >1.0 highlights and signed gamut components until
-    // output rolloff. Do not modify any upstream crate.
+    // output rolloff.
     let mut steps = RawDevelop::default().steps;
     steps.retain(|step| {
         !matches!(
@@ -176,7 +176,8 @@ fn develop_scene_linear(
     let mut camera = if half {
         superpixel_camera(raw)?
     } else {
-        let intermediate = RawDevelop::new_with(&steps).develop_intermediate(raw)?;
+        let intermediate = RawDevelop::new_with(&steps)
+            .develop_intermediate_with_owned_rgb_crop(raw)?;
         let Intermediate::ThreeColor(camera) = intermediate else {
             anyhow::bail!("Nikon Bayer demosaic did not return three camera channels");
         };
@@ -437,6 +438,69 @@ fn develop_sized(raw: &mut rawler::RawImage, half: bool) -> Result<DynamicImage>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_rgb_crop_reuses_storage_and_matches_allocating_crop() {
+        use rawler::{
+            imgop::{Dim2, Point, Rect},
+            pixarray::Color2D,
+        };
+
+        for area in [
+            Rect::new(Point::new(0, 0), Dim2::new(5, 4)),
+            Rect::new(Point::new(0, 0), Dim2::new(3, 4)),
+            Rect::new(Point::new(1, 1), Dim2::new(3, 2)),
+            Rect::new(Point::new(0, 1), Dim2::new(5, 3)),
+        ] {
+            let pixels = (0..20).map(|value| [value as f32, -0.0, 0.5]).collect();
+            let image = Color2D::new_with(pixels, 5, 4);
+            let expected = image.crop(area);
+            let original_buffer = image.data.as_ptr();
+
+            let actual = image.crop_owned(area);
+
+            assert_eq!(actual.data.as_ptr(), original_buffer);
+            assert_eq!((actual.width, actual.height), (expected.width, expected.height));
+            assert!(actual.data.iter().zip(&expected.data).all(|(actual, expected)| {
+                actual.map(f32::to_bits) == expected.map(f32::to_bits)
+            }));
+            assert_eq!(actual.data.len(), expected.data.len());
+        }
+    }
+
+    #[test]
+    #[ignore = "requires PIC_TEST_RAW pointing to a local Nikon NEF"]
+    fn owned_nef_crop_matches_allocating_crop_pixel_for_pixel() {
+        let path = std::env::var_os("PIC_TEST_RAW").expect("set PIC_TEST_RAW to a local Nikon NEF");
+        let source = rawler::rawsource::RawSource::new(std::path::Path::new(&path)).unwrap();
+        let raw = rawler::get_decoder(&source)
+            .unwrap()
+            .raw_image(&source, &rawler::decoders::RawDecodeParams::default(), false)
+            .unwrap();
+        let mut steps = RawDevelop::default().steps;
+        steps.retain(|step| {
+            !matches!(
+                step,
+                ProcessingStep::WhiteBalance | ProcessingStep::Calibrate | ProcessingStep::SRgb
+            )
+        });
+        let developer = RawDevelop::new_with(&steps);
+        let Intermediate::ThreeColor(expected) = developer.develop_intermediate(&raw).unwrap()
+        else {
+            panic!("expected RGB pixels from the reference path");
+        };
+        let Intermediate::ThreeColor(actual) = developer
+            .develop_intermediate_with_owned_rgb_crop(&raw)
+            .unwrap()
+        else {
+            panic!("expected RGB pixels from the owned crop path");
+        };
+        assert_eq!((actual.width, actual.height), (expected.width, expected.height));
+        assert_eq!(actual.data.len(), expected.data.len());
+        assert!(actual.data.iter().zip(&expected.data).all(|(actual, expected)| {
+            actual.map(f32::to_bits) == expected.map(f32::to_bits)
+        }));
+    }
 
     #[test]
     fn camera_matrix_roundtrip_preserves_scene_values_above_white() {

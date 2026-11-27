@@ -941,15 +941,19 @@ fn develop_nef_half_for_export(
     let image = rawler_decode(reference, "nef_scene_half", || {
         let decoder = rawler::get_decoder(&raw_source)?;
         let params = rawler::decoders::RawDecodeParams::default();
-        let mut pixels = decoder.raw_image(&raw_source, &params, false)?;
         // Keep at least 1.5× oversampling for the final resize. On D800 NEFs
         // the half-size develop measured 5-10% less edge contrast at 1.2×
         // (3000 px) and 5.6% less at 1.8× (2048 px), 38.8 dB from full size.
-        let covers = nef_scene::half_size_long_edge(&pixels)
+        // Check against a dummy decode (headers, crop and CFA, no sensor
+        // decompression) so an ineligible export does not unpack twice.
+        let header = decoder.raw_image(&raw_source, &params, true)?;
+        let covers = nef_scene::half_size_long_edge(&header)
             .is_some_and(|long_edge| long_edge as f32 * output_fraction >= max_edge as f32 * 1.5);
+        drop(header);
         if !covers {
             return Ok(None);
         }
+        let mut pixels = decoder.raw_image(&raw_source, &params, false)?;
         nef_scene::develop_half(&mut pixels).map(Some)
     })?;
     let Some(image) = image else {
@@ -2529,6 +2533,36 @@ mod embedded_nef_color_profile_tests {
                 "embedded NEF camera reference lost its ICC transform: {pixel:?}");
         }
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// Run with PIC_TEST_RAW pointing at a local NEF to prove the half-size
+    /// export check reads the same geometry from headers as from a full
+    /// unpack, and still accepts or rejects half size at the 1.5× boundary.
+    #[test]
+    #[ignore = "requires PIC_TEST_RAW pointing to a local Nikon NEF"]
+    fn real_nef_half_export_checks_size_before_unpacking() {
+        let reference = std::env::var("PIC_TEST_RAW")
+            .expect("set PIC_TEST_RAW to a local Nikon NEF");
+        let raw_source =
+            rawler::rawsource::RawSource::new(std::path::Path::new(&reference)).unwrap();
+        let decoder = rawler::get_decoder(&raw_source).unwrap();
+        let params = rawler::decoders::RawDecodeParams::default();
+        let header = decoder.raw_image(&raw_source, &params, true).unwrap();
+        let unpacked = decoder.raw_image(&raw_source, &params, false).unwrap();
+        let half_edge = nef_scene::half_size_long_edge(&header)
+            .expect("dummy decode should expose a Bayer CFA");
+        assert_eq!(Some(half_edge), nef_scene::half_size_long_edge(&unpacked),
+            "header-only geometry must match the unpacked image");
+        drop(unpacked);
+
+        let largest_eligible = (half_edge as f32 / 1.5).floor() as u32;
+        let image = develop_nef_half_for_export(&reference, largest_eligible, 1.0)
+            .unwrap()
+            .expect("half size covers an export at exactly 1.5x oversampling");
+        assert_eq!(image.width().max(image.height()) as usize, half_edge);
+        assert!(develop_nef_half_for_export(&reference, largest_eligible + 1, 1.0)
+            .unwrap()
+            .is_none(), "half size must be rejected below 1.5x oversampling");
     }
 
     /// Run with PIC_TEST_RAW pointing at a local NEF to prove the detailed

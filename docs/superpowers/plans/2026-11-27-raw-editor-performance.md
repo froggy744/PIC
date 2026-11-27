@@ -301,3 +301,22 @@ PIC_TEST_RAW=/path/to/photo.NEF cargo test --locked \
 
 The separate native colour test already fails on the original Z 5 fixture
 at 34.13. Record any difference from the baseline for the same fixture.
+
+### Half-size export check before unpacking
+
+A live 2048 px export of a Z 5 NEF unpacked the sensor for the half-size
+path (162 ms) and then discarded it: the 3008 px half-size edge is below the
+required 1.5 × 2048 = 3072 px, so export fell back to the full develop.
+`develop_nef_half_for_export` now checks that size against a rawler dummy
+decode (headers, crop and CFA, no decompression) before unpacking. The
+rejection now takes 11 ms. Eligibility, the 1.5× threshold and both
+develop paths are unchanged. The ignored test
+`real_nef_half_export_checks_size_before_unpacking` checks that the header
+geometry matches a full unpack and that the boundary still accepts and
+rejects correctly:
+
+```sh
+PIC_TEST_RAW=/path/to/photo.NEF cargo test --locked \
+  real_nef_half_export_checks_size_before_unpacking \
+  -- --ignored --test-threads=1
+```

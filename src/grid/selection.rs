@@ -104,9 +104,11 @@ impl Gallery {
                 let direction = if key == gtk::gdk::Key::Up { -1 } else { 1 };
                 Some(adjacent_folder_photo_target(&photos, current, direction).unwrap_or(current))
             }
-            (gtk::gdk::Key::Left, false) => current.checked_sub(1),
-            (gtk::gdk::Key::Right, false) => {
-                (current + 1 < count).then_some(current + 1)
+            (gtk::gdk::Key::Left | gtk::gdk::Key::Right, false) => {
+                let direction = if key == gtk::gdk::Key::Left { -1 } else { 1 };
+                self.sectioned_folder
+                    .horizontal_neighbor(current as u32, direction, count as u32)
+                    .map(|index| index as usize)
             }
             (gtk::gdk::Key::Up | gtk::gdk::Key::Down, false) => {
                 self.keyboard_vertical_target(current, if key == gtk::gdk::Key::Up { -1 } else { 1 }, &ranges)

@@ -433,6 +433,51 @@ impl PhotoWallLayout {
         Some(self.items[*column.get(next)?].photo_index)
     }
 
+    /// The tile beside `photo_index` on screen. Masonry fills the shortest
+    /// column, so the next photo in order can sit in any column; Left/Right
+    /// follow the picture instead: the tile in the adjacent column whose
+    /// middle is nearest. Past the last column Right wraps to the first
+    /// column's next tile below, and Left mirrors it, like reading lines.
+    pub fn masonry_horizontal_neighbor(&self, photo_index: usize, direction: i32) -> Option<usize> {
+        let item = self.item(photo_index)?;
+        let columns = self.masonry_columns.len();
+        let column_index = self
+            .masonry_column_x
+            .partition_point(|&x| x <= item.x)
+            .saturating_sub(1);
+        let middle = item.y + item.height * 0.5;
+        let middle_of = |row: usize| self.items[row].y + self.items[row].height * 0.5;
+        let adjacent = if direction < 0 {
+            column_index.checked_sub(1)
+        } else {
+            Some(column_index + 1).filter(|&column| column < columns)
+        };
+        let row = match adjacent {
+            Some(column) => self.masonry_columns[column]
+                .iter()
+                .copied()
+                .min_by(|&a, &b| {
+                    (middle_of(a) - middle)
+                        .abs()
+                        .total_cmp(&(middle_of(b) - middle).abs())
+                })?,
+            None if direction < 0 => self
+                .masonry_columns
+                .last()?
+                .iter()
+                .copied()
+                .rev()
+                .find(|&row| middle_of(row) < middle)?,
+            None => self
+                .masonry_columns
+                .first()?
+                .iter()
+                .copied()
+                .find(|&row| middle_of(row) > middle)?,
+        };
+        Some(self.items[row].photo_index)
+    }
+
     pub fn calculate(
         aspect_ratios: &[f64],
         sections: &[PhotoWallSection],
@@ -1328,6 +1373,73 @@ mod masonry_resize_tests {
         assert_eq!(layout.resize_masonry(20, 0.0), None);
         assert_eq!(layout.total_height, height);
         assert_eq!(layout.viewport_width, 997.0);
+    }
+
+    /// Left/Right move to the tile beside the current one on screen, never
+    /// to the next photo in order when Masonry put that one columns away.
+    #[test]
+    fn masonry_left_right_move_to_the_tile_beside() {
+        let count = 400;
+        let ratios = (0..count)
+            .map(|i| [0.5, 1.0, 1.5, 0.75, 2.0][i % 5])
+            .collect::<Vec<_>>();
+        let sections = [PhotoWallSection {
+            photo_range: 0..count,
+            header_height: 0.0,
+        }];
+        let layout = PhotoWallLayout::calculate_masonry(&ratios, &sections, 1000, 200);
+        let columns = column_members(&layout);
+        assert!(columns.len() >= 3, "need several columns, got {}", columns.len());
+        let column_of = |photo: usize| columns.iter().position(|c| c.contains(&photo)).unwrap();
+        let middle = |photo: usize| {
+            let item = layout.item(photo).unwrap();
+            item.y + item.height * 0.5
+        };
+
+        let mut order_differs = false;
+        for photo in 0..count {
+            let column = column_of(photo);
+            if photo + 1 < count && layout.masonry_horizontal_neighbor(photo, 1) != Some(photo + 1) {
+                order_differs = true;
+            }
+            for direction in [-1, 1] {
+                let next = layout.masonry_horizontal_neighbor(photo, direction);
+                let beside = if direction < 0 {
+                    column.checked_sub(1)
+                } else {
+                    Some(column + 1).filter(|&c| c < columns.len())
+                };
+                match beside {
+                    Some(target) => {
+                        let next = next.expect("a column beside always has a tile");
+                        assert_eq!(column_of(next), target, "photo {photo} dir {direction}");
+                        let distance = (middle(next) - middle(photo)).abs();
+                        assert!(columns[target]
+                            .iter()
+                            .all(|&other| (middle(other) - middle(photo)).abs() >= distance));
+                    }
+                    // Past the edge: the next line in reading order.
+                    None if direction > 0 => {
+                        if let Some(next) = next {
+                            assert_eq!(column_of(next), 0);
+                            assert!(middle(next) > middle(photo));
+                        }
+                    }
+                    None => {
+                        if let Some(next) = next {
+                            assert_eq!(column_of(next), columns.len() - 1);
+                            assert!(middle(next) < middle(photo));
+                        }
+                    }
+                }
+            }
+        }
+        // The case from the bug: the next photo in order is not the tile
+        // beside, so stepping by order looked like the selection jumped.
+        assert!(order_differs);
+        // Right from the top-left tile walks along the top line.
+        let first = columns[0][0];
+        assert_eq!(column_of(layout.masonry_horizontal_neighbor(first, 1).unwrap()), 1);
     }
 }
 

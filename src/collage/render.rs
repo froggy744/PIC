@@ -115,7 +115,20 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
             crate::edit::render::apply_library_rotation(decoded, item.photo.library_rotation);
         let decoded_size = source.dimensions();
         let recipe = crate::edit::EditRecipe::decode(&item.photo.edit_recipe);
-        let source = DynamicImage::ImageRgba8(crate::edit::render::apply_recipe(source, &recipe));
+        let size = crate::edit::render::RenderSize {
+            source_long_edge: crate::thumbnail::source_long_edge(&item.photo.path).unwrap_or(0),
+            max_edge: 0,
+        };
+        let source = DynamicImage::ImageRgba8(
+            crate::edit::render::render_sized(
+                source,
+                0,
+                &recipe,
+                size,
+                &mut crate::edit::render::NoObserver,
+            )
+            .expect("a render nobody cancels always completes"),
+        );
         let contain = matches!(
             project.layout,
             super::model::LayoutKind::Mosaic | super::model::LayoutKind::SmartMosaic

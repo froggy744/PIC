@@ -1330,10 +1330,19 @@ fn decode_original(
         "screensaver decode cancelled"
     );
     let recipe = edit::EditRecipe::decode(&slide.edit_recipe);
-    Ok(texture_pixels(edit::render::apply_recipe(
-        edit::render::apply_library_rotation(decoded, slide.rotation),
+    let size = edit::render::RenderSize {
+        source_long_edge: thumbnail::source_long_edge(&slide.path).unwrap_or(0),
+        max_edge: 0,
+    };
+    let rendered = edit::render::render_sized(
+        decoded,
+        slide.rotation,
         &recipe,
-    )))
+        size,
+        &mut edit::render::NoObserver,
+    )
+    .expect("a render nobody cancels always completes");
+    Ok(texture_pixels(rendered))
 }
 
 /// Keep cached previews responsive even when an in-flight remote RAW read is

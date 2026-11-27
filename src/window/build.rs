@@ -3326,7 +3326,24 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // index. Photos, Folders and Albums keep their existing route.
             let opened_from_library =
                 main_stack.visible_child_name().as_deref() == Some("library");
-            workspace.open_editor(outside_viewer.is_some(), opened_from_library);
+            // A library photo opened from the viewer returns to that viewer:
+            // its photos (the same objects, so saved edits reach them) and
+            // the page it was over.
+            let library_viewer = (outside_viewer.is_none()
+                && lightbox.root.is_visible()
+                && lightbox.current_photo().is_some_and(|photo| photo.id() == id))
+            .then(|| {
+                let page = main_stack
+                    .visible_child_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "photos".to_string());
+                (lightbox.photos(), page)
+            });
+            workspace.open_editor(
+                outside_viewer.is_some(),
+                library_viewer.is_some(),
+                opened_from_library,
+            );
             // The edited image already on screen (the viewer's frame, else the
             // gallery tile) stands in on the editor canvas until the editor's
             // own first frame is ready, so both fades can start at once.
@@ -3374,6 +3391,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let trace_uri = trace_uri.clone();
                 let lightbox = lightbox.clone();
                 let outside_viewer = outside_viewer.clone();
+                let library_viewer = library_viewer.clone();
                 let saved_copy = saved_copy.clone();
                 let edit_open_serial = edit_open_serial.clone();
                 // Back, Done and the InfoBar Edit and Draw toggles all close
@@ -3390,6 +3408,21 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         main_stack.set_visible_child_name("photos");
                         let (photos, index) =
                             open_files::viewer_after_edit(viewer, id, saved_copy.borrow_mut().take());
+                        lightbox.open(photos, index);
+                    } else if let (ReturnRoute::Viewer, Some((photos, page))) =
+                        (route, library_viewer.clone())
+                    {
+                        // Back to the viewer on the edited photo, over the
+                        // page it was opened from; the gallery underneath is
+                        // put back where it was, for when the viewer closes.
+                        main_stack.set_visible_child_name(&page);
+                        if page == "photos" {
+                            gallery.restore_view(id, library_scroll_y);
+                        }
+                        let index = photos
+                            .iter()
+                            .position(|photo| photo.id() == id)
+                            .unwrap_or_default();
                         lightbox.open(photos, index);
                     } else if route == ReturnRoute::Collage {
                         // Bring the collage tile up to date with any edits

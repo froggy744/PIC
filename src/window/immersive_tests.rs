@@ -1143,3 +1143,54 @@ fn viewer_arrows_with_a_modifier_keep_the_photo() {
     window.close();
     settle();
 }
+
+/// A library photo edited from the viewer: closing the editor (here with
+/// the InfoBar Edit toggle; Back and Done share its close) returns to the
+/// viewer on the same photo, not to the gallery.
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn closing_the_editor_returns_a_library_photo_to_the_viewer() {
+    let window = properties_window(6);
+    let root = window.clone().upcast::<gtk::Widget>();
+    let split = properties_split(&root);
+    let button = properties_button(&root);
+    let grid = photo_grid(&root);
+    let viewer_panel = lightbox_properties_panel(&root, &split);
+    let stack = main_stack(&root);
+    let shown = select_grid_photo(&grid, 2);
+    grid.emit_by_name::<()>("activate", &[&2_u32]);
+    settle();
+    settle();
+    let viewer = lightbox_root(&root);
+    assert!(viewer.is_visible(), "the viewer opened");
+    button.emit_clicked();
+    settle();
+    assert!(shows_file_name(&viewer_panel, &shown), "the viewer shows {shown}");
+    let edit = || {
+        descendants(&root)
+            .into_iter()
+            .find(|widget| {
+                widget.is::<gtk::Button>()
+                    && widget.is_drawable()
+                    && widget.tooltip_text().as_deref() == Some("Open or close photo editor")
+            })
+            .and_downcast::<gtk::Button>()
+            .expect("Edit button missing")
+    };
+    edit().emit_clicked();
+    settle();
+    settle();
+    assert_eq!(stack.visible_child_name().as_deref(), Some("edit"), "the editor opened");
+    assert!(!viewer.is_visible(), "the viewer handed over to the editor");
+    edit().emit_clicked();
+    settle();
+    settle();
+    assert!(
+        viewer.is_visible(),
+        "closing the editor must return to the viewer, not the gallery"
+    );
+    assert_eq!(stack.visible_child_name().as_deref(), Some("photos"));
+    assert!(shows_file_name(&viewer_panel, &shown), "the viewer is back on {shown}");
+    window.close();
+    settle();
+}

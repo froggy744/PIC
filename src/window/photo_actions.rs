@@ -950,11 +950,7 @@ fn show_photo_context_menu(
         let dismiss_menu = dismiss_menu.clone();
         print.connect_clicked(move |_| {
             dismiss_menu();
-            let requests = if photo.is_outside_library() {
-                vec![print_request_for_object(&photo)]
-            } else {
-                photo_print_requests(&context.connection.borrow(), &ids)
-            };
+            let requests = anchored_print_requests(&context.connection.borrow(), &photo, &ids);
             if let Some(window) = context.window.upgrade() {
                 print_photos(&window, &context.connection, requests);
             }
@@ -1146,6 +1142,59 @@ fn photo_print_requests(connection: &Connection, ids: &[i64]) -> Vec<PhotoPrintR
             source_height: record.height.unwrap_or(0),
         })
         .collect()
+}
+
+/// The photos an Export or Print anchored on `anchor` acts on: the gallery
+/// selection that contains it (`selected_ids`, from `selected_photo_ids`), or
+/// the anchor alone. A photo outside the library has no catalogue row, so it
+/// is always exported or printed alone, from its own object.
+fn anchored_export_jobs(
+    anchor: &crate::photo_object::PhotoObject,
+    selected_ids: &[i64],
+    gallery_objects: Vec<crate::photo_object::PhotoObject>,
+) -> Vec<crate::edit::export_batch::ExportJob> {
+    if anchor.is_outside_library() {
+        return vec![export_job_for_object(anchor)];
+    }
+    let mut known: std::collections::HashMap<i64, _> = gallery_objects
+        .into_iter()
+        .map(|object| (object.id(), object))
+        .collect();
+    // The anchor may not be in the gallery's list (the viewer can show a list
+    // the gallery no longer holds); it is still a photo to export.
+    known.entry(anchor.id()).or_insert_with(|| anchor.clone());
+    selected_ids
+        .iter()
+        .filter_map(|id| known.get(id))
+        .map(export_job_for_object)
+        .collect()
+}
+
+fn export_job_for_object(
+    photo: &crate::photo_object::PhotoObject,
+) -> crate::edit::export_batch::ExportJob {
+    crate::edit::export_batch::ExportJob::from_record(
+        photo.path(),
+        photo.rotation(),
+        photo.edit_recipe(),
+        photo.width(),
+        photo.height(),
+        &photo.filename(),
+    )
+}
+
+/// Print's counterpart of [`anchored_export_jobs`]: library photos are read
+/// fresh from the catalogue, an outside photo from its own object.
+fn anchored_print_requests(
+    connection: &Connection,
+    anchor: &crate::photo_object::PhotoObject,
+    selected_ids: &[i64],
+) -> Vec<PhotoPrintRequest> {
+    if anchor.is_outside_library() {
+        vec![print_request_for_object(anchor)]
+    } else {
+        photo_print_requests(connection, selected_ids)
+    }
 }
 
 /// The print request for a photo outside the library (no catalogue row).
@@ -2239,6 +2288,57 @@ mod photo_print_request_tests {
         assert_eq!((request.source_width, request.source_height), (4000, 3000));
         assert_eq!(request.rotation, 90);
         assert_eq!(request.edit_recipe, "recipe");
+    }
+
+    fn library_object(id: i64, path: &str) -> crate::photo_object::PhotoObject {
+        glib::Object::builder()
+            .property("id", id)
+            .property("path", path)
+            .build()
+    }
+
+    fn paths(jobs: &[crate::edit::export_batch::ExportJob]) -> Vec<&str> {
+        jobs.iter().map(|job| job.source_path.as_str()).collect()
+    }
+
+    #[test]
+    fn export_targets_the_selection_or_the_anchor_even_outside_the_gallery_list() {
+        let a = library_object(1, "/p/a.jpg");
+        let b = library_object(2, "/p/b.jpg");
+        let gallery = || vec![a.clone(), b.clone()];
+        // The selection containing the anchor, in selection order.
+        assert_eq!(
+            paths(&anchored_export_jobs(&a, &[2, 1], gallery())),
+            ["/p/b.jpg", "/p/a.jpg"]
+        );
+        // The anchor is not in the gallery's list (the viewer shows another
+        // list): it is exported alone instead of nothing happening.
+        let elsewhere = library_object(9, "/p/elsewhere.jpg");
+        assert_eq!(
+            paths(&anchored_export_jobs(&elsewhere, &[9], gallery())),
+            ["/p/elsewhere.jpg"]
+        );
+        // A photo outside the library is exported alone from its object.
+        let outside = crate::photo_object::PhotoObject::outside_library(std::path::Path::new(
+            "/elsewhere/outside.jpg",
+        ));
+        let ids = [outside.id()];
+        assert_eq!(
+            paths(&anchored_export_jobs(&outside, &ids, gallery())),
+            ["/elsewhere/outside.jpg"]
+        );
+    }
+
+    #[test]
+    fn print_targets_an_outside_photo_from_its_object() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let outside = crate::photo_object::PhotoObject::outside_library(std::path::Path::new(
+            "/elsewhere/outside.jpg",
+        ));
+        let requests = anchored_print_requests(&connection, &outside, &[outside.id()]);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].reference, "/elsewhere/outside.jpg");
     }
 }
 

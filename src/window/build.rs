@@ -4549,44 +4549,8 @@ fn start_photo_export_single(
         let gallery_for_export = gallery_for_export;
         let progress_for_export = progress_for_export;
         Rc::new(move |photo: &crate::photo_object::PhotoObject| {
-            // A photo outside the library is in no gallery list: export it
-            // alone, from the viewer's object.
-            if photo.is_outside_library() {
-                let job = crate::edit::export_batch::ExportJob::from_record(
-                    photo.path(),
-                    photo.rotation(),
-                    photo.edit_recipe(),
-                    photo.width(),
-                    photo.height(),
-                    &photo.filename(),
-                );
-                show_photo_export_dialog(
-                    parent_for_export.upcast_ref::<gtk::Window>(),
-                    vec![job],
-                    progress_for_export.clone(),
-                );
-                return;
-            }
             let ids = gallery_for_export.selected_photo_ids(Some(photo.id()));
-            let known: std::collections::HashMap<i64, _> = gallery_for_export
-                .photo_objects()
-                .into_iter()
-                .map(|object| (object.id(), object))
-                .collect();
-            let jobs = ids
-                .iter()
-                .filter_map(|id| known.get(id))
-                .map(|object| {
-                    crate::edit::export_batch::ExportJob::from_record(
-                        object.path(),
-                        object.rotation(),
-                        object.edit_recipe(),
-                        object.width(),
-                        object.height(),
-                        &object.filename(),
-                    )
-                })
-                .collect::<Vec<_>>();
+            let jobs = anchored_export_jobs(photo, &ids, gallery_for_export.photo_objects());
             if jobs.is_empty() {
                 return;
             }
@@ -4646,7 +4610,7 @@ fn start_photo_export_single(
         // scalar/string values into the print requests; the renders happen on
         // a worker thread while the dialog runs here.
         let ids = gallery_for_print.selected_photo_ids(Some(photo.id()));
-        let requests = photo_print_requests(&connection_for_print.borrow(), &ids);
+        let requests = anchored_print_requests(&connection_for_print.borrow(), &photo, &ids);
 
         print_photos(&window_for_print, &connection_for_print, requests);
     });

@@ -54,6 +54,12 @@
 # home) have one writer, which picks the list for each:
 #   - src/window/album_list_widgets.rs (AlbumList::changed; the decision is
 #     window::album_list).
+# The Collage and photo editor sessions (candidate 21: where the editor
+# returns to, what leaving a page tears down, the collage draft, the
+# editor's Space/Escape handlers) have one owner:
+#   - src/window/workspace_session_widgets.rs (Workspace; the decision is
+#     window::workspace_session). No window code keeps its own detour flags
+#     (collage_add_mode, collage_editing) again.
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -81,6 +87,7 @@ SESSION_OWNER='src/window/session_state.rs'
 SCROLL_OWNER='src/window/scroll_motion.rs'
 PHOTO_LIST_OWNER='src/window/photo_list.rs'
 ALBUM_LIST_OWNER='src/window/album_list_widgets.rs'
+WORKSPACE_OWNER='src/window/workspace_session_widgets.rs'
 SESSION_FIXTURES='src/window/immersive_tests.rs src/window/responsive_tests.rs'
 ID='[[:alnum:]_]'
 
@@ -104,6 +111,7 @@ RULES=(
   "photo-change~$PHOTO_CHANGE_OWNER $INFOBAR_OWNER src/infobar_responsive_tests.rs src/sidebar.rs~(^|[^[:alnum:]_])(photo_updated|update_library_counts)\(~the shown photo's facts or the Library counts after a photo change (say photo_changed)"
   "collection-navigation~$COLLECTION_NAV_OWNER~\.set_collection_navigation_handler\(~the viewer's Up/Down collection handler (CollectionNavigation)"
   "album-list~$ALBUM_LIST_OWNER~(albums_view::refresh|sidebar::refresh_album_rows)\(~the sidebar album rows or the Albums home (say AlbumList::changed)"
+  "workspace-session~$WORKSPACE_OWNER~(^|[^[:alnum:]_])collage_(add_mode|editing)([^[:alnum:]_]|$)|edit_(space|escape)$ID*\.(borrow_mut\(\)\.take|replace)\(|set_setting\(.*DRAFT_SETTING_KEY~Collage/editor session state, the editor's key handlers or the collage draft (ask Workspace)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -202,7 +210,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed / CollectionNavigation (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / Workspace / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed / CollectionNavigation (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -376,6 +384,11 @@ self_test() {
     "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"
     "shown photo written in build.rs|src/window/build.rs|info.photo_updated(&photo);|photo-change"
     "Library counts written in albums.rs|src/window/albums.rs|sidebar::update_library_counts(&sidebar, counts);|photo-change"
+    "collage detour flag back in build.rs|src/window/build.rs|let collage_add_mode: Rc<Cell<bool>> = Rc::new(Cell::new(false));|workspace-session"
+    "editor flag written in layout.rs|src/window/layout.rs|collage_editing.set(false);|workspace-session"
+    "edit Space slot cleared in layout.rs|src/window/layout.rs|edit_space_slot_for_toggle.borrow_mut().take();|workspace-session"
+    "edit Escape handler set in build.rs|src/window/build.rs|edit_escape_slot.replace(Some(editor.escape_action_handle()));|workspace-session"
+    "collage draft saved in layout.rs|src/window/layout.rs|let _ = db::set_setting(&guard, crate::collage::DRAFT_SETTING_KEY, &json);|workspace-session"
     "navigation closure back in build.rs|src/window/build.rs|lightbox.set_collection_navigation_handler(handler);|collection-navigation"
   )
   local entry name file line rule

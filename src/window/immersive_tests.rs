@@ -1194,3 +1194,34 @@ fn closing_the_editor_returns_a_library_photo_to_the_viewer() {
     window.close();
     settle();
 }
+
+/// Issue #268: a search typed over the viewer and left half way is cleared
+/// when the viewer closes, so the grid does not come back on partial results.
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn closing_the_viewer_clears_a_half_typed_search() {
+    let window = properties_window(6);
+    let root = window.clone().upcast::<gtk::Widget>();
+    let grid = photo_grid(&root);
+    let search = descendants(&root)
+        .into_iter()
+        .find(|widget| widget.has_css_class("unified-search-entry"))
+        .and_downcast::<gtk::SearchEntry>()
+        .expect("search entry missing");
+
+    grid.emit_by_name::<()>("activate", &[&2_u32]);
+    settle();
+    settle();
+    let lightbox = lightbox_root(&root);
+    assert!(lightbox.is_visible(), "the viewer opened");
+
+    search.set_text("pho");
+    pump_for(Duration::from_millis(400));
+    assert!(lightbox.is_visible(), "searching keeps the viewer open");
+
+    close_lightbox(&lightbox);
+    pump_for(Duration::from_millis(600));
+    assert!(!lightbox.is_visible(), "the viewer closed");
+    assert_eq!(search.text(), "", "closing the viewer clears the half-typed search");
+    window.close();
+}

@@ -233,23 +233,36 @@ pub(crate) struct PhotoSummary {
 
 impl PhotoSummary {
     pub(crate) fn of(facts: &PhotoFacts) -> Self {
+        // An unknown fact is an empty string, which hides its metric: the
+        // InfoBar shows only what the photo actually records (issue #269).
         let dimensions = if facts.width > 0 && facts.height > 0 {
             format!("{} × {}", facts.width, facts.height)
         } else {
-            "Unknown".to_string()
+            String::new()
         };
         let camera = facts
             .camera
             .clone()
-            .unwrap_or_else(|| "Unknown camera".to_string());
-        let taken = super::format_date(facts.taken_at.as_deref().unwrap_or("Unknown date"));
+            .filter(|camera| !camera.trim().is_empty())
+            .unwrap_or_default();
+        let taken = facts
+            .taken_at
+            .as_deref()
+            .filter(|taken| !taken.trim().is_empty())
+            .map(super::format_date)
+            .unwrap_or_default();
+        let size = if facts.size_bytes > 0 {
+            super::format_size(facts.size_bytes)
+        } else {
+            String::new()
+        };
         Self {
             filename: facts.filename.clone(),
             metrics: [
                 taken,
                 camera,
                 dimensions,
-                super::format_size(facts.size_bytes),
+                size,
                 super::format_aperture(facts.aperture).unwrap_or_default(),
                 if facts.iso > 0 {
                     facts.iso.to_string()
@@ -609,10 +622,10 @@ mod tests {
                     ..PhotoFacts::default()
                 },
                 [
-                    "Unknown date",
-                    "Unknown camera",
-                    "Unknown",
-                    "0 B",
+                    "",
+                    "",
+                    "",
+                    "",
                     "",
                     "",
                     "",
@@ -629,7 +642,7 @@ mod tests {
                 [
                     "03 May 2024",
                     "NIKON Z 6",
-                    "Unknown",
+                    "",
                     "24.5 MB",
                     "f/2.8",
                     "400",

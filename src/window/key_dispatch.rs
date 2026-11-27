@@ -36,6 +36,8 @@ pub(super) struct KeyContext {
     pub(super) immersive: bool,
     /// The search field's suggestion list is shown.
     pub(super) search_suggestions_shown: bool,
+    /// The search field holds a query (the gallery shows its results).
+    pub(super) search_active: bool,
     /// Focus is inside the gallery's grid (it moves its own focus with
     /// plain arrows).
     pub(super) focus_in_gallery: bool,
@@ -50,6 +52,8 @@ pub(super) enum KeyCommand {
     EditorEscape,
     DismissContextMenu,
     CloseViewer,
+    /// Clear the search field, wherever focus is (issue #268).
+    ClearSearch,
     LeaveImmersive,
     /// Step the date browser back; passes the key on when it cannot.
     DateBrowserBack,
@@ -123,6 +127,12 @@ pub(super) fn key_command(key: Key, mods: ModifierType, context: &KeyContext) ->
     let back = key == Key::Escape || (key == Key::BackSpace && plain);
     if back && viewer {
         return CloseViewer;
+    }
+    // An active search is the next layer: after a click on a result tile
+    // focus has left the search field, whose own Escape no longer applies.
+    // A focused text field (the search field included) keeps its Escape.
+    if key == Key::Escape && context.search_active && context.typing == Typing::No {
+        return ClearSearch;
     }
     if key == Key::Escape && context.immersive {
         return LeaveImmersive;
@@ -229,6 +239,7 @@ mod tests {
             context_menu_open: false,
             immersive: false,
             search_suggestions_shown: false,
+            search_active: false,
             focus_in_gallery: false,
         }
     }
@@ -262,7 +273,30 @@ mod tests {
             typing: Typing::Text,
             ..on(Front::Lightbox)
         };
+        let searching = KeyContext {
+            search_active: true,
+            ..on(Front::Gallery)
+        };
+        let searching_immersive = KeyContext {
+            immersive: true,
+            ..searching
+        };
+        let searching_viewer = KeyContext {
+            search_active: true,
+            ..on(Front::Lightbox)
+        };
         check(&[
+            ("the viewer before a search", Key::Escape, NONE, searching_viewer, CloseViewer),
+            ("then a search", Key::Escape, NONE, searching, ClearSearch),
+            ("a search before Immersive Mode", Key::Escape, NONE, searching_immersive, ClearSearch),
+            ("Backspace does not clear a search", Key::BackSpace, NONE, searching, DateBrowserBack),
+            (
+                "a focused text field keeps Escape",
+                Key::Escape,
+                NONE,
+                KeyContext { typing: Typing::Text, ..searching },
+                DateBrowserBack,
+            ),
             ("editor first", Key::Escape, NONE, editor, EditorEscape),
             (
                 "then a context menu",

@@ -2313,42 +2313,14 @@
         })
     }));
     collage_close_slot.replace(Some({
-        let main_stack = main_stack.clone();
         let button = add_selected_to_collage.clone();
-        let gallery = gallery.clone();
-        let collage_page = collage_page.clone();
-        let collage_editor = collage_editor.clone();
-        let collage_add_mode = collage_add_mode.clone();
-        let connection = connection.clone();
+        let workspace = workspace.clone();
         Rc::new(move || {
-            gallery.set_collage_selection_mode(false);
-            // Drop the grid selection too: otherwise the collage photos
-            // stay selected and the next toolbar click reads as an
-            // explicit selection, silently skipping "Resume Collage?".
-            gallery.set_selected_photo_ids(&[]);
-            collage_add_mode.set(false);
-            // Persist the draft before teardown so "Resume Collage?" can
-            // restore it the next time the editor opens.
-            {
-                let editor_handle = collage_editor.borrow();
-                if let Some(editor) = editor_handle.as_ref() {
-                    let json = editor.draft_json();
-                    let guard = connection.borrow();
-                    let _ =
-                        db::set_setting(&guard, crate::collage::DRAFT_SETTING_KEY, &json);
-                }
-            }
-            main_stack.set_visible_child_name("photos");
+            // Saves the draft for "Resume Collage?", clears the grid
+            // selection (else the next Collage click reads as an explicit
+            // selection and skips Resume) and detaches the editor.
+            workspace.close_collage();
             button.set_visible(false);
-            // Detach the editor so the stack's size request drops back to
-            // normal. GtkStack reports the maximum minimum size of all its
-            // pages (hidden ones included), so a collage page left attached
-            // keeps demanding its tall minimum and pushes the shared bottom
-            // bar offscreen on short windows.
-            while let Some(child) = collage_page.first_child() {
-                collage_page.remove(&child);
-            }
-            collage_editor.replace(None);
         })
     }));
     collage_prepare_add_slot.replace(Some({
@@ -2356,7 +2328,7 @@
         let button = add_selected_to_collage.clone();
         let gallery = gallery.clone();
         let collage_editor = collage_editor.clone();
-        let collage_add_mode = collage_add_mode.clone();
+        let workspace = workspace.clone();
         let filter = filter.clone();
         let connection = connection.clone();
         let sort = sort.clone();
@@ -2365,11 +2337,13 @@
             let Some(editor) = editor_handle.as_ref() else {
                 return;
             };
-            gallery.set_collage_selection_mode(true);
-            gallery.set_selected_photo_ids(&editor.photo_ids());
             // Mark the detour before switching pages so the stack's
             // visible-child teardown spares the live editor.
-            collage_add_mode.set(true);
+            if !workspace.start_adding_photos() {
+                return;
+            }
+            gallery.set_collage_selection_mode(true);
+            gallery.set_selected_photo_ids(&editor.photo_ids());
             if filter.get() == sidebar::SidebarFilter::Library {
                 apply_gallery_grouping(
                     &gallery,
@@ -2390,7 +2364,7 @@
         let gallery = gallery.clone();
         let connection = connection.clone();
         let collage_editor = collage_editor.clone();
-        let collage_add_mode = collage_add_mode.clone();
+        let workspace = workspace.clone();
         add_selected_to_collage.connect_clicked(move |_| {
             let photos = gallery
                 .selected_photo_ids(None)
@@ -2404,7 +2378,7 @@
             if let Some(editor) = collage_editor.borrow().as_ref() {
                 editor.set_photos(photos);
                 gallery.set_collage_selection_mode(false);
-                collage_add_mode.set(false);
+                workspace.photos_added();
                 main_stack.set_visible_child_name("collage");
                 button.set_visible(false);
             }
@@ -2413,12 +2387,8 @@
     {
         let open_edit = open_edit.clone();
         let current = Rc::downgrade(&info);
-        let main_stack = main_stack.clone();
         let front = front.clone();
-        let one_to_one = info.one_to_one.clone();
-        let collage_editing = collage_editing.clone();
-        let collage_editor = collage_editor.clone();
-        let edit_space_slot_for_toggle = edit_space_slot.clone();
+        let workspace = workspace.clone();
         info.edit.connect_clicked(move |_| {
             // The bottom Edit button is only for normal photo editing. Collage
             // photos use the collage editor's own Edit Photo action, which
@@ -2429,26 +2399,11 @@
 
             // The bottom Edit button is a true open/close toggle. This keeps
             // the editing workspace optional instead of forcing users to use
-            // Back/Done just to return to normal browsing.
+            // Back/Done just to return to normal browsing. It closes exactly
+            // as Back does: the viewer for an outside photo, the collage, the
+            // Library index or the gallery.
             if front.current() == Front::Editor {
-                one_to_one.set_active(false);
-                // Drop the edit Space slot so gallery/lightbox Space works
-                // again once the toggle leaves the edit page.
-                edit_space_slot_for_toggle.borrow_mut().take();
-                if collage_editing.get() {
-                    // The edit session belongs to a collage: return there.
-                    collage_editing.set(false);
-                    if let Some(photo) = current.upgrade().and_then(|info| info.current_photo()) {
-                        if let Ok(editor_handle) = collage_editor.try_borrow() {
-                            if let Some(collage) = editor_handle.as_ref() {
-                                collage.refresh_photo_metadata(std::slice::from_ref(&photo));
-                            }
-                        }
-                    }
-                    leave_photo_editor(&main_stack, "collage");
-                } else {
-                    leave_photo_editor(&main_stack, "photos");
-                }
+                workspace.close_open_editor();
                 return;
             }
             // Copy the id out before open_edit(). That call changes the stack
@@ -2466,25 +2421,14 @@
         let open_collage = open_collage.clone();
         let gallery = gallery.clone();
         let front = front.clone();
-        let collage_editor = collage_editor.clone();
-        let connection = connection.clone();
+        let workspace = workspace.clone();
         info.collage.connect_clicked(move |_| {
             // Re-entering Collage while its editor is still visible happens
             // before the normal stack teardown can save the live project.
             // Persist it here so Resume always refers to what the user is
             // actually looking at, not an older database draft.
             if front.current() == Front::Collage {
-                if let Ok(editor_handle) = collage_editor.try_borrow() {
-                    if let Some(editor) = editor_handle.as_ref() {
-                        let json = editor.draft_json();
-                        let guard = connection.borrow();
-                        let _ = db::set_setting(
-                            &guard,
-                            crate::collage::DRAFT_SETTING_KEY,
-                            &json,
-                        );
-                    }
-                }
+                workspace.save_collage_draft();
             }
 
             open_collage(gallery.selected_photo_ids(None));

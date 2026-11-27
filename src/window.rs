@@ -15,6 +15,10 @@ use crate::{db, grid, infobar::InfoBar, lightbox::Lightbox, scanner, sidebar};
 
 mod brand_heading;
 mod metadata_panel;
+mod workspace_session;
+mod workspace_session_widgets;
+use workspace_session::ReturnRoute;
+use workspace_session_widgets::{Workspace, WorkspaceParts};
 mod date_browser;
 mod onboarding;
 mod photo_layout;

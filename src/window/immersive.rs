@@ -535,28 +535,25 @@ fn immersive_install_chrome_edge(
 
     // Immersive has no right-edge inspector: the Properties presentation
     // suspends both panels for the session and resumes them afterwards.
-    let metadata_was_visible = Rc::new(Cell::new(false));
     let right_was_collapsed = Rc::new(Cell::new(false));
     let toggle: Rc<dyn Fn()> = {
         let (active, properties, properties_widgets) = (
             immersive_active.clone(), properties_split.clone(), properties.clone()
         );
         let sidebar_widgets = sidebar_widgets.clone();
-        let (header, column, info_root, metadata_root) = (
+        let (header, column, info_root, metadata_panel) = (
             right_header.clone(), right_column.clone(),
-            info.root.clone(), metadata_panel.root.clone()
+            info.root.clone(), metadata_panel.clone()
         );
         let (top_strip, bottom_strip, button) = (
             top_strip.clone(), bottom_strip.clone(), immersive_button.clone()
         );
         let (top_revealer, bottom_revealer) = (top_revealer.clone(), bottom_revealer.clone());
-        let metadata_was_visible = metadata_was_visible.clone();
         let right_was_collapsed = right_was_collapsed.clone();
         Rc::new(move || {
             let entering = !active.get();
             active.set(entering);
             if entering {
-                metadata_was_visible.set(metadata_root.is_visible());
                 right_was_collapsed.set(properties.is_collapsed());
 
                 // An immersive session owns the left navigation completely:
@@ -568,7 +565,7 @@ fn immersive_install_chrome_edge(
                 properties_widgets.set_immersive(true);
                 properties.set_pin_sidebar(false);
                 properties.set_collapsed(true);
-                metadata_root.set_visible(false);
+                metadata_panel.set_immersive(true);
 
                 column.remove(&header);
                 header.set_visible(true);
@@ -605,7 +602,9 @@ fn immersive_install_chrome_edge(
                 bottom_revealer.set_child(None::<&gtk::Widget>);
                 column.append(&info_root);
                 info_root.set_visible(true);
-                metadata_root.set_visible(metadata_was_visible.get());
+                // The panel decides from its current toggle and view, not
+                // from what it showed on entry (candidate 24).
+                metadata_panel.set_immersive(false);
 
                 // Last, once the chrome is back in the window: resume the
                 // inspector panels that were open, on the current photos.
@@ -660,16 +659,6 @@ fn immersive_install_chrome_edge(
         window.add_action_entries([action]);
     }
     immersive_toggle_slot.replace(Some(toggle.clone()));
-    // The filter toolbar manages its own visibility when changing views.
-    // Keep it suppressed for the whole immersive session, not just entry.
-    {
-        let active = immersive_active.clone();
-        metadata_panel.root.connect_visible_notify(move |root| {
-            if active.get() && root.is_visible() {
-                root.set_visible(false);
-            }
-        });
-    }
     {
         let active = immersive_active.clone();
         main_stack.connect_visible_child_notify(move |stack| {

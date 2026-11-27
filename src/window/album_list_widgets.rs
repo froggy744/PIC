@@ -7,7 +7,7 @@
 //! the browse scope (`db::browse_albums` under `albums_home_scope`). Worker
 //! results are applied only while their surface's generation, the library
 //! and (for the home) the browse scope are unchanged.
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -19,6 +19,7 @@ use super::album_list::{plan, AlbumChange, AlbumListState, AlbumRefresh, AlbumTi
 use super::albums_home_scope;
 use crate::db;
 use crate::sidebar::{self, SidebarFilter};
+use super::navigation_filter::NavigationFilter;
 
 type AlbumSink = Rc<dyn Fn(&[db::Album])>;
 /// What a refresh counted: the sidebar's and the home's lists, when asked.
@@ -29,7 +30,7 @@ const RECOUNT_BATCH: Duration = Duration::from_millis(150);
 
 pub(super) struct AlbumList {
     connection: Rc<RefCell<Connection>>,
-    filter: Rc<Cell<SidebarFilter>>,
+    filter: Rc<NavigationFilter>,
     state: RefCell<AlbumListState>,
     sidebar_rows: RefCell<Option<AlbumSink>>,
     home: RefCell<Option<AlbumSink>>,
@@ -37,7 +38,7 @@ pub(super) struct AlbumList {
 
 impl AlbumList {
     /// Surfaces are attached later, once they exist.
-    pub(super) fn new(connection: Rc<RefCell<Connection>>, filter: Rc<Cell<SidebarFilter>>) -> Rc<Self> {
+    pub(super) fn new(connection: Rc<RefCell<Connection>>, filter: Rc<NavigationFilter>) -> Rc<Self> {
         Rc::new(Self {
             connection,
             filter,

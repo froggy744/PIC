@@ -2694,8 +2694,8 @@ mod photo_actions_tests {
         settle_gtk_layout();
 
         let context_for = |filter: sidebar::SidebarFilter| PhotoActionContext {
-            filter: Rc::new(Cell::new(filter)),
-            albums: AlbumList::new(connection.clone(), Rc::new(Cell::new(filter))),
+            filter: NavigationFilter::new(filter),
+            albums: AlbumList::new(connection.clone(), NavigationFilter::new(filter)),
             window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
             ..PhotoActionContext::for_tests(&connection)

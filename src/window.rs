@@ -15,6 +15,9 @@ use crate::{db, grid, infobar::InfoBar, lightbox::Lightbox, scanner, sidebar};
 
 mod brand_heading;
 mod metadata_panel;
+mod metadata_panel_presentation;
+mod navigation_filter;
+use navigation_filter::NavigationFilter;
 mod date_browser;
 mod onboarding;
 mod photo_layout;
@@ -499,7 +502,7 @@ fn spawn_tagged_scan(
 struct PhotoActionContext {
     connection: Rc<RefCell<Connection>>,
     gallery: Rc<RefCell<Weak<grid::Gallery>>>,
-    filter: Rc<Cell<sidebar::SidebarFilter>>,
+    filter: Rc<NavigationFilter>,
     search: Rc<RefCell<String>>,
     sort: Rc<Cell<PhotoSort>>,
     /// The toolbar rating filter, for photo mark commands.
@@ -541,7 +544,7 @@ impl PhotoActionContext {
         Self {
             connection: connection.clone(),
             gallery: Rc::new(RefCell::new(Weak::new())),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            filter: NavigationFilter::new(sidebar::SidebarFilter::All),
             search: Rc::new(RefCell::new(String::new())),
             sort: Rc::new(Cell::new(PhotoSort {
                 field: SortField::DateTaken,
@@ -558,7 +561,7 @@ impl PhotoActionContext {
             on_unavailable: Rc::new(|| {}),
             albums: AlbumList::new(
                 connection.clone(),
-                Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+                NavigationFilter::new(sidebar::SidebarFilter::All),
             ),
             navigate_to_folder: Rc::new(|_, _| {}),
             open_collage: Rc::new(|_| {}),

@@ -54,6 +54,10 @@
 # home) have one writer, which picks the list for each:
 #   - src/window/album_list_widgets.rs (AlbumList::changed; the decision is
 #     window::album_list).
+# The metadata filter panel (candidate 24) has one writer of its visibility;
+# Immersive Mode, the viewer and navigation are inputs to it:
+#   - src/window/metadata_panel.rs (MetadataPanel::sync_view; the decision
+#     is window::metadata_panel_presentation).
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -81,6 +85,7 @@ SESSION_OWNER='src/window/session_state.rs'
 SCROLL_OWNER='src/window/scroll_motion.rs'
 PHOTO_LIST_OWNER='src/window/photo_list.rs'
 ALBUM_LIST_OWNER='src/window/album_list_widgets.rs'
+METADATA_PANEL_OWNER='src/window/metadata_panel.rs'
 SESSION_FIXTURES='src/window/immersive_tests.rs src/window/responsive_tests.rs'
 ID='[[:alnum:]_]'
 
@@ -104,6 +109,7 @@ RULES=(
   "photo-change~$PHOTO_CHANGE_OWNER $INFOBAR_OWNER src/infobar_responsive_tests.rs src/sidebar.rs~(^|[^[:alnum:]_])(photo_updated|update_library_counts)\(~the shown photo's facts or the Library counts after a photo change (say photo_changed)"
   "collection-navigation~$COLLECTION_NAV_OWNER~\.set_collection_navigation_handler\(~the viewer's Up/Down collection handler (CollectionNavigation)"
   "album-list~$ALBUM_LIST_OWNER~(albums_view::refresh|sidebar::refresh_album_rows)\(~the sidebar album rows or the Albums home (say AlbumList::changed)"
+  "metadata-panel~$METADATA_PANEL_OWNER~(metadata_root$ID*|metadata_panel$ID*\.root)\.(set_visible|connect_visible_notify)\(~metadata filter panel visibility (MetadataPanel::set_immersive / set_lightbox_open / set_navigation_view)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -126,7 +132,6 @@ ALLOW=(
   "src/window/library.rs|db::set_rating_for_photos(&connection, &[1], 3).unwrap();|test fixture (rating filter refresh tests)"
   "src/window/build.rs|&& stack.visible_child_name().as_deref() == Some(\"photos\")|page change handler (candidate 12 decision 1: until the events stage)"
   "src/window/build.rs|panel_for_close.set_lightbox_open(false);|viewer close_started: the fade begins before the front changes (candidate 13 decision 7)"
-  "src/window/build.rs|panel.set_navigation_view(page.as_deref().unwrap_or(\"\"), filter_for_navigation.get());|metadata panel tick: follows filter changes within one page (candidate 13 decision 1)"
   "src/window.rs|LAST_VIEW_SETTING_KEY, SIDEBAR_WIDTH_FRACTION_SETTING_KEY, WINDOW_HEIGHT_SETTING_KEY,|test-only re-export for the window test fixtures"
   "src/window.rs|WINDOW_WIDTH_SETTING_KEY,|test-only re-export for the window test fixtures"
   "src/window/metadata_panel.rs|(LAST_VIEW_SETTING_KEY, format!(\"folder:{folder}\")),|test fixture (metadata panel window test)"
@@ -202,7 +207,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed / CollectionNavigation (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / MetadataPanel / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed / CollectionNavigation (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -270,7 +275,6 @@ RS
     if front.current() == Front::Lightbox {
                 && stack.visible_child_name().as_deref() == Some("photos")
             panel_for_close.set_lightbox_open(false);
-            panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
 RS
   cat >"$root/src/window/scan_view_widgets.rs" <<'RS'
             sidebar::update_library_counts(&parts.sidebar, counts);
@@ -376,6 +380,8 @@ self_test() {
     "metadata panel fed in immersive.rs|src/window/immersive.rs|panel.set_navigation_view(\"photos\", filter);|front-mirrors"
     "shown photo written in build.rs|src/window/build.rs|info.photo_updated(&photo);|photo-change"
     "Library counts written in albums.rs|src/window/albums.rs|sidebar::update_library_counts(&sidebar, counts);|photo-change"
+    "metadata panel hidden in immersive.rs|src/window/immersive.rs|metadata_root.set_visible(false);|metadata-panel"
+    "metadata panel guard back in immersive.rs|src/window/immersive.rs|metadata_panel.root.connect_visible_notify(guard);|metadata-panel"
     "navigation closure back in build.rs|src/window/build.rs|lightbox.set_collection_navigation_handler(handler);|collection-navigation"
   )
   local entry name file line rule

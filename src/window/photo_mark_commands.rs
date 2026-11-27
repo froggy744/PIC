@@ -150,7 +150,7 @@ pub(super) fn reload_shown_photo(context: &PhotoActionContext) {
 mod tests {
     use super::super::*;
     use super::run;
-    use std::cell::{Cell, RefCell};
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     #[test]
@@ -192,11 +192,11 @@ mod tests {
         let applied_in = applied.clone();
         let context = PhotoActionContext {
             gallery: Rc::new(RefCell::new(Rc::downgrade(&gallery))),
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            filter: NavigationFilter::new(sidebar::SidebarFilter::Albums),
             albums: {
                 let list = AlbumList::new(
                     connection.clone(),
-                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                    NavigationFilter::new(sidebar::SidebarFilter::Albums),
                 );
                 list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
                     applied_in.borrow_mut().push(albums[0].photo_count);
@@ -257,11 +257,11 @@ mod tests {
         let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
         let home_in = home.clone();
         let context = PhotoActionContext {
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            filter: NavigationFilter::new(sidebar::SidebarFilter::Albums),
             albums: {
                 let list = AlbumList::new(
                     connection.clone(),
-                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                    NavigationFilter::new(sidebar::SidebarFilter::Albums),
                 );
                 list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
                     home_in
@@ -353,11 +353,11 @@ mod tests {
         let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
         let home_in = home.clone();
         let context = PhotoActionContext {
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            filter: NavigationFilter::new(sidebar::SidebarFilter::Albums),
             albums: {
                 let list = AlbumList::new(
                     connection.clone(),
-                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                    NavigationFilter::new(sidebar::SidebarFilter::Albums),
                 );
                 list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
                     home_in
@@ -388,11 +388,11 @@ mod tests {
         let home: Rc<RefCell<Vec<Vec<(String, i64)>>>> = Rc::default();
         let home_in = home.clone();
         let context = PhotoActionContext {
-            filter: Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+            filter: NavigationFilter::new(sidebar::SidebarFilter::Albums),
             albums: {
                 let list = AlbumList::new(
                     first.clone(),
-                    Rc::new(Cell::new(sidebar::SidebarFilter::Albums)),
+                    NavigationFilter::new(sidebar::SidebarFilter::Albums),
                 );
                 list.attach_recorders(Rc::new(|_| {}), Rc::new(move |albums: &[db::Album]| {
                     home_in
@@ -494,7 +494,7 @@ mod tests {
         };
         let anchor = object(1).unwrap();
         let second = object(2).unwrap();
-        let filter = Rc::new(Cell::new(sidebar::SidebarFilter::All));
+        let filter = NavigationFilter::new(sidebar::SidebarFilter::All);
         let context = PhotoActionContext {
             gallery: Rc::new(RefCell::new(Rc::downgrade(&gallery))),
             filter: filter.clone(),

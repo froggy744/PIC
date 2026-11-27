@@ -67,6 +67,7 @@ pub(super) fn clear_saved_layouts(connection: &Connection) -> anyhow::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::navigation_filter::NavigationFilter;
 
     fn connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
@@ -235,7 +236,7 @@ mod tests {
             |_| {},
         ));
         let info = Rc::new(crate::infobar::InfoBar::new());
-        let filter = Rc::new(Cell::new(SidebarFilter::All));
+        let filter = NavigationFilter::new(SidebarFilter::All);
         let changes = Rc::new(Cell::new(0));
         {
             let connection = connection.clone();

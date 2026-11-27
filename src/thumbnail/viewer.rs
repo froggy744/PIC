@@ -884,6 +884,18 @@ pub fn decode_raw_source_for_export(reference: &str) -> Result<image::RgbaImage>
     decode_for_viewer(reference, u32::MAX, u32::MAX)
 }
 
+/// Long edge of a local, non-RAW original, read from its file header, or
+/// `None` (RAW, remote or unreadable). Renderers that decode a reduced copy
+/// use it to size effects in source pixels; EXIF orientation keeps the long
+/// edge.
+pub fn source_long_edge(reference: &str) -> Option<u32> {
+    if is_raw(reference) || reference.contains("://") {
+        return None;
+    }
+    let (width, height) = image::image_dimensions(reference).ok()?;
+    Some(width.max(height))
+}
+
 /// [`decode_raw_source_for_export`] for an export whose output long edge is
 /// `output_fraction` × the decoded long edge and is fitted to `max_edge`.
 /// A local Nikon NEF whose half-size sensor develop (each 2×2 Bayer block one

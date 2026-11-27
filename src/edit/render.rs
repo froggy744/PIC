@@ -437,11 +437,13 @@ fn blend_filter_amount(image: &mut RgbaImage, original: &RgbaImage, amount: f32)
         });
 }
 
+#[cfg(test)]
 pub(crate) fn apply_tone(image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
     apply_tone_with_cancel(image, recipe, || false)
         .expect("tone rendering with a non-cancelled request always completes")
 }
 
+#[cfg(test)]
 pub(crate) fn apply_tone_with_cancel<F>(
     image: RgbaImage,
     recipe: &EditRecipe,

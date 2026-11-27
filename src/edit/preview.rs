@@ -95,6 +95,8 @@ struct PreviewGeometry {
     crop: CropRect,
     straighten: f32,
     image: image::RgbaImage,
+    /// Long edge of the decoded base, for the effect scale on a cache hit.
+    base_long_edge: u32,
 }
 
 impl PreviewGeometry {
@@ -198,12 +200,11 @@ fn render_preview_job(
 
 
     let render_started = std::time::Instant::now();
+    let base_long_edge: u32;
     let geometry = if geometry_hit {
-        geometry_cache
-            .as_ref()
-            .expect("geometry cache matched")
-            .image
-            .clone()
+        let cached = geometry_cache.as_ref().expect("geometry cache matched");
+        base_long_edge = cached.base_long_edge;
+        cached.image.clone()
     } else {
         let cached = cached_preview_base(
             base_cache,
@@ -245,6 +246,7 @@ fn render_preview_job(
             );
         }
 
+        base_long_edge = base.width().max(base.height());
         if geometry_needed {
             let image = super::render::apply_geometry(base, &job.recipe);
             geometry_cache.replace(PreviewGeometry {
@@ -254,6 +256,7 @@ fn render_preview_job(
                 target_height: job.target_height,
                 crop,
                 straighten,
+                base_long_edge,
                 image: copy_preview_image(&image),
             });
             image
@@ -264,7 +267,13 @@ fn render_preview_job(
 
     let geometry_dimensions = (geometry.width(), geometry.height());
     let tone_started = std::time::Instant::now();
-    let rendered = super::render::apply_tone(geometry, &job.recipe);
+    // Size sharpen, smooth, grain and Newspaper in source pixels, as the
+    // viewer and export do, so the CPU preview matches them.
+    let effect_scale = crate::thumbnail::source_long_edge(&job.path)
+        .filter(|&source| source > 0 && base_long_edge > 0)
+        .map_or(1.0, |source| base_long_edge as f32 / source as f32);
+    let rendered = super::render::apply_tone_scaled(geometry, &job.recipe, effect_scale, || false)
+        .expect("tone rendering with a non-cancelled request always completes");
     let tone_elapsed_ms = tone_started.elapsed().as_secs_f64() * 1000.0;
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(

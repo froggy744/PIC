@@ -477,9 +477,19 @@ fn develop_nef_scene_frame(
 ) -> Result<DynamicImage> {
     let started = std::time::Instant::now();
     let image = rawler_decode(reference, "nef_scene_v2", || {
+        let trace = std::env::var_os("PICASA_TRACE").is_some();
+        let decoder_started = trace.then(std::time::Instant::now);
         let decoder = rawler::get_decoder(raw_source)?;
         let params = rawler::decoders::RawDecodeParams::default();
+        let unpack_started = trace.then(std::time::Instant::now);
         let mut pixels = decoder.raw_image(raw_source, &params, false)?;
+        if let (Some(decoder_started), Some(unpack_started)) = (decoder_started, unpack_started) {
+            eprintln!(
+                "PIC_DECODE stage=nef_sensor_unpack decoder_ms={:.3} elapsed_ms={:.3}",
+                (unpack_started - decoder_started).as_secs_f64() * 1000.0,
+                unpack_started.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         nef_scene::develop(&mut pixels)
     })?;
     if std::env::var_os("PICASA_TRACE").is_some() {

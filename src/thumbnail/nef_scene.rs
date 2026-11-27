@@ -173,6 +173,8 @@ fn develop_scene_linear(
             ProcessingStep::WhiteBalance | ProcessingStep::Calibrate | ProcessingStep::SRgb
         )
     });
+    let demosaic_started = (!half && std::env::var_os("PICASA_TRACE").is_some())
+        .then(std::time::Instant::now);
     let mut camera = if half {
         superpixel_camera(raw)?
     } else {
@@ -183,6 +185,12 @@ fn develop_scene_linear(
         };
         camera
     };
+    if let Some(started) = demosaic_started {
+        eprintln!(
+            "PIC_DECODE stage=nef_prepare_demosaic elapsed_ms={:.3}",
+            started.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
     let raw_matrix = raw
         .color_matrix
         .get(&Illuminant::D65)

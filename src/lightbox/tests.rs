@@ -285,6 +285,7 @@ mod viewer_presentation_tests {
             edit_recipe: String::new(),
             target_width: 800,
             target_height: 600,
+            source_long_edge: 4000,
         }
     }
 

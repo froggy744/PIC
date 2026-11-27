@@ -1598,22 +1598,7 @@ fn thumbnail_cover_view(width: i32, height: i32, tile_size: i32) -> GpuView {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    // A filtered/cropped GPU histogram prepass exists, but does not yet match
-    // the CPU Export reference consistently. Keep automatic corrections on
-    // CPU for creative looks and non-identity geometry until strict parity is
-    // proven. Standalone/both autos on plain, uncropped photos are verified.
-    let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
-    !recipe.auto_brightness
-        && !recipe.auto_enhance
-        // Shader Auto Colour/Contrast assumes 100% strength. Until
-        // shared intensity blending has GPU/CPU parity, force partial
-        // Quick Fixes onto the CPU export-equivalent pipeline.
-        && (!(recipe.auto_color || recipe.auto_contrast)
-            || recipe.filter_amount >= 1.0)
-        && recipe.smooth <= 0.001
-        && recipe.vignette.abs() <= 0.001
-        && (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
-        && !(geometry_changes_pixels && (recipe.auto_color || recipe.auto_contrast))
+    super::tone::gpu_unsupported_reason(recipe).is_none()
 }
 
 /// GPU Auto corrections are currently approved only for native 1:1 previews
@@ -1716,7 +1701,8 @@ void main() {
     )?;
     let fragment = compile_shader(
         gl::FRAGMENT_SHADER,
-        r#"#version 150
+        &super::tone::with_glsl_constants(
+            r#"#version 150
 #extension GL_ARB_gpu_shader5 : enable
 uniform sampler2D uSource;
 uniform sampler2D uProcessedSource;
@@ -1801,7 +1787,7 @@ float smoothMask(float low, float high, float value) {
 }
 float contrastCurve(float value, float amount) {
     float x = clamp(value, 0.0, 1.0);
-    float a = clamp(amount, -1.0, 1.0) * 0.55;
+    float a = clamp(amount, -1.0, 1.0) * TONE_CONTRAST_STRENGTH;
     return clamp(x + a * 4.0 * (x - 0.5) * x * (1.0 - x), 0.0, 1.0);
 }
 vec4 tonePixel(vec4 px) {
@@ -1813,7 +1799,8 @@ vec4 tonePixel(vec4 px) {
             // Same evaluation order as the CPU and the histogram pass:
             // dot() may fuse and round differently by one step.
             float neutral = luma(means);
-            vec3 gains = clamp(vec3(neutral) / max(means,vec3(1.0)), vec3(0.75), vec3(1.35));
+            vec3 gains = clamp(vec3(neutral) / max(means,vec3(1.0)),
+                               vec3(TONE_AUTO_COLOR_GAIN_LOW), vec3(TONE_AUTO_COLOR_GAIN_HIGH));
             corrected = round(clamp(corrected * gains, 0.0, 1.0) * 255.0) / 255.0;
         }
     }
@@ -1826,7 +1813,8 @@ vec4 tonePixel(vec4 px) {
             float y = luma(correctedBytes) / 255.0;
             if (y > 0.0001) {
                 float pivot = (limits.r + limits.g) * 0.5;
-                float stretched = clamp((y - pivot) * limits.b + pivot, 0.012, 0.988);
+                float stretched = clamp((y - pivot) * limits.b + pivot,
+                                        TONE_AUTO_CONTRAST_LOW, TONE_AUTO_CONTRAST_HIGH);
                 float adjusted = y + (stretched - y) * 0.75;
                 float gain = clamp(adjusted / y, 0.2, 3.0);
                 corrected = round(clamp(correctedBytes * gain, 0.0, 255.0)) / 255.0;
@@ -1838,15 +1826,15 @@ vec4 tonePixel(vec4 px) {
         abs(uHighlights) > 0.0001) {
         float y = luma(c);
         if (y > 0.001 && y < 1.0) {
-            float fill = pow(y, pow(2.0, -uFillLight * 1.15));
-            float shadows = pow(y, pow(2.0, -uShadows * 1.35));
-            float highlights = 1.0 - pow(1.0 - y, pow(2.0, uHighlights * 1.20));
-            float fillMask = 1.0 - smoothMask(0.48, 0.93, y);
-            float shadowMask = 1.0 - smoothMask(0.18, 0.61, y);
-            float highlightMask = smoothMask(0.48, 0.87, y);
-            float target = clamp(y + (fill-y)*fillMask*0.95 +
-                                 (shadows-y)*shadowMask*0.95 +
-                                 (highlights-y)*highlightMask*0.92, 0.0, 1.0);
+            float fill = pow(y, pow(2.0, -uFillLight * TONE_FILL_GAIN));
+            float shadows = pow(y, pow(2.0, -uShadows * TONE_SHADOWS_GAIN));
+            float highlights = 1.0 - pow(1.0 - y, pow(2.0, uHighlights * TONE_HIGHLIGHTS_GAIN));
+            float fillMask = 1.0 - smoothMask(TONE_FILL_MASK_LOW, TONE_FILL_MASK_HIGH, y);
+            float shadowMask = 1.0 - smoothMask(TONE_SHADOWS_MASK_LOW, TONE_SHADOWS_MASK_HIGH, y);
+            float highlightMask = smoothMask(TONE_HIGHLIGHTS_MASK_LOW, TONE_HIGHLIGHTS_MASK_HIGH, y);
+            float target = clamp(y + (fill-y)*fillMask*TONE_FILL_WEIGHT +
+                                 (shadows-y)*shadowMask*TONE_SHADOWS_WEIGHT +
+                                 (highlights-y)*highlightMask*TONE_HIGHLIGHTS_WEIGHT, 0.0, 1.0);
             c *= clamp(target / y, 0.12, 5.0);
         }
     }
@@ -2164,6 +2152,7 @@ void main() {
     vec4 px = sampleTone(coord);
     color = vec4(processedPixel(coord), px.a);
 }"#,
+        ),
     )?;
 
     let blur_fragment = compile_shader(

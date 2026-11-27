@@ -884,6 +884,71 @@ pub fn decode_raw_source_for_export(reference: &str) -> Result<image::RgbaImage>
     decode_for_viewer(reference, u32::MAX, u32::MAX)
 }
 
+/// [`decode_raw_source_for_export`] for an export whose output long edge is
+/// `output_fraction` × the decoded long edge and is fitted to `max_edge`.
+/// A local Nikon NEF whose half-size sensor develop (each 2×2 Bayer block one
+/// pixel, no interpolation) still covers `max_edge` with 1.5× to spare is
+/// developed at half size, about four times less work; anything else
+/// decodes at full size.
+pub fn decode_raw_source_for_export_sized(
+    reference: &str,
+    max_edge: u32,
+    output_fraction: f32,
+) -> Result<image::RgbaImage> {
+    let eligible = max_edge > 0
+        && output_fraction > 0.0
+        && is_nikon_raw(reference)
+        && !reference.contains("://")
+        && viewer_nef_renderer_mode() == 2
+        && std::env::var_os("PIC_NEF_HALF_EXPORT").is_none_or(|value| value != "0");
+    if eligible {
+        if let Some(image) = develop_nef_half_for_export(reference, max_edge, output_fraction)? {
+            return Ok(image);
+        }
+    }
+    decode_raw_source_for_export(reference)
+}
+
+fn develop_nef_half_for_export(
+    reference: &str,
+    max_edge: u32,
+    output_fraction: f32,
+) -> Result<Option<image::RgbaImage>> {
+    let started = std::time::Instant::now();
+    let raw_source = rawler::rawsource::RawSource::new(Path::new(reference))?;
+    let image = rawler_decode(reference, "nef_scene_half", || {
+        let decoder = rawler::get_decoder(&raw_source)?;
+        let params = rawler::decoders::RawDecodeParams::default();
+        let mut pixels = decoder.raw_image(&raw_source, &params, false)?;
+        // Keep at least 1.5× oversampling for the final resize. On D800 NEFs
+        // the half-size develop measured 5-10% less edge contrast at 1.2×
+        // (3000 px) and 5.6% less at 1.8× (2048 px), 38.8 dB from full size.
+        let covers = nef_scene::half_size_long_edge(&pixels)
+            .is_some_and(|long_edge| long_edge as f32 * output_fraction >= max_edge as f32 * 1.5);
+        if !covers {
+            return Ok(None);
+        }
+        nef_scene::develop_half(&mut pixels).map(Some)
+    })?;
+    let Some(image) = image else {
+        return Ok(None);
+    };
+    let oriented = apply_orientation(
+        DynamicImage::ImageRgba8(image.into_rgba8()),
+        exif_orientation(reference),
+    )
+    .into_rgba8();
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=nef_scene_half elapsed_ms={:.3} output={}x{} max_edge={max_edge}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            oriented.width(),
+            oriented.height(),
+        );
+    }
+    Ok(Some(oriented))
+}
+
 /// Decode a local RAW file for the lightbox. Nikon FIT uses the embedded
 /// camera JPEG; Nikon native detail/Edit/Export uses sensor-developed RGB.
 /// Other RAW formats keep their existing embedded-preview/fallback behavior.

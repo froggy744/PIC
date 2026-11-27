@@ -158,7 +158,10 @@ fn apply_camera_calibration(camera: [f32; 3], wb: [f32; 4], matrix: &CameraMatri
     std::array::from_fn(|row| (0..3).map(|col| matrix[row][col] * corrected[col]).sum())
 }
 
-fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Color2D<f32, 3>> {
+fn develop_scene_linear(
+    raw: &rawler::RawImage,
+    half: bool,
+) -> Result<rawler::pixarray::Color2D<f32, 3>> {
     // Ask the existing RAW decoder only for its standardized, scaled sensor
     // demosaic and geometric cropping. PIC owns this candidate's camera
     // calibration, keeping >1.0 highlights and signed gamut components until
@@ -170,9 +173,14 @@ fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Colo
             ProcessingStep::WhiteBalance | ProcessingStep::Calibrate | ProcessingStep::SRgb
         )
     });
-    let intermediate = RawDevelop::new_with(&steps).develop_intermediate(raw)?;
-    let Intermediate::ThreeColor(mut camera) = intermediate else {
-        anyhow::bail!("Nikon Bayer demosaic did not return three camera channels");
+    let mut camera = if half {
+        superpixel_camera(raw)?
+    } else {
+        let intermediate = RawDevelop::new_with(&steps).develop_intermediate(raw)?;
+        let Intermediate::ThreeColor(camera) = intermediate else {
+            anyhow::bail!("Nikon Bayer demosaic did not return three camera channels");
+        };
+        camera
     };
     let raw_matrix = raw
         .color_matrix
@@ -222,6 +230,31 @@ fn clip_saturated_highlights(camera: [f32; 3], wb: [f32; 4]) -> [f32; 3] {
     let weight = ramp * ramp * (3.0 - 2.0 * ramp);
     let white = wb[..3].iter().copied().fold(f32::INFINITY, f32::min);
     balanced.map(|value| value + weight * (value.min(white) - value))
+}
+
+/// Half-size camera RGB: rawler's scaled sensor values, its superpixel
+/// demosaic over the active area, then the default crop at half scale, as
+/// rawler's own develop does for a superpixel image.
+fn superpixel_camera(raw: &rawler::RawImage) -> Result<rawler::pixarray::Color2D<f32, 3>> {
+    use rawler::imgop::sensor::{bayer::superpixel::Superpixel3Channel, Demosaic};
+    let config = bayer_config(raw).context("half-size develop needs an RGB Bayer sensor")?;
+    let intermediate =
+        RawDevelop::new_with(&[ProcessingStep::Rescale]).develop_intermediate(raw)?;
+    let Intermediate::Monochrome(pixels) = intermediate else {
+        anyhow::bail!("Nikon Bayer sensor did not return one sample per photosite");
+    };
+    let roi = raw.active_area.unwrap_or(pixels.rect());
+    let mut camera = Superpixel3Channel::new().demosaic(&pixels, &config.cfa, &config.colors, roi);
+    if let Some(mut crop) = raw.crop_area.or(raw.active_area) {
+        if let Some(active_area) = &raw.active_area {
+            crop = crop.adapt(active_area);
+        }
+        crop.scale(0.5);
+        if crop.d != camera.dim() {
+            camera = camera.crop(crop);
+        }
+    }
+    Ok(camera)
 }
 
 const SAMPLE_STRIDE: usize = 64;
@@ -331,6 +364,36 @@ fn render_pixel(linear: [f32; 3], exposure: f32) -> [u16; 3] {
 /// downstream quantization must be fixed separately before claiming a
 /// complete 16-bit non-destructive editing pipeline.
 pub(super) fn develop(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
+    develop_sized(raw, false)
+}
+
+/// Long edge of the half-size develop ([`develop_half`]), or `None` when the
+/// sensor is not an RGB Bayer sensor and there is no half-size develop.
+pub(super) fn half_size_long_edge(raw: &rawler::RawImage) -> Option<usize> {
+    bayer_config(raw)?;
+    let area = raw.crop_area.or(raw.active_area);
+    let (width, height) = area.map_or((raw.width, raw.height), |area| (area.d.w, area.d.h));
+    Some(width.max(height) / 2)
+}
+
+/// [`develop`] at half size: each 2×2 Bayer block becomes one pixel (no
+/// interpolation), for exports that need no more than half the sensor.
+pub(super) fn develop_half(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
+    develop_sized(raw, true)
+}
+
+fn bayer_config(raw: &rawler::RawImage) -> Option<&rawler::rawimage::CFAConfig> {
+    match &raw.photometric {
+        rawler::rawimage::RawPhotometricInterpretation::Cfa(config)
+            if config.cfa.is_rgb() && config.sensor == rawler::imgop::sensor::SensorType::Bayer =>
+        {
+            Some(config)
+        }
+        _ => None,
+    }
+}
+
+fn develop_sized(raw: &mut rawler::RawImage, half: bool) -> Result<DynamicImage> {
     let a_fraction = select_as_shot_calibration(raw);
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -341,7 +404,7 @@ pub(super) fn develop(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
     }
     // Preserve float values through tone rendering: never convert rawler's
     // calibrated linear pixels to RGB8 or sRGB-encoded RGB16 first.
-    let linear = develop_scene_linear(raw)?;
+    let linear = develop_scene_linear(raw, half)?;
     let width = u32::try_from(linear.width).context("RAW image width exceeds u32")?;
     let height = u32::try_from(linear.height).context("RAW image height exceeds u32")?;
     let gain = scene_exposure_gain(&linear.data);

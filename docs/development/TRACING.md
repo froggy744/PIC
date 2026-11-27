@@ -30,6 +30,8 @@ A passing display test swallows `stderr`, so add `-- --nocapture` when a trace i
 | `PIC_WATCH_TRACE` | `window/build.rs` | Folder watching: monitor rebuilds (watched folders, monitors, catch-up refreshes), raw monitor events, debounced refresh dispatch. |
 | `PIC_LIBRARY_MAINTENANCE_TRACE` | `window/build.rs`, `settings/database.rs`, `thumbnail/batch.rs` | Library maintenance. |
 | `PIC_EXPORT_BENCH_ALBUM` | `main.rs` (debug builds only, `cfg(debug_assertions)`), `edit/export_benchmark.rs` | Runs the export benchmark on an album instead of starting the app. |
+| `PIC_EXPORT_BENCH_MAX_EDGE` | `edit/export_benchmark.rs` | Export size of the benchmark (default 3840). |
+| `PIC_NEF_HALF_EXPORT` | `thumbnail/viewer.rs` | `0` turns off the half-size Nikon develop for small exports (always full-size sensor develop). |
 
 Lightbox large images under `PICASA_TRACE`: `PIC_DECODE stage=full_decode_retain action=publish|skip_not_owner|skip_limit|take_native|release_navigation|release_close`, `stage=full_decode_reuse`, `stage=rgba_resize opaque=`, `stage=rgba_conversion source=rgba_moved`. `scripts/bench-lightbox-large-images.sh` counts cancellations from `decode_done ... outcome=error` and `display_discard` lines.
 

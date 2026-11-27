@@ -118,6 +118,9 @@ struct ViewerRequestKey {
     edit_recipe: String,
     target_width: u32,
     target_height: u32,
+    /// The photo's long edge, so effects sized in source pixels look the
+    /// same at the viewer's size as in a full-size export.
+    source_long_edge: u32,
 }
 
 struct ViewerDecodeResult {

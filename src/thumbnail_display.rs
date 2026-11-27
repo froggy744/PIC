@@ -639,7 +639,18 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     image = crate::edit::render::apply_library_rotation(image, request.rotation);
     let recipe = crate::edit::EditRecipe::decode(&request.edit_recipe);
     if !recipe.is_default() {
-        image = crate::edit::render::apply_recipe(image, &recipe);
+        let size = crate::edit::render::RenderSize {
+            source_long_edge: request.source_width.max(request.source_height).max(0) as u32,
+            max_edge: 0,
+        };
+        image = crate::edit::render::render_sized(
+            image,
+            0,
+            &recipe,
+            size,
+            &mut crate::edit::render::NoObserver,
+        )
+        .expect("a render nobody cancels always completes");
     }
 
     DisplayOutcome::Loaded {
@@ -714,7 +725,7 @@ fn shrink_to_short_edge(image: image::RgbaImage, target: u32) -> image::RgbaImag
     )
 }
 
-fn crop_raw_cached_preview(
+pub(crate) fn crop_raw_cached_preview(
     mut image: image::RgbaImage,
     source_width: i64,
     source_height: i64,
@@ -863,6 +874,17 @@ mod tests {
         let image = image::RgbaImage::new(200, 300);
         let cropped = crop_raw_cached_preview(image, 6000, 4000);
         assert_eq!(cropped.dimensions(), (200, 300));
+    }
+
+    #[test]
+    fn raw_crop_removes_letterbox_bars_on_either_sensor_axis() {
+        // A 4:3 embedded preview of a 3:2 sensor, as stored and as rotated.
+        let landscape = crop_raw_cached_preview(image::RgbaImage::new(640, 480), 6000, 4000);
+        assert_eq!(landscape.dimensions(), (640, 427));
+        let portrait = crop_raw_cached_preview(image::RgbaImage::new(480, 640), 6000, 4000);
+        assert_eq!(portrait.dimensions(), (427, 640));
+        let portrait_sensor = crop_raw_cached_preview(image::RgbaImage::new(480, 640), 4000, 6000);
+        assert_eq!(portrait_sensor.dimensions(), (427, 640));
     }
 
     #[test]

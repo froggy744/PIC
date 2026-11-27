@@ -213,25 +213,9 @@ fn reset_amount_on_creative_filter_selection(recipe: &mut EditRecipe) {
 }
 
 fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
-    if recipe.clarity != 0.0 {
-        "clarity"
-    } else if recipe.smooth != 0.0 {
-        "smooth"
-    } else if recipe.vignette != 0.0 {
-        "vignette"
-    } else if recipe.grain != 0.0 {
-        "grain"
-    } else if recipe.filter != FilterPreset::None {
-        "filter"
-    } else if recipe.auto_color || recipe.auto_contrast || recipe.auto_brightness {
-        "auto_adjustment"
-    } else if recipe.auto_enhance {
-        "auto_enhance"
-    } else if recipe.black_white || recipe.sepia {
-        "look"
-    } else {
-        "unsupported_recipe"
-    }
+    // A recipe the shader can draw falls back only for the view: GPU Auto
+    // corrections are approved for native 1:1 with no library rotation.
+    super::tone::gpu_unsupported_reason(recipe).unwrap_or("auto_needs_native_view")
 }
 
 pub fn build(
@@ -3531,12 +3515,17 @@ mod panel_tests {
     }
 
     #[test]
-    fn clarity_fallback_is_identified_in_renderer_trace() {
+    fn cpu_fallback_names_the_setting_the_gpu_cannot_draw() {
         let mut recipe = EditRecipe::default();
+        recipe.smooth = 0.1;
+        assert_eq!(cpu_fallback_reason(&recipe), "smooth");
+        recipe.smooth = 0.0;
         recipe.clarity = 0.1;
-        assert_eq!(cpu_fallback_reason(&recipe), "clarity");
-        recipe.clarity = 0.0;
-        assert_eq!(cpu_fallback_reason(&recipe), "unsupported_recipe");
+        assert_eq!(
+            cpu_fallback_reason(&recipe),
+            "auto_needs_native_view",
+            "clarity is drawn by the shader"
+        );
     }
 
     fn descendants(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {

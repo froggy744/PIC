@@ -11,6 +11,7 @@ pub mod overlays;
 pub mod quick_save;
 pub mod render;
 pub mod text_render;
+pub mod tone;
 
 pub use editor::{build as build_editor, EditEditor};
 pub use model::EditRecipe;

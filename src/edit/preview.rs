@@ -384,6 +384,7 @@ mod tests {
             &recipe.encode(),
             160,
             120,
+            0,
         )
         .unwrap();
         assert_eq!(fit, one_to_one);

@@ -1,22 +1,32 @@
-/* Keep the shared Notes editor legible over every inspector background. */
-@define-color pic_notes_bg #f8f8f8;
-@define-color pic_notes_fg #202124;
+/* Keep the shared Notes editor legible over every inspector background.
+   It follows the theme and colour scheme: the view surface with the theme's
+   text colour. `theme_fg_color` rather than `view_fg_color` because overlay
+   themes (e.g. "windows old") pin light surfaces and only redefine
+   `theme_fg_color`; the all-themes contrast test checks every pair. */
+@define-color pic_notes_bg @view_bg_color;
+@define-color pic_notes_fg @theme_fg_color;
 
 .photo-tags-global .scrapbook-note-edit {
   background-color: @pic_notes_bg;
   background-image: none;
   color: @pic_notes_fg;
-  border: 1px solid #767676;
+  caret-color: @pic_notes_fg;
+  border: 1px solid alpha(@pic_notes_fg, 0.25);
   border-radius: 6px;
   box-shadow: none;
 }
 .photo-tags-global .scrapbook-note-edit:focus-within {
-  border-color: #555555;
+  border-color: alpha(@pic_notes_fg, 0.45);
   outline: 2px solid alpha(@accent_bg_color, 0.6);
   outline-offset: 1px;
 }
 .photo-tags-global .scrapbook-note-edit text {
   background-color: transparent;
   background-image: none;
+  color: @pic_notes_fg;
+  caret-color: @pic_notes_fg;
+}
+.photo-tags-global .scrapbook-note-edit text selection {
+  background-color: alpha(@accent_bg_color, 0.35);
   color: @pic_notes_fg;
 }

@@ -2,7 +2,6 @@ use gio::prelude::{AppInfoExt, SettingsExt};
 
 thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
-    static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -1761,12 +1760,16 @@ fn properties_photo_content(
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
     content.append(&scroll);
-    let sections = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let sections = gtk::Box::new(gtk::Orientation::Vertical, 0);
     sections.add_css_class("scrapbook-inspector-body");
-    sections.set_margin_start(12);
-    sections.set_margin_end(12);
-    sections.set_margin_top(8);
-    sections.set_margin_bottom(8);
+    sections.add_css_class("properties-body");
+    // The sidebar's geometry: a 10 px outer inset, then each block's own
+    // 10 px alignment inset (`properties_inset`), so text and icons share
+    // the sidebar's leading edge and rows can highlight edge to edge.
+    sections.set_margin_start(sidebar::SIDEBAR_ROOT_INSET);
+    sections.set_margin_end(sidebar::SIDEBAR_ROOT_INSET);
+    sections.set_margin_top(10);
+    sections.set_margin_bottom(16);
     sections.set_valign(gtk::Align::Start);
     scroll.set_child(Some(&sections));
 
@@ -1779,12 +1782,34 @@ fn properties_photo_content(
     scrapbook_selected.set_can_target(false);
     sections.append(&scrapbook_selected);
 
+    // Header: the panel title and its close button. It lives in `sections`
+    // so a rebuild swaps it with the rest and the scroll restore keeps
+    // reading `content > scroll`.
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, sidebar::SIDEBAR_ITEM_SPACING);
+    header.add_css_class("properties-header");
+    header.add_css_class("sidebar-primary-section-heading");
+    properties_inset(&header);
+    // Uppercase like the sidebar's LIBRARY / ALBUMS / FOLDERS headings.
+    let title = gtk::Label::new(Some("PROPERTIES"));
+    // The sidebar's section-heading type: 12 px, medium weight, dimmed.
+    title.add_css_class("sidebar-section-heading-title");
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    header.append(&title);
+    let close = sidebar::sidebar_action_button("window-close-symbolic", Some("Close properties"));
+    close.set_focusable(true);
+    close.set_focus_on_click(false);
+    close.connect_clicked(move |_| on_close());
+    header.append(&close);
+    sections.append(&header);
+
     // Inspector layout: photo preview above compact metadata, never side-by-side.
     // Use a fixed-height base child for the preview. GtkPicture's natural
     // aspect-ratio requisition must NOT determine the inspector row height:
     // portrait screenshots used to stretch it to hundreds of pixels.
     let preview_frame = gtk::Overlay::new();
     preview_frame.add_css_class("scrapbook-inspector-preview");
+    preview_frame.add_css_class("properties-preview");
     preview_frame.set_hexpand(true);
     preview_frame.set_overflow(gtk::Overflow::Hidden);
     let preview_base = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -1803,153 +1828,398 @@ fn properties_photo_content(
         preview_frame.add_overlay(&preview);
     } else {
         let missing = gtk::Image::from_icon_name("image-x-generic-symbolic");
-        missing.set_pixel_size(56);
+        missing.set_pixel_size(40);
         missing.add_css_class("dim-label");
         preview_frame.add_overlay(&missing);
     }
-    let preview_overlay = gtk::Overlay::new();
-    preview_overlay.set_child(Some(&preview_frame));
-    let close = gtk::Button::new();
-    let close_icon = gtk::Image::from_icon_name("window-close-symbolic");
-    close_icon.set_pixel_size(12);
-    close.set_child(Some(&close_icon));
-    close.set_tooltip_text(Some("Close properties"));
-    close.set_focus_on_click(false);
-    // Avoid libadwaita's circular/osd padding, which makes the background
-    // much bigger than the icon even with a small size request.
-    close.add_css_class("flat");
-    close.add_css_class("pic-inspector-close");
-    close.set_size_request(20, 20);
-    INSPECTOR_CLOSE_CSS_INSTALLED.with(|installed| {
-      if !installed.replace(true) {
-        let close_css = gtk::CssProvider::new();
-        close_css.load_from_string(
-        "button.pic-inspector-close { min-width: 20px; min-height: 20px;          padding: 0; margin: 0; border: 0; border-radius: 999px;          background-color: alpha(black, 0.55); color: white;          box-shadow: none; }          button.pic-inspector-close:hover { background-color: alpha(black, 0.75); }"
-    );
-        if let Some(display) = gtk::gdk::Display::default() {
-            gtk::style_context_add_provider_for_display(
-                &display, &close_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
-            );
-        }
-      }
-    });
-    close.set_halign(gtk::Align::End);
-    close.set_valign(gtk::Align::Start);
-    close.set_margin_top(5);
-    close.set_margin_end(5);
-    close.connect_clicked(move |_| on_close());
-    preview_overlay.add_overlay(&close);
-    sections.append(&preview_overlay);
+    properties_inset(&preview_frame);
+    sections.append(&preview_frame);
 
-    let image_group = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    image_group.add_css_class("scrapbook-inspector-metadata");
-    // No redundant heading above the file metadata rows.
-    add_inspector_row(&image_group, "File name", &photo.filename());
-    add_inspector_row(&image_group, "Date taken", &date);
-    add_inspector_row(&image_group, "Dimensions", &dimensions);
-    add_inspector_row(&image_group, "File size", &crate::infobar::format_size(size));
-    add_inspector_row(&image_group, "File type", &file_type(&path));
-    add_inspector_row(&image_group, "Rotation", &format!("{rotation}°"));
-    add_inspector_row(&image_group, "Favourite", if favorite { "Yes" } else { "No" });
+    // Summary: name, date, then type · megapixels · size, then the marks.
+    let summary = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    summary.add_css_class("properties-summary");
+    let filename = photo.filename();
+    let name = properties_text(&filename, &["properties-filename"]);
+    name.set_wrap(false);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    name.set_tooltip_text(Some(&filename));
+    summary.append(&name);
+    summary.append(&properties_text(&date, &["dim-label"]));
+    let megapixels = (width > 0 && height > 0)
+        .then(|| format!("{:.1} MP", (width as f64 * height as f64) / 1_000_000.0));
+    let facts: Vec<String> = [
+        Some(file_type(&path)),
+        megapixels,
+        (size > 0).then(|| crate::infobar::format_size(size)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    summary.append(&properties_text(&facts.join(" · "), &["dim-label"]));
     let rating = record.as_ref().map(|item| item.rating).unwrap_or_else(|| photo.rating());
-    let rating_text = if rating > 0 {
-        format!("{} / 5", rating.clamp(1, 5))
-    } else {
-        "Unrated".to_string()
-    };
-    add_inspector_row(&image_group, "Rating", &rating_text);
-    sections.append(&image_group);
+    summary.append(&properties_marks(rating, favorite));
+    properties_inset(&summary);
+    sections.append(&summary);
 
-    let camera_group = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    camera_group.add_css_class("scrapbook-inspector-metadata");
-    let camera_heading = gtk::Label::new(Some("Camera"));
-    camera_heading.set_xalign(0.0);
-    camera_heading.add_css_class("properties-section-heading");
-    camera_group.append(&camera_heading);
-    let mut camera_rows = 0;
     let camera_name = record
         .as_ref()
         .and_then(|item| item.camera.clone())
         .or_else(|| photo.camera());
     let lens_name = record.as_ref().and_then(|item| item.lens.clone());
     // Blank EXIF strings are not meaningful camera metadata.
-    let camera_name = camera_name.filter(|name| !name.trim().is_empty());
+    let camera_name = camera_name
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| properties_camera_name(&name));
     let lens_name = lens_name.filter(|name| !name.trim().is_empty());
-    if let Some(name) = camera_name.as_deref() {
-        add_inspector_row(&camera_group, "Camera", name);
-        camera_rows += 1;
-    }
-    if let Some(name) = lens_name.as_deref() {
-        add_inspector_row(&camera_group, "Lens", name);
-        camera_rows += 1;
-    }
-    let camera_values = [
-        ("Aperture", record.as_ref().and_then(|item| item.aperture)
-            .or_else(|| Some(photo.aperture())).and_then(format_aperture)),
-        ("Shutter speed", record.as_ref().and_then(|item| item.shutter_speed)
-            .and_then(format_shutter_speed)),
-        ("ISO", record.as_ref().and_then(|item| item.iso)
-            .filter(|value| *value > 0).map(|value| value.to_string())),
-        ("Focal length", record.as_ref().and_then(|item| item.focal_length)
-            .and_then(format_focal_length)),
-        ("Exposure", record.as_ref().and_then(|item| item.exposure_bias)
-            .and_then(format_exposure_bias)),
-    ];
+    let aperture = record
+        .as_ref()
+        .and_then(|item| item.aperture)
+        .or_else(|| Some(photo.aperture()))
+        .and_then(format_aperture);
+    let shutter = record
+        .as_ref()
+        .and_then(|item| item.shutter_speed)
+        .and_then(format_shutter_speed);
+    let iso = record
+        .as_ref()
+        .and_then(|item| item.iso)
+        .filter(|value| *value > 0)
+        .map(|value| format!("ISO {value}"));
+    let focal_length = record
+        .as_ref()
+        .and_then(|item| item.focal_length)
+        .and_then(format_focal_length);
+    let exposure_bias = record
+        .as_ref()
+        .and_then(|item| item.exposure_bias)
+        .and_then(format_exposure_bias);
     // Exposure bias alone (often a default 0.0) is not proof that a
     // wallpaper or other image has actual camera EXIF data.
-    let has_camera_data = camera_rows > 0
-        || camera_values[..4].iter().any(|(_, value)| value.is_some());
-    if has_camera_data {
-        for (name, value) in &camera_values {
-            if let Some(value) = value.as_deref() {
-                add_inspector_row(&camera_group, name, value);
-            }
-        }
-        sections.append(&camera_group);
-    }
+    let has_camera_data = camera_name.is_some()
+        || lens_name.is_some()
+        || aperture.is_some()
+        || shutter.is_some()
+        || iso.is_some()
+        || focal_length.is_some();
 
-    // Compact, unboxed location footer. Display readable spaces but copy
-    // the original URI/path exactly (including percent escapes).
-    let location_footer = gtk::Box::new(gtk::Orientation::Vertical, 3);
-    location_footer.add_css_class("scrapbook-inspector-location");
-    location_footer.set_margin_top(4);
-    let footer_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let folder_icon = gtk::Image::from_icon_name("folder-symbolic");
-    folder_icon.add_css_class("dim-label");
-    footer_header.append(&folder_icon);
-    let location_title = gtk::Label::new(Some("File Location"));
-    location_title.add_css_class("properties-section-heading");
-    location_title.add_css_class("caption");
-    location_title.set_xalign(0.0);
-    location_title.set_hexpand(true);
-    footer_header.append(&location_title);
-    let copy_path = gtk::Button::from_icon_name("edit-copy-symbolic");
-    copy_path.add_css_class("flat");
+    let exposure: Vec<&str> = [&aperture, &shutter, &iso]
+        .into_iter()
+        .filter_map(|value| value.as_deref())
+        .collect();
+    if camera_name.is_some() || lens_name.is_some() || !exposure.is_empty() {
+        sections.append(&properties_divider());
+        let camera = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        camera.add_css_class("scrapbook-inspector-metadata");
+        camera.add_css_class("properties-camera");
+        if let Some(name) = camera_name.as_deref() {
+            camera.append(&properties_text(name, &["properties-camera-name"]));
+        }
+        if let Some(name) = lens_name.as_deref() {
+            camera.append(&properties_text(name, &["dim-label"]));
+        }
+        if !exposure.is_empty() {
+            camera.append(&properties_text(&exposure.join(" · "), &["properties-exposure"]));
+        }
+        properties_inset(&camera);
+        sections.append(&camera);
+    }
+    sections.append(&properties_divider());
+
+    // Secondary information collapses; the summary above stays visible.
+    let details = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    details.add_css_class("scrapbook-inspector-metadata");
+    properties_inset(&details);
+    add_inspector_row(&details, "Dimensions", &dimensions);
+    if let Some(value) = focal_length.as_deref() {
+        add_inspector_row(&details, "Focal length", value);
+    }
+    if has_camera_data {
+        if let Some(value) = exposure_bias.as_deref() {
+            add_inspector_row(&details, "Exposure", value);
+        }
+    }
+    add_inspector_row(&details, "Rotation", &format!("{rotation}°"));
+    sections.append(&properties_section(
+        &context.connection,
+        PropertiesSection::Details,
+        "help-about-symbolic",
+        "Details",
+        &details,
+    ));
+
+    // Display readable spaces but copy the original URI/path exactly
+    // (including percent escapes).
+    let location = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    location.add_css_class("scrapbook-inspector-location");
+    properties_inset(&location);
+    let readable_path = path.replace("%20", " ");
+    let path_value = gtk::Label::new(Some(&readable_path));
+    path_value.set_xalign(0.0);
+    path_value.set_valign(gtk::Align::Center);
+    path_value.set_hexpand(true);
+    path_value.set_wrap(true);
+    path_value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    path_value.set_width_chars(1);
+    path_value.set_selectable(false);
+    path_value.add_css_class("dim-label");
+    location.append(&path_value);
+    let copy_path = sidebar::sidebar_action_button("edit-copy-symbolic", Some("Copy full file path"));
+    copy_path.set_focusable(true);
+    copy_path.set_valign(gtk::Align::Start);
     copy_path.set_focus_on_click(false);
-    copy_path.set_tooltip_text(Some("Copy full file path"));
     let original_path = path.clone();
     copy_path.connect_clicked(move |_| {
         if let Some(display) = gtk::gdk::Display::default() {
             display.clipboard().set_text(&original_path);
         }
     });
-    footer_header.append(&copy_path);
-    location_footer.append(&footer_header);
+    location.append(&copy_path);
+    sections.append(&properties_section(
+        &context.connection,
+        PropertiesSection::Location,
+        "folder-symbolic",
+        "Location",
+        &location,
+    ));
 
-    let readable_path = path.replace("%20", " ");
-    let path_value = gtk::Label::new(Some(&readable_path));
-    path_value.set_xalign(0.0);
-    path_value.set_hexpand(true);
-    path_value.set_wrap(true);
-    path_value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    path_value.set_width_chars(1);
-    path_value.set_selectable(false);
-    path_value.add_css_class("caption");
-    path_value.add_css_class("dim-label");
-    location_footer.append(&path_value);
-    sections.append(&location_footer);
     sections.append(&scrapbook_inspector_extra(photo, context, surface));
     PropertiesContent { content, scroll, sections }
+}
+
+/// A left-aligned, wrapping Properties label with `classes`.
+fn properties_text(text: &str, classes: &[&str]) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_width_chars(1);
+    for class in classes {
+        label.add_css_class(class);
+    }
+    label
+}
+
+fn properties_divider() -> gtk::Separator {
+    let divider = gtk::Separator::new(gtk::Orientation::Horizontal);
+    divider.add_css_class("properties-divider");
+    properties_inset(&divider);
+    divider
+}
+
+/// The sidebar's alignment inset on both sides of a Properties block.
+fn properties_inset(widget: &impl IsA<gtk::Widget>) {
+    widget.set_margin_start(sidebar::SIDEBAR_ALIGNMENT_INSET);
+    widget.set_margin_end(sidebar::SIDEBAR_CONTENT_INSET);
+}
+
+/// A sidebar row's contents: the row padding and alignment insets, with
+/// the sidebar's icon-to-label spacing.
+fn properties_row_content() -> gtk::Box {
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, sidebar::SIDEBAR_ITEM_SPACING);
+    content.set_margin_top(sidebar::SIDEBAR_ROW_PADDING_Y);
+    content.set_margin_bottom(sidebar::SIDEBAR_ROW_PADDING_Y);
+    properties_inset(&content);
+    content
+}
+
+/// A sidebar navigation glyph: 16 px in the sidebar's 18 px icon slot.
+fn properties_row_icon(icon_name: &str) -> gtk::Image {
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(sidebar::SIDEBAR_NAVIGATION_GLYPH_SIZE);
+    icon.set_size_request(sidebar::SIDEBAR_ICON_SIZE, sidebar::SIDEBAR_ICON_SIZE);
+    icon.set_valign(gtk::Align::Center);
+    icon.add_css_class("sidebar-navigation-icon");
+    icon
+}
+
+/// The photo's rating and favourite as read-only marks; the InfoBar and
+/// the photo menu change them.
+fn properties_marks(rating: i32, favorite: bool) -> gtk::Box {
+    let marks = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    marks.add_css_class("properties-marks");
+    let rating = rating.clamp(0, 5);
+    let stars = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    stars.set_hexpand(true);
+    for star in 1..=5 {
+        let lit = star <= rating;
+        // The InfoBar's stars: the same two glyphs in the text colour.
+        let icon = gtk::Image::from_icon_name(if lit { "starred-symbolic" } else { "non-starred-symbolic" });
+        icon.set_pixel_size(sidebar::SIDEBAR_NAVIGATION_GLYPH_SIZE);
+        stars.append(&icon);
+    }
+    let rating_text = if rating > 0 {
+        format!("Rating: {rating} / 5")
+    } else {
+        "Unrated".to_string()
+    };
+    stars.set_tooltip_text(Some(&rating_text));
+    stars.update_property(&[gtk::accessible::Property::Label(&rating_text)]);
+    marks.append(&stars);
+    // The InfoBar's heart: each theme's favourite red (`favorite-badge`,
+    // the colour the InfoBar's active heart uses) or dimmed like the
+    // InfoBar's inactive heart (`properties-favorite`, base.css).
+    let heart = gtk::Image::from_icon_name("emote-love-symbolic");
+    heart.set_pixel_size(sidebar::SIDEBAR_NAVIGATION_GLYPH_SIZE);
+    heart.add_css_class(if favorite { "favorite-badge" } else { "properties-favorite" });
+    let favorite_text = if favorite { "Favourite" } else { "Not a favourite" };
+    heart.set_tooltip_text(Some(favorite_text));
+    heart.update_property(&[gtk::accessible::Property::Label(favorite_text)]);
+    marks.append(&heart);
+    marks
+}
+
+/// Display name for a stored camera string. Older imports keep EXIF Make
+/// and Model together ("NIKON CORPORATION NIKON Z 5"); show the brand once,
+/// in its usual spelling ("Nikon Z 5"). The stored value is unchanged.
+fn properties_camera_name(raw: &str) -> String {
+    const BRANDS: &[(&str, &str)] = &[
+        ("nikon corporation", "Nikon"),
+        ("nikon", "Nikon"),
+        ("canon inc.", "Canon"),
+        ("canon inc", "Canon"),
+        ("canon", "Canon"),
+        ("sony corporation", "Sony"),
+        ("sony", "Sony"),
+        ("olympus imaging corp.", "Olympus"),
+        ("olympus corporation", "Olympus"),
+        ("olympus", "Olympus"),
+        ("om digital solutions", "OM System"),
+        ("fujifilm corporation", "Fujifilm"),
+        ("fujifilm", "Fujifilm"),
+        ("panasonic", "Panasonic"),
+        ("leica camera ag", "Leica"),
+        ("leica", "Leica"),
+        ("pentax corporation", "Pentax"),
+        ("pentax", "Pentax"),
+        ("ricoh imaging company, ltd.", "Ricoh"),
+        ("ricoh", "Ricoh"),
+        ("samsung", "Samsung"),
+        ("hasselblad", "Hasselblad"),
+    ];
+    let mut rest = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut brand = None;
+    // Strip every leading brand spelling: "NIKON CORPORATION NIKON Z 5"
+    // carries two.
+    'strip: loop {
+        let lower = rest.to_lowercase();
+        for (prefix, name) in BRANDS {
+            let matched = lower == *prefix
+                || lower
+                    .strip_prefix(prefix)
+                    .is_some_and(|tail| tail.starts_with(' '));
+            if matched {
+                rest = rest[prefix.len()..].trim_start().to_string();
+                brand = Some(*name);
+                continue 'strip;
+            }
+        }
+        break;
+    }
+    match brand {
+        Some(brand) if rest.is_empty() => brand.to_string(),
+        Some(brand) => format!("{brand} {rest}"),
+        None => rest,
+    }
+}
+
+/// The collapsible Properties sections, as bits of the saved setting.
+#[derive(Clone, Copy)]
+enum PropertiesSection {
+    Details = 1,
+    Location = 2,
+    Tags = 4,
+    Notes = 8,
+}
+
+/// The library setting that remembers which Properties sections are open.
+const PROPERTIES_SECTIONS_SETTING_KEY: &str = "properties-open-sections";
+
+/// Which sections are open; Details and Tags & albums until the user
+/// changes it.
+fn properties_open_sections(connection: &Connection) -> u8 {
+    db::setting(connection, PROPERTIES_SECTIONS_SETTING_KEY)
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(PropertiesSection::Details as u8 | PropertiesSection::Tags as u8)
+}
+
+/// A collapsible section: a full-width header row (icon, title, chevron)
+/// over `body`. Which sections are open is saved in the library, so moving
+/// between photos and restarting keep the sections the user opened.
+fn properties_section(
+    connection: &Rc<RefCell<Connection>>,
+    section: PropertiesSection,
+    icon_name: &str,
+    title: &str,
+    body: &impl IsA<gtk::Widget>,
+) -> gtk::Box {
+    let bit = section as u8;
+    let expanded = properties_open_sections(&connection.borrow()) & bit != 0;
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.add_css_class("properties-collapsible");
+
+    let header = gtk::Button::new();
+    header.add_css_class("flat");
+    header.add_css_class("properties-collapsible-header");
+    header.set_margin_top(sidebar::SIDEBAR_ROW_MARGIN_Y);
+    header.set_margin_bottom(sidebar::SIDEBAR_ROW_MARGIN_Y);
+    let row = properties_row_content();
+    row.append(&properties_row_icon(icon_name));
+    let label = gtk::Label::new(Some(title));
+    label.set_xalign(0.0);
+    label.set_valign(gtk::Align::Center);
+    label.set_hexpand(true);
+    row.append(&label);
+    // The sidebar headings' disclosure: pan-end closed, pan-down open, a
+    // 14 px glyph centred in the 28 px action column.
+    let chevron_name = |open: bool| if open { "pan-down-symbolic" } else { "pan-end-symbolic" };
+    let chevron = gtk::Image::from_icon_name(chevron_name(expanded));
+    chevron.set_pixel_size(sidebar::SIDEBAR_ACTION_ICON_SIZE);
+    chevron.set_size_request(sidebar::SIDEBAR_CONTROL_SIZE, -1);
+    chevron.set_valign(gtk::Align::Center);
+    chevron.add_css_class("properties-section-chevron");
+    row.append(&chevron);
+    header.set_child(Some(&row));
+    header.update_state(&[gtk::accessible::State::Expanded(Some(expanded))]);
+
+    let revealer = gtk::Revealer::new();
+    revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    revealer.set_reveal_child(expanded);
+    body.add_css_class("properties-collapsible-body");
+    revealer.set_child(Some(body));
+
+    let revealer_for_click = revealer.clone();
+    let connection = connection.clone();
+    header.connect_clicked(move |header| {
+        let open = !revealer_for_click.reveals_child();
+        revealer_for_click.set_reveal_child(open);
+        chevron.set_icon_name(Some(chevron_name(open)));
+        header.update_state(&[gtk::accessible::State::Expanded(Some(open))]);
+        let connection = connection.borrow();
+        let sections = properties_open_sections(&connection);
+        let sections = if open { sections | bit } else { sections & !bit };
+        if let Err(error) =
+            db::set_setting(&connection, PROPERTIES_SECTIONS_SETTING_KEY, &sections.to_string())
+        {
+            eprintln!("Could not save the open Properties sections: {error:#}");
+        }
+    });
+    root.append(&header);
+    root.append(&revealer);
+    root
+}
+
+/// A flat Properties action laid out like a sidebar row: glyph, then label.
+fn properties_action_button(icon_name: &str, label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("properties-action");
+    let content = properties_row_content();
+    content.append(&properties_row_icon(icon_name));
+    content.append(&gtk::Label::new(Some(label)));
+    button.set_child(Some(&content));
+    button
 }
 
 /// Global photo tags are always available from the Properties inspector,
@@ -1962,8 +2232,18 @@ fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContex
     let (tags, _) = db::scrapbook_details(&context.connection.borrow(), photo_id)
         .unwrap_or_default();
     for tag in &tags {
-        let chip = gtk::Button::with_label(&format!("{tag} ×"));
+        // A compact, content-sized chip: the tag, then a small remove glyph.
+        let chip = gtk::Button::new();
         chip.add_css_class("scrapbook-tag-chip");
+        chip.set_halign(gtk::Align::Start);
+        let chip_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        chip_content.append(&gtk::Label::new(Some(tag)));
+        let remove = gtk::Image::from_icon_name("window-close-symbolic");
+        remove.set_pixel_size(10);
+        remove.set_valign(gtk::Align::Center);
+        remove.add_css_class("properties-tag-remove");
+        chip_content.append(&remove);
+        chip.set_child(Some(&chip_content));
         chip.set_tooltip_text(Some(&format!("Remove tag {tag}")));
         let tag = tag.clone();
         let context_for_refresh = context.clone();
@@ -1989,8 +2269,7 @@ fn properties_add_tag_button(
     context: &PhotoActionContext,
     photo_id: i64,
 ) -> gtk::Button {
-    let add_tag = gtk::Button::with_label("+ Add tag");
-    add_tag.add_css_class("scrapbook-tag-add");
+    let add_tag = properties_action_button("list-add-symbolic", "Add tag");
     {
         let context = context.clone();
         let rows_for_dialog = tag_rows.downgrade();
@@ -2046,10 +2325,9 @@ fn properties_add_tag_button(
     add_tag
 }
 
-/// "+ Album" beside "+ Add tag": the one Add to Album list, for this photo.
+/// "Add to album" beside "Add tag": the one Add to Album list, for this photo.
 fn properties_add_to_album_button(context: &PhotoActionContext, photo_id: i64) -> gtk::Button {
-    let add_to_album = gtk::Button::with_label("+ Album");
-    add_to_album.add_css_class("scrapbook-tag-add");
+    let add_to_album = properties_action_button("folder-new-symbolic", "Add to album");
     add_to_album.set_tooltip_text(Some("Add to Album"));
     let context = context.clone();
     add_to_album.connect_clicked(move |button| {
@@ -2064,7 +2342,7 @@ fn scrapbook_inspector_extra(
     context: &PhotoActionContext,
     _surface: PropertiesSurface,
 ) -> gtk::Box {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("photo-tags-global");
     root.add_css_class("properties-section");
     root.add_css_class("scrapbook-inspector-extra");
@@ -2073,33 +2351,36 @@ fn scrapbook_inspector_extra(
     let (_, note) = db::scrapbook_details(&context.connection.borrow(), photo_id)
         .unwrap_or_default();
 
-    let tags_header = gtk::Label::new(Some("Tags"));
-    tags_header.add_css_class("scrapbook-inspector-paper-title");
-    tags_header.set_halign(gtk::Align::Start);
+    let tags = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let tag_rows = gtk::FlowBox::new();
     tag_rows.add_css_class("scrapbook-tags");
     tag_rows.set_selection_mode(gtk::SelectionMode::None);
     tag_rows.set_min_children_per_line(1);
     tag_rows.set_max_children_per_line(4);
-    tag_rows.set_column_spacing(5);
-    tag_rows.set_row_spacing(5);
+    tag_rows.set_column_spacing(6);
+    tag_rows.set_row_spacing(6);
+    tag_rows.set_halign(gtk::Align::Start);
     populate_properties_tags(&tag_rows, context, photo_id);
-    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    tags_header.set_hexpand(true);
-    header_row.append(&tags_header);
-    header_row.append(&properties_add_tag_button(&tag_rows, context, photo_id));
-    header_row.append(&properties_add_to_album_button(context, photo_id));
-    root.append(&header_row);
-    root.append(&tag_rows);
+    properties_inset(&tag_rows);
+    tags.append(&tag_rows);
+    // The action rows are not inset: their own row padding lines their
+    // glyphs up with the section icons above.
+    let tag_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    tag_actions.add_css_class("properties-actions");
+    tag_actions.append(&properties_add_tag_button(&tag_rows, context, photo_id));
+    tag_actions.append(&properties_add_to_album_button(context, photo_id));
+    tags.append(&tag_actions);
+    root.append(&properties_section(
+        &context.connection,
+        PropertiesSection::Tags,
+        "user-bookmarks-symbolic",
+        "Tags & albums",
+        &tags,
+    ));
 
-    let paper_details = gtk::Box::new(gtk::Orientation::Vertical, 9);
-    let notes_header = gtk::Label::new(Some("Notes"));
-    notes_header.add_css_class("scrapbook-inspector-paper-title");
-    notes_header.set_halign(gtk::Align::Start);
-    paper_details.add_css_class("properties-section");
-    paper_details.append(&notes_header);
     let note_card = gtk::Box::new(gtk::Orientation::Vertical, 7);
     note_card.add_css_class("scrapbook-note-card");
+    properties_inset(&note_card);
     let text = gtk::TextView::new();
     text.add_css_class("scrapbook-note-edit");
     text.set_wrap_mode(gtk::WrapMode::WordChar);
@@ -2111,26 +2392,56 @@ fn scrapbook_inspector_extra(
     let buffer = text.buffer();
     buffer.set_text(&note);
     note_card.append(&text);
+    // Save note appears only while the text differs from the saved note.
     let note_save = gtk::Button::with_label("Save note");
     note_save.add_css_class("scrapbook-note-save");
-    note_save.set_halign(gtk::Align::End);
+    note_save.set_visible(false);
     let status = gtk::Label::new(None);
     status.add_css_class("scrapbook-note-status");
-    note_card.append(&status);
-    note_card.append(&note_save);
+    status.add_css_class("dim-label");
+    status.add_css_class("caption");
+    status.set_xalign(0.0);
+    status.set_hexpand(true);
+    let note_footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    note_footer.append(&status);
+    note_footer.append(&note_save);
+    note_card.append(&note_footer);
+    let saved_note = Rc::new(RefCell::new(note.clone()));
+    {
+        let saved_note = saved_note.clone();
+        let note_save = note_save.clone();
+        let status = status.clone();
+        buffer.connect_changed(move |buffer| {
+            let (start, end) = buffer.bounds();
+            let changed = buffer.text(&start, &end, true).as_str() != saved_note.borrow().as_str();
+            note_save.set_visible(changed);
+            if changed {
+                status.set_label("");
+            }
+        });
+    }
     {
         let connection = context.connection.clone();
-        note_save.connect_clicked(move |_| {
+        note_save.connect_clicked(move |button| {
             let (start, end) = buffer.bounds();
             let note = buffer.text(&start, &end, true);
             match db::scrapbook_set_note(&connection.borrow(), photo_id, note.as_str()) {
-                Ok(()) => status.set_label("Saved ✓"),
+                Ok(()) => {
+                    *saved_note.borrow_mut() = note.to_string();
+                    button.set_visible(false);
+                    status.set_label("Saved ✓");
+                }
                 Err(error) => status.set_label(&format!("Could not save: {error}")),
             }
         });
     }
-    paper_details.append(&note_card);
-    root.append(&paper_details);
+    root.append(&properties_section(
+        &context.connection,
+        PropertiesSection::Notes,
+        "document-edit-symbolic",
+        "Notes",
+        &note_card,
+    ));
 
     let action_section = gtk::Box::new(gtk::Orientation::Vertical, 9);
     action_section.add_css_class("scrapbook-only");
@@ -2193,7 +2504,6 @@ fn add_inspector_row(group: &gtk::Box, name: &str, value: &str) {
         key.set_width_chars(11);
     }
     key.add_css_class("dim-label");
-    key.add_css_class("caption");
     line.append(&key);
 
     let detail = gtk::Label::new(Some(value));
@@ -2207,7 +2517,6 @@ fn add_inspector_row(group: &gtk::Box, name: &str, value: &str) {
     detail.set_width_chars(1);
     detail.set_max_width_chars(28);
     detail.set_selectable(false);
-    detail.add_css_class("caption");
     line.append(&detail);
 
     group.append(&line);
@@ -2417,6 +2726,39 @@ mod photo_actions_tests {
             assert!(!page_allows_gallery_properties(Some(page)));
         }
         assert!(!page_allows_gallery_properties(None));
+    }
+
+    #[test]
+    fn properties_camera_names_show_the_brand_once() {
+        for (stored, shown) in [
+            ("NIKON CORPORATION NIKON Z 5", "Nikon Z 5"),
+            ("NIKON Z 5", "Nikon Z 5"),
+            ("Canon EOS R5", "Canon EOS R5"),
+            ("Canon Inc. Canon EOS 5D", "Canon EOS 5D"),
+            ("SONY ILCE-7M3", "Sony ILCE-7M3"),
+            ("FUJIFILM X-T4", "Fujifilm X-T4"),
+            ("OLYMPUS IMAGING CORP.  E-M5", "Olympus E-M5"),
+            ("NIKON CORPORATION", "Nikon"),
+            ("Apple iPhone 15 Pro", "Apple iPhone 15 Pro"),
+            ("Nikonos V", "Nikonos V"),
+        ] {
+            assert_eq!(properties_camera_name(stored), shown, "{stored}");
+        }
+    }
+
+    #[test]
+    fn properties_sections_open_details_and_tags_until_changed() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        assert_eq!(
+            properties_open_sections(&connection),
+            PropertiesSection::Details as u8 | PropertiesSection::Tags as u8
+        );
+        db::set_setting(&connection, PROPERTIES_SECTIONS_SETTING_KEY, "12").unwrap();
+        assert_eq!(
+            properties_open_sections(&connection),
+            PropertiesSection::Tags as u8 | PropertiesSection::Notes as u8
+        );
     }
 
     #[test]
@@ -3092,7 +3434,7 @@ mod photo_actions_tests {
         );
     }
 
-    /// Properties' "+ Album" opens the one Add to Album list for its photo:
+    /// Properties' "Add to album" opens the one Add to Album list for its photo:
     /// manual albums as destinations, never a Smart Album.
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
@@ -3124,8 +3466,9 @@ mod photo_actions_tests {
         window.present();
         settle_gtk_layout();
 
-        let add = find_action(section.upcast_ref(), "+ Album").expect("+ Album beside + Add tag");
-        assert!(find_action(section.upcast_ref(), "+ Add tag").is_some());
+        let add = find_action(section.upcast_ref(), "Add to album")
+            .expect("Add to album beside Add tag");
+        assert!(find_action(section.upcast_ref(), "Add tag").is_some());
         add.emit_clicked();
         settle_gtk_layout();
         let mut child = add.first_child();

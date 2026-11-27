@@ -50,7 +50,8 @@ button.filter-tile:focus-visible .filter-tile-preview { border-color: @accent_bg
     .text-font-picker { min-width: 0; }
 
 /* An untagged photo keeps the heart clickable, but its icon should read as inactive. */
-.favorite-btn:not(.active):not(:disabled) image {
+.favorite-btn:not(.active):not(:disabled) image,
+.properties-favorite {
   opacity: 0.42;
 }
 
@@ -341,8 +342,6 @@ button.infobar-selected-thumb:hover {
 /* Editable photo tags are metadata shared by every PIC appearance. The
    scrapbook theme may further decorate these native widgets as stickers. */
 .photo-tags-global {
-  padding: 9px 12px 13px;
-  border-top: 1px solid alpha(@theme_fg_color, .13);
   color: @theme_fg_color;
 }
 .photo-tags-global .scrapbook-inspector-paper-title {
@@ -351,13 +350,26 @@ button.infobar-selected-thumb:hover {
   color: @theme_fg_color;
 }
 .photo-tags-global .scrapbook-tags > flowboxchild {
-  padding: 2px;
+  padding: 0;
   background: transparent;
 }
-.photo-tags-global .scrapbook-tag-chip,
+/* Tag chips: compact and content-sized, 8 px sides, a quiet remove glyph. */
+.photo-tags-global .scrapbook-tag-chip {
+  border-radius: 99px;
+  padding: 2px 8px;
+  min-height: 0;
+  min-width: 0;
+  font-weight: normal;
+  color: @theme_fg_color;
+  background: alpha(@theme_fg_color, .07);
+}
+.photo-tags-global .scrapbook-tag-chip .properties-tag-remove { opacity: 0.55; }
+.photo-tags-global .scrapbook-tag-chip:hover .properties-tag-remove { opacity: 1; }
 .photo-tags-global .scrapbook-tag-add {
   border-radius: 99px;
-  padding: 4px 8px;
+  padding: 3px 10px;
+  min-height: 0;
+  font-weight: normal;
   color: @theme_fg_color;
   background: alpha(@theme_fg_color, .07);
 }
@@ -372,17 +384,47 @@ button.infobar-selected-thumb:hover {
     background: @window_bg_color;
     color: @window_fg_color;
 }
-.scrapbook-inspector-metadata + .scrapbook-inspector-metadata,
-.scrapbook-inspector-location,
-.properties-section {
-    border-top: 1px solid alpha(@window_fg_color, 0.15);
-    padding-top: 10px;
-    margin-top: 6px;
-}
 .properties-section-heading,
 .photo-tags-global .scrapbook-inspector-paper-title {
     font-weight: 700;
 }
+
+/* Properties layout: header, preview, summary and camera stay visible;
+   secondary information sits in collapsible sections. Plain dividers, no
+   cards; colours come from the theme so light and dark both follow.
+   Insets, icon sizes, row hover, chevrons and the icon actions are the
+   sidebar's own (src/sidebar.rs constants and
+   components/sidebar_action_consistency.css); only layout lives here. */
+.properties-header { margin-bottom: 10px; }
+.properties-preview {
+    border-radius: 8px;
+    background-color: alpha(@window_fg_color, 0.07);
+}
+.properties-summary { margin-top: 14px; }
+/* Sidebar type throughout: body size, regular weight; the file name and
+   camera name are medium, as the sidebar's headings are. */
+.properties-filename { font-weight: 500; margin-bottom: 2px; }
+.properties-camera-name { font-weight: 500; }
+.properties-marks { margin-top: 10px; }
+/* The sidebar's section divider colour. */
+.properties-divider {
+    margin-top: 16px;
+    margin-bottom: 16px;
+    background-color: alpha(currentColor, 0.13);
+}
+.properties-camera .properties-exposure { margin-top: 4px; }
+/* Section rows and the Tags & albums actions are sized like sidebar rows:
+   libadwaita's `.navigation-sidebar > row` minimum height and bottom gap,
+   with the row content's own margins for padding (as in the sidebar), so
+   rows sit on the sidebar's 40 px pitch. */
+button.properties-collapsible-header,
+button.properties-action {
+    padding: 0;
+    min-height: 36px;
+    margin-bottom: 2px;
+}
+.properties-collapsible-body { padding-top: 2px; padding-bottom: 12px; }
+.properties-collapsible-body .scrapbook-note-save { font-weight: normal; }
 
 /* Focus mode: the shade over unlit gallery photos (opacity set in code). */
 .focus-dim-layer {

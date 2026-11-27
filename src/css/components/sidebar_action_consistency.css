@@ -1,5 +1,8 @@
-/* Header actions and row markers in Library, Ratings, Folders, Shared and Albums. */
-.navigation-sidebar button.sidebar-section-action {
+/* Header actions and row markers in Library, Ratings, Folders, Shared and Albums.
+ * The Properties panel (.scrapbook-inspector) reuses these sidebar rules for
+ * its close and copy actions, section rows, chevrons and Tags & albums actions. */
+.navigation-sidebar button.sidebar-section-action,
+.scrapbook-inspector button.sidebar-section-action {
     min-width: 28px;
     min-height: 28px;
     margin: 0;
@@ -13,17 +16,25 @@
     transition: background-color 140ms ease, border-color 140ms ease;
 }
 
-.navigation-sidebar button.sidebar-section-action image {
+.navigation-sidebar button.sidebar-section-action image,
+.scrapbook-inspector button.sidebar-section-action image,
+.scrapbook-inspector .properties-section-chevron {
     -gtk-icon-size: 14px;
     opacity: 0.65;
 }
 .navigation-sidebar button.sidebar-section-action:hover image,
 .navigation-sidebar button.sidebar-section-action:active image,
-.navigation-sidebar button.sidebar-section-action:focus-visible image {
+.navigation-sidebar button.sidebar-section-action:focus-visible image,
+.scrapbook-inspector button.sidebar-section-action:hover image,
+.scrapbook-inspector button.sidebar-section-action:active image,
+.scrapbook-inspector button.sidebar-section-action:focus-visible image,
+.scrapbook-inspector button.properties-collapsible-header:hover .properties-section-chevron,
+.scrapbook-inspector button.properties-collapsible-header:focus-visible .properties-section-chevron {
     opacity: 1;
 }
 
-.navigation-sidebar button.sidebar-section-action:hover {
+.navigation-sidebar button.sidebar-section-action:hover,
+.scrapbook-inspector button.sidebar-section-action:hover {
     border-color: transparent;
     border-radius: 6px;
     background: alpha(@theme_fg_color, 0.09);
@@ -31,18 +42,23 @@
     box-shadow: none;
 }
 
-.navigation-sidebar button.sidebar-section-action:active {
+.navigation-sidebar button.sidebar-section-action:active,
+.scrapbook-inspector button.sidebar-section-action:active {
     background: alpha(@theme_fg_color, 0.15);
     background-image: none;
     box-shadow: none;
 }
 
-.navigation-sidebar button.sidebar-section-action:focus-visible {
+.navigation-sidebar button.sidebar-section-action:focus-visible,
+.scrapbook-inspector button.sidebar-section-action:focus-visible,
+.scrapbook-inspector button.properties-collapsible-header:focus-visible,
+.scrapbook-inspector button.properties-action:focus-visible {
     outline: 2px solid @accent_bg_color;
     outline-offset: -2px;
 }
 
-.navigation-sidebar button.sidebar-section-action:disabled {
+.navigation-sidebar button.sidebar-section-action:disabled,
+.scrapbook-inspector button.sidebar-section-action:disabled {
     opacity: 0.45;
 }
 
@@ -71,13 +87,15 @@
 }
 
 /* The sidebar's own foreground follows its current theme. */
-.navigation-sidebar .sidebar-primary-section-heading .sidebar-section-heading-title {
+.navigation-sidebar .sidebar-primary-section-heading .sidebar-section-heading-title,
+.scrapbook-inspector .sidebar-primary-section-heading .sidebar-section-heading-title {
     font-size: 12px;
     font-weight: 500;
     color: inherit;
     opacity: 0.65;
 }
-.navigation-sidebar .sidebar-navigation-icon {
+.navigation-sidebar .sidebar-navigation-icon,
+.scrapbook-inspector .sidebar-navigation-icon {
     opacity: 0.75;
 }
 .navigation-sidebar paned.sidebar-section-paned > separator {
@@ -104,7 +122,9 @@
     font-variant-numeric: tabular-nums;
 }
 .navigation-sidebar button.compact-sidebar-button,
-.navigation-sidebar button.compact-sidebar-option {
+.navigation-sidebar button.compact-sidebar-option,
+.scrapbook-inspector button.properties-collapsible-header,
+.scrapbook-inspector button.properties-action {
     background: transparent;
     background-image: none;
     border: 0;
@@ -112,11 +132,15 @@
     box-shadow: none;
 }
 .navigation-sidebar button.compact-sidebar-button:hover,
-.navigation-sidebar button.compact-sidebar-option:hover {
+.navigation-sidebar button.compact-sidebar-option:hover,
+.scrapbook-inspector button.properties-collapsible-header:hover,
+.scrapbook-inspector button.properties-action:hover {
     background: alpha(@accent_bg_color, 0.12);
 }
 .navigation-sidebar button.compact-sidebar-button:active,
-.navigation-sidebar button.compact-sidebar-option:active {
+.navigation-sidebar button.compact-sidebar-option:active,
+.scrapbook-inspector button.properties-collapsible-header:active,
+.scrapbook-inspector button.properties-action:active {
     background: alpha(@accent_bg_color, 0.20);
 }
 
@@ -126,7 +150,9 @@
 /* The compact rail reads like the full sidebar rows: regular-weight titles
  * and the same dimmed navigation glyphs, whatever weight a theme gives buttons. */
 .navigation-sidebar button.compact-sidebar-button label,
-.navigation-sidebar button.compact-sidebar-option label {
+.navigation-sidebar button.compact-sidebar-option label,
+.scrapbook-inspector button.properties-collapsible-header label,
+.scrapbook-inspector button.properties-action label {
     font-weight: 400;
 }
 /* Rail titles are captions under the glyph, sized like the section headings. */

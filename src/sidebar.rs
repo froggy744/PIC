@@ -167,27 +167,27 @@ const FOLDER_REFRESH_KEY: &str = "picasa-sidebar-folder-refresh";
 const REFRESH_GATE_KEY: &str = "picasa-sidebar-refresh-gate";
 const ALBUM_PANE_ANIMATION_MS: u32 = 250;
 const STARTUP_VISIBLE_ALBUM_ROWS: usize = 5;
-const SIDEBAR_ROOT_INSET: i32 = 10;
-const SIDEBAR_CONTENT_INSET: i32 = 10;
+pub(crate) const SIDEBAR_ROOT_INSET: i32 = 10;
+pub(crate) const SIDEBAR_CONTENT_INSET: i32 = 10;
 // The root's 10px outer inset and this 10px start inset form the common baseline.
-const SIDEBAR_ALIGNMENT_INSET: i32 = 10;
-const SIDEBAR_ITEM_SPACING: i32 = 6;
+pub(crate) const SIDEBAR_ALIGNMENT_INSET: i32 = 10;
+pub(crate) const SIDEBAR_ITEM_SPACING: i32 = 6;
 const SIDEBAR_HEADING_SPACING: i32 = 4;
 const SIDEBAR_COUNT_WARNING_SPACING: i32 = 6;
 const SIDEBAR_HEADER_MARGIN_TOP: i32 = 6;
 const SIDEBAR_HEADER_MARGIN_BOTTOM: i32 = 4;
 const SIDEBAR_ROOT_MARGIN_TOP: i32 = 4;
 // Keep the existing slot size and shrink only the navigation glyph.
-const SIDEBAR_ICON_SIZE: i32 = 18;
+pub(crate) const SIDEBAR_ICON_SIZE: i32 = 18;
 pub(crate) const SIDEBAR_NAVIGATION_GLYPH_SIZE: i32 = 16;
 pub(crate) const SHARED_ICON_NAME: &str = "folder-publicshare-symbolic";
 const SIDEBAR_DISCLOSURE_SLOT: i32 = 12;
-const SIDEBAR_CONTROL_SIZE: i32 = 28;
-const SIDEBAR_ACTION_ICON_SIZE: i32 = 14;
+pub(crate) const SIDEBAR_CONTROL_SIZE: i32 = 28;
+pub(crate) const SIDEBAR_ACTION_ICON_SIZE: i32 = 14;
 const SIDEBAR_COUNT_WIDTH: i32 = 38;
 const SIDEBAR_WARNING_WIDTH: i32 = 16;
-const SIDEBAR_ROW_MARGIN_Y: i32 = 1;
-const SIDEBAR_ROW_PADDING_Y: i32 = 5;
+pub(crate) const SIDEBAR_ROW_MARGIN_Y: i32 = 1;
+pub(crate) const SIDEBAR_ROW_PADDING_Y: i32 = 5;
 
 /// Share the window's refresh sensitivity with existing and future menus.
 pub fn bind_refresh_gate(scrolled: &gtk::ScrolledWindow, gate: &gtk::Button) {
@@ -3670,7 +3670,7 @@ fn collapsible_heading(
     (content, indicator)
 }
 
-fn sidebar_action_button(icon_name: &str, tooltip: Option<&str>) -> gtk::Button {
+pub(crate) fn sidebar_action_button(icon_name: &str, tooltip: Option<&str>) -> gtk::Button {
     let button = gtk::Button::new();
     let image = gtk::Image::from_icon_name(icon_name);
     image.set_pixel_size(SIDEBAR_ACTION_ICON_SIZE);

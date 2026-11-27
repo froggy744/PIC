@@ -878,7 +878,7 @@ Context: `layout.rs`, `toolbar.rs`, `immersive.rs` and `shortcuts.rs` are `inclu
 - **28 · Look choice and layer selection.** Exclusive look rule written 4 times (`controls.rs:74-89`, `editor.rs:2081, 2138, 2196`); overlay/text/drawing selection lives outside `EditSession`, undo and Reset don't revalidate it.
 - **29 · Render from a cached preview.** RAW aspect fix → rotation → `apply_recipe` repeated in 6 callers; the lightbox worker and `render_for_export` repeat `apply_recipe`'s stage order inline. Copies agree today.
 
-### Round four small fixes (2026-11-27, branch `fix/round-four-small`, uncommitted)
+### Round four small fixes (merged 2026-11-27, merge `65b34d44` of `fix/round-four-small`)
 Owner's plan: 27/28/26/25 as small bug fixes, not deepening refactors; 29 and 22 deferred to a GPU/editor export-speed project.
 
 - **Pre-existing failing tests, triaged.** Both were stale tests, not product bugs. `offline_preview_uses_selected_thumbnail_cache_and_applies_rotation`: `e874db3b` removed the separate quality cache but kept its 160×120 expectations; now expects 60×80, the "no cached preview" state for a corrupt cache, and rewrites the cache before the crop step. `metadata_filters_actual_window_folder_album_and_layouts`: the explorer columns show only in ALL mode (every opening starts with individual filters, since `0c2b9055`); the test now presses ALL, waits, and turns it off again. Both pass.

@@ -417,19 +417,16 @@ mod window_tests {
         result
     }
 
-    // xvfb-run -a -s "-screen 0 1920x1080x24" env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
-    //   GSK_RENDERER=cairo cargo test --locked -- --test-threads=1 --exact \
-    //   window::open_files::window_tests::outside_photo_opens_in_the_viewer_and_saves_an_edited_copy --ignored
-    #[test]
-    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn outside_photo_opens_in_the_viewer_and_saves_an_edited_copy() {
+    /// An empty library on All Photos with the outside photo
+    /// `<directory>/photos/b.jpg` (beside a.jpg and c.jpg) opened in the
+    /// viewer, as `connect_open` does on a cold start: the paths arrive
+    /// before the window is mapped.
+    fn outside_photo_window(app_id: &str, name: &str) -> (adw::ApplicationWindow, std::path::PathBuf) {
         adw::init().unwrap();
-        let app = adw::Application::builder()
-            .application_id("io.pic.OpenFilesTest")
-            .build();
+        let app = adw::Application::builder().application_id(app_id).build();
         app.register(None::<&gio::Cancellable>).unwrap();
         let directory =
-            std::env::temp_dir().join(format!("pic-open-files-window-{}", std::process::id()));
+            std::env::temp_dir().join(format!("pic-open-files-{name}-{}", std::process::id()));
         let photos = directory.join("photos");
         std::fs::create_dir_all(&photos).unwrap();
         for name in ["a.jpg", "b.jpg", "c.jpg"] {
@@ -437,9 +434,7 @@ mod window_tests {
                 .save(photos.join(name))
                 .unwrap();
         }
-        let original = std::fs::read(photos.join("b.jpg")).unwrap();
-        let database = directory.join("library.db");
-        let connection = db::open(&database).unwrap();
+        let connection = db::open(&directory.join("library.db")).unwrap();
         for (key, value) in [
             (LAST_VIEW_SETTING_KEY, "all"),
             ("onboarding-never-show", "true"),
@@ -449,14 +444,25 @@ mod window_tests {
             db::set_setting(&connection, key, value).unwrap();
         }
         let window = crate::window::build(&app, connection);
-        // As `connect_open` does on a cold start: the paths arrive before
-        // the window is mapped.
         open_in(
             &window,
             vec![photos.join("b.jpg").to_string_lossy().into_owned()],
         );
         window.present();
         settle();
+        (window, directory)
+    }
+
+    // xvfb-run -a -s "-screen 0 1920x1080x24" env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
+    //   GSK_RENDERER=cairo cargo test --locked -- --test-threads=1 --exact \
+    //   window::open_files::window_tests::outside_photo_opens_in_the_viewer_and_saves_an_edited_copy --ignored
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn outside_photo_opens_in_the_viewer_and_saves_an_edited_copy() {
+        let (window, directory) = outside_photo_window("io.pic.OpenFilesTest", "window");
+        let photos = directory.join("photos");
+        let original = std::fs::read(photos.join("b.jpg")).unwrap();
+        let database = directory.join("library.db");
 
         let root = window.upcast_ref::<gtk::Widget>();
         let widgets = descendants(root);
@@ -575,5 +581,50 @@ mod window_tests {
         assert_eq!(shown, [false, true, false], "item, separator, item");
         window.close();
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// Candidate 21: the InfoBar Edit toggle closes the editor the same way
+    /// Back and Done do, so an outside photo returns to the viewer.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn edit_toggle_returns_an_outside_photo_to_the_viewer() {
+        let (window, directory) = outside_photo_window("io.pic.OpenFilesToggleTest", "toggle");
+        let root = window.upcast_ref::<gtk::Widget>();
+        let viewer_shows_b = || {
+            let widgets = descendants(root);
+            widgets
+                .iter()
+                .any(|widget| widget.has_css_class("lightbox-backdrop") && widget.is_drawable())
+                && widgets.iter().any(|widget| {
+                    widget
+                        .downcast_ref::<gtk::Label>()
+                        .is_some_and(|label| label.text() == "b.jpg" && label.is_drawable())
+                })
+        };
+        let edit = || {
+            descendants(root)
+                .into_iter()
+                .find(|widget| {
+                    widget.is::<gtk::Button>()
+                        && widget.is_drawable()
+                        && widget.tooltip_text().as_deref() == Some("Open or close photo editor")
+                })
+                .and_downcast::<gtk::Button>()
+                .expect("Edit button missing")
+        };
+        assert!(viewer_shows_b(), "the viewer did not open on b.jpg");
+        edit().emit_clicked();
+        settle();
+        assert!(!viewer_shows_b(), "the editor did not open");
+        edit().emit_clicked();
+        settle();
+        settle();
+        assert!(
+            viewer_shows_b(),
+            "closing the editor with Edit must return to the viewer on the outside photo"
+        );
+        window.close();
+        settle();
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

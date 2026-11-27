@@ -15,6 +15,7 @@ use crate::{db, grid, infobar::InfoBar, lightbox::Lightbox, scanner, sidebar};
 
 mod brand_heading;
 mod metadata_panel;
+mod key_dispatch;
 mod metadata_panel_presentation;
 mod navigation_filter;
 use navigation_filter::NavigationFilter;

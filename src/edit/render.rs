@@ -1268,14 +1268,18 @@ pub(super) fn largest_rotated_rect(width: f32, height: f32, angle: f32) -> (f32,
 /// white rather than discarding their alpha (which makes PNG logos dark).
 /// Opaque photo RGB samples remain bit-for-bit unchanged.
 fn flatten_jpeg_alpha(image: &RgbaImage) -> image::RgbImage {
-    image::RgbImage::from_fn(image.width(), image.height(), |x, y| {
-        let pixel = image.get_pixel(x, y);
-        let alpha = u32::from(pixel[3]);
-        image::Rgb(std::array::from_fn(|channel| {
-            let foreground = u32::from(pixel[channel]);
-            ((foreground * alpha + 255 * (255 - alpha) + 127) / 255) as u8
-        }))
-    })
+    let mut rgb = vec![0u8; image.width() as usize * image.height() as usize * 3];
+    rgb.par_chunks_mut(3)
+        .zip(image.as_raw().par_chunks(4))
+        .for_each(|(out, pixel)| {
+            let alpha = u32::from(pixel[3]);
+            for channel in 0..3 {
+                let foreground = u32::from(pixel[channel]);
+                out[channel] = ((foreground * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+            }
+        });
+    image::RgbImage::from_raw(image.width(), image.height(), rgb)
+        .expect("flattened RGB buffer matches the source dimensions")
 }
 
 pub fn save_jpeg(image: &RgbaImage, destination: &std::path::Path, quality: u8) -> Result<()> {
@@ -1289,29 +1293,86 @@ fn save_jpeg_with_metadata(
     exif: Option<&[u8]>,
     icc: Option<&[u8]>,
 ) -> Result<()> {
-    use image::ImageEncoder;
-    let file = std::fs::File::create(destination)
-        .with_context(|| format!("could not create {}", destination.display()))?;
-    let writer = std::io::BufWriter::new(file);
     let rgb = flatten_jpeg_alpha(image);
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
-    if let Some(metadata) = exif {
-        encoder
-            .set_exif_metadata(metadata.to_vec())
+    // TurboJPEG, which already decodes every JPEG, encodes several times
+    // faster than the pure-Rust encoder. Full 4:4:4 chroma, as the
+    // previous encoder wrote (measured; its docs say 4:2:2).
+    let mut compressor = turbojpeg::Compressor::new()?;
+    compressor.set_quality(i32::from(quality.clamp(1, 100)))?;
+    compressor.set_subsamp(turbojpeg::Subsamp::None)?;
+    let encoded = compressor.compress_to_vec(turbojpeg::Image {
+        pixels: rgb.as_raw().as_slice(),
+        width: rgb.width() as usize,
+        pitch: rgb.width() as usize * 3,
+        height: rgb.height() as usize,
+        format: turbojpeg::PixelFormat::RGB,
+    })?;
+    let encoded = insert_jpeg_metadata(encoded, exif, icc)?;
+    std::fs::write(destination, encoded)
+        .with_context(|| format!("could not write {}", destination.display()))
+}
+
+/// Insert EXIF (APP1) and ICC (APP2 chunks) after the JFIF header, in the
+/// layout the previous `image` encoder wrote: SOI, APP0, APP1, APP2...
+fn insert_jpeg_metadata(
+    encoded: Vec<u8>,
+    exif: Option<&[u8]>,
+    icc: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    const MAX_SEGMENT_PAYLOAD: usize = 65533;
+    if exif.is_none() && icc.is_none() {
+        return Ok(encoded);
+    }
+    anyhow::ensure!(
+        encoded.starts_with(&[0xFF, 0xD8]),
+        "JPEG encoder output has no start-of-image marker"
+    );
+    let mut insert_at = 2;
+    if encoded.get(2..4) == Some(&[0xFF, 0xE0]) {
+        let length = encoded
+            .get(4..6)
+            .map(|bytes| usize::from(u16::from_be_bytes([bytes[0], bytes[1]])))
+            .context("JPEG encoder output has a truncated JFIF header")?;
+        insert_at = 4 + length;
+        anyhow::ensure!(
+            insert_at <= encoded.len(),
+            "JPEG encoder output has a truncated JFIF header"
+        );
+    }
+    let mut segments = Vec::new();
+    let mut push_segment = |marker: u8, payload: &[u8]| -> Result<()> {
+        anyhow::ensure!(
+            payload.len() <= MAX_SEGMENT_PAYLOAD,
+            "JPEG metadata segment is too large"
+        );
+        segments.extend_from_slice(&[0xFF, marker]);
+        segments.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        segments.extend_from_slice(payload);
+        Ok(())
+    };
+    if let Some(exif) = exif.filter(|exif| !exif.is_empty()) {
+        let mut payload = b"Exif\0\0".to_vec();
+        payload.extend_from_slice(exif);
+        push_segment(0xE1, &payload)
             .map_err(|error| anyhow::anyhow!("JPEG EXIF metadata rejected: {error}"))?;
     }
-    if let Some(profile) = icc {
-        encoder
-            .set_icc_profile(profile.to_vec())
-            .map_err(|error| anyhow::anyhow!("JPEG ICC profile rejected: {error}"))?;
+    if let Some(icc) = icc.filter(|icc| !icc.is_empty()) {
+        const CHUNK: usize = MAX_SEGMENT_PAYLOAD - 14;
+        let count = icc.len().div_ceil(CHUNK);
+        anyhow::ensure!(count <= 255, "JPEG ICC profile rejected: profile too large");
+        for (index, chunk) in icc.chunks(CHUNK).enumerate() {
+            let mut payload = b"ICC_PROFILE\0".to_vec();
+            payload.push((index + 1) as u8);
+            payload.push(count as u8);
+            payload.extend_from_slice(chunk);
+            push_segment(0xE2, &payload)?;
+        }
     }
-    encoder.write_image(
-        &rgb,
-        rgb.width(),
-        rgb.height(),
-        image::ExtendedColorType::Rgb8,
-    )?;
-    Ok(())
+    let mut output = Vec::with_capacity(encoded.len() + segments.len());
+    output.extend_from_slice(&encoded[..insert_at]);
+    output.extend_from_slice(&segments);
+    output.extend_from_slice(&encoded[insert_at..]);
+    Ok(output)
 }
 
 /// Test helper for exports that have no original file metadata.

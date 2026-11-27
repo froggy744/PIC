@@ -893,7 +893,7 @@ Owner, 2026-11-27: 22, 25 and 29 are one project, "a proper CPU/GPU edit/export 
 
 **Plan, one commit per stage:**
 1. Baseline: done (above).
-2. Export JPEG encode through TurboJPEG with the same EXIF and sRGB ICC; parallel alpha flatten. Check: PSNR against the old encoder, export metadata tests, benchmark.
+2. Export JPEG encode through TurboJPEG with the same EXIF and sRGB ICC; parallel alpha flatten. Check: PSNR against the old encoder, export metadata tests, benchmark. **Done (uncommitted)**: `save_jpeg_with_metadata` (`edit/render.rs`) encodes with TurboJPEG at 4:4:4 (the old `image` encoder wrote 4:4:4, measured; its docs say 4:2:2; a 4:2:2 trial dropped to 38-40 dB) and splices EXIF (APP1) and ICC (APP2 chunks) after JFIF in the old order (`insert_jpeg_metadata`); `flatten_jpeg_alpha` runs in parallel with the same formula. 12 MP JPEG album: encode median 342 → 59 ms; batch 8979 → 5611 ms at 1 worker, 4785 → 4095 ms at 6 workers (tone saturates the CPU there); 3000 photos ≈ 22 → 19 min. New files vs old: 45.0-45.6 dB PSNR, 1.5% larger, same segment order. `edit::export_batch`, `export_metadata`, `render` tests: 68 pass (EXIF dimensions/orientation/ICC, alpha matte).
 3. A. Pixels byte-identical to the baseline outputs.
 4. B. User-visible: owner approves before/after screenshots and the PSNR against today's export.
 5. C. The 6 GL parity tests under Xvfb pass; CPU outputs identical except listed near-zero epsilon cases.

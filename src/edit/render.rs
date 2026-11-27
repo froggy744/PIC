@@ -83,7 +83,85 @@ pub fn remap_drawings_for_straighten(
 /// The editor's live preview intentionally skips the overlay step and draws
 /// overlays on a dedicated canvas layer instead, so dragging stays smooth.
 pub fn apply_recipe(image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
-    super::overlays::composite_overlays(apply_tone(apply_geometry(image, recipe), recipe), recipe)
+    render_decoded(image, 0, recipe, &mut NoObserver)
+        .expect("a render nobody cancels always completes")
+}
+
+/// The stages of [`render_decoded`], in the order they run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderStage {
+    LibraryRotation,
+    Geometry,
+    Tone,
+    Overlays,
+}
+
+/// What a caller can watch and stop while a photo renders: tracing and
+/// cancellation live here, so no caller has to copy the stage order.
+pub trait RenderObserver {
+    /// Polled between stages and inside the tone effects.
+    fn cancelled(&self) -> bool {
+        false
+    }
+    /// Called after each stage that completed and was not cancelled.
+    fn stage_done(
+        &mut self,
+        _stage: RenderStage,
+        _elapsed: std::time::Duration,
+        _image: &RgbaImage,
+    ) {
+    }
+}
+
+/// Observer for callers that need neither tracing nor cancellation.
+pub struct NoObserver;
+
+impl RenderObserver for NoObserver {}
+
+/// Render decoded pixels (EXIF orientation already applied) the one way every
+/// surface shows them: PIC library rotation, geometry, tone, then image, text
+/// and drawing overlays. Returns `None` only when the observer cancelled.
+pub fn render_decoded(
+    image: RgbaImage,
+    rotation: i32,
+    recipe: &EditRecipe,
+    observer: &mut dyn RenderObserver,
+) -> Option<RgbaImage> {
+    let stage_started = std::time::Instant::now();
+    let image = apply_library_rotation(image, rotation);
+    if observer.cancelled() {
+        return None;
+    }
+    observer.stage_done(
+        RenderStage::LibraryRotation,
+        stage_started.elapsed(),
+        &image,
+    );
+
+    let stage_started = std::time::Instant::now();
+    let image = apply_geometry(image, recipe);
+    if observer.cancelled() {
+        return None;
+    }
+    observer.stage_done(RenderStage::Geometry, stage_started.elapsed(), &image);
+
+    let stage_started = std::time::Instant::now();
+    let image = {
+        let watcher: &dyn RenderObserver = observer;
+        apply_tone_with_cancel(image, recipe, || watcher.cancelled())?
+    };
+    if observer.cancelled() {
+        return None;
+    }
+    observer.stage_done(RenderStage::Tone, stage_started.elapsed(), &image);
+
+    let stage_started = std::time::Instant::now();
+    let image = super::overlays::composite_overlays(image, recipe);
+    if observer.cancelled() {
+        return None;
+    }
+    observer.stage_done(RenderStage::Overlays, stage_started.elapsed(), &image);
+    Some(image)
 }
 
 pub fn estimated_output_dimensions(width: u32, height: u32, recipe: &EditRecipe) -> (u32, u32) {
@@ -106,10 +184,8 @@ pub fn render_thumbnail(path: &str, rotation: i32, recipe: &EditRecipe) -> Resul
     let image = image::open(path)
         .with_context(|| format!("could not open cached thumbnail {path}"))?
         .to_rgba8();
-    Ok(apply_recipe(
-        apply_library_rotation(image, rotation),
-        recipe,
-    ))
+    Ok(render_decoded(image, rotation, recipe, &mut NoObserver)
+        .expect("a render nobody cancels always completes"))
 }
 
 pub fn decode_base_for_viewer(
@@ -129,10 +205,9 @@ pub fn render_for_viewer(
     width: u32,
     height: u32,
 ) -> Result<RgbaImage> {
-    Ok(apply_recipe(
-        decode_base_for_viewer(reference, rotation, width, height)?,
-        recipe,
-    ))
+    let image = crate::thumbnail::decode_for_viewer(reference, width.max(1), height.max(1))?;
+    Ok(render_decoded(image, rotation, recipe, &mut NoObserver)
+        .expect("a render nobody cancels always completes"))
 }
 
 /// Render a full-quality export from plain Rust values.
@@ -171,12 +246,9 @@ pub fn render_for_export(
     // Keep Export on the full-resolution CPU reference, but expose each stage
     // independently so slow decode, pixel processing, and overlay work are
     // distinguishable in one PICASA_TRACE run.
-    let stage = std::time::Instant::now();
+    let decode_started = std::time::Instant::now();
     let decoded = if crate::image_format::uses(reference, crate::image_format::DecoderKind::Raw) {
-        apply_library_rotation(
-            crate::thumbnail::decode_raw_source_for_export(reference)?,
-            rotation,
-        )
+        crate::thumbnail::decode_raw_source_for_export(reference)?
     } else {
         let (width, height) = if source_width > 0 && source_height > 0 {
             // A square decode bound preserves native resolution even when EXIF
@@ -186,47 +258,17 @@ pub fn render_for_export(
         } else {
             (u32::MAX, u32::MAX)
         };
-        decode_base_for_viewer(reference, rotation, width, height)?
+        crate::thumbnail::decode_for_viewer(reference, width.max(1), height.max(1))?
     };
+    let decode_elapsed = decode_started.elapsed();
+    let mut observer = ExportTrace {
+        trace,
+        recipe: &recipe,
+        decode_elapsed,
+    };
+    let output = render_decoded(decoded, rotation, &recipe, &mut observer)
+        .expect("export renders are never cancelled mid-photo");
     if trace {
-        eprintln!(
-            "PIC_EXPORT stage=decode_rotate elapsed_ms={:.3} size={}x{} renderer=cpu",
-            stage.elapsed().as_secs_f64() * 1000.0,
-            decoded.width(),
-            decoded.height(),
-        );
-    }
-    let stage = std::time::Instant::now();
-    let geometrical = apply_geometry(decoded, &recipe);
-    if trace {
-        eprintln!(
-            "PIC_EXPORT stage=geometry elapsed_ms={:.3} size={}x{}",
-            stage.elapsed().as_secs_f64() * 1000.0,
-            geometrical.width(),
-            geometrical.height(),
-        );
-    }
-    let stage = std::time::Instant::now();
-    let toned = apply_tone(geometrical, &recipe);
-    if trace {
-        eprintln!(
-            "PIC_EXPORT stage=tone elapsed_ms={:.3} size={}x{}",
-            stage.elapsed().as_secs_f64() * 1000.0,
-            toned.width(),
-            toned.height(),
-        );
-    }
-    let stage = std::time::Instant::now();
-    let output = super::overlays::composite_overlays(toned, &recipe);
-    if trace {
-        eprintln!(
-            "PIC_EXPORT stage=overlays elapsed_ms={:.3} size={}x{} image_layers={} text_layers={} drawings={}",
-            stage.elapsed().as_secs_f64() * 1000.0,
-            output.width(), output.height(),
-            recipe.overlays.iter().filter(|layer| layer.visible && layer.opacity > 0.001).count(),
-            recipe.text_layers.iter().filter(|layer| layer.visible && layer.opacity > 0.001).count(),
-            recipe.drawings.len(),
-        );
         eprintln!(
             "PIC_EXPORT stage=render_complete elapsed_ms={:.3} size={}x{} renderer=cpu",
             render_started.elapsed().as_secs_f64() * 1000.0,
@@ -235,6 +277,48 @@ pub fn render_for_export(
         );
     }
     Ok(output)
+}
+
+/// Export's `PIC_EXPORT stage=` lines. `decode_rotate` keeps its old meaning
+/// (decode plus library rotation); the export benchmark parses these names.
+struct ExportTrace<'a> {
+    trace: bool,
+    recipe: &'a EditRecipe,
+    decode_elapsed: std::time::Duration,
+}
+
+impl RenderObserver for ExportTrace<'_> {
+    fn stage_done(&mut self, stage: RenderStage, elapsed: std::time::Duration, image: &RgbaImage) {
+        if !self.trace {
+            return;
+        }
+        let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
+        let (width, height) = image.dimensions();
+        match stage {
+            RenderStage::LibraryRotation => eprintln!(
+                "PIC_EXPORT stage=decode_rotate elapsed_ms={:.3} size={width}x{height} renderer=cpu",
+                ms(self.decode_elapsed + elapsed),
+            ),
+            RenderStage::Geometry => eprintln!(
+                "PIC_EXPORT stage=geometry elapsed_ms={:.3} size={width}x{height}",
+                ms(elapsed),
+            ),
+            RenderStage::Tone => eprintln!(
+                "PIC_EXPORT stage=tone elapsed_ms={:.3} size={width}x{height}",
+                ms(elapsed),
+            ),
+            RenderStage::Overlays => {
+                let visible = |opacity: f32, shown: bool| shown && opacity > 0.001;
+                eprintln!(
+                    "PIC_EXPORT stage=overlays elapsed_ms={:.3} size={width}x{height} image_layers={} text_layers={} drawings={}",
+                    ms(elapsed),
+                    self.recipe.overlays.iter().filter(|layer| visible(layer.opacity, layer.visible)).count(),
+                    self.recipe.text_layers.iter().filter(|layer| visible(layer.opacity, layer.visible)).count(),
+                    self.recipe.drawings.len(),
+                );
+            }
+        }
+    }
 }
 
 fn crop_normalized(image: &RgbaImage, crop: CropRect) -> RgbaImage {

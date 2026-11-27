@@ -1048,60 +1048,18 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                     image.height(),
                     viewer_trace_uri(&worker_key.path),
                 ));
-                let rotation_started = std::time::Instant::now();
-                let image = rotate_image(image, worker_key.rotation);
-                if cancelled() {
-                    anyhow::bail!("viewer request cancelled after rotation");
-                }
-                viewer_trace(format!(
-                    "stage=library_rotation elapsed_ms={:.3} size={}x{} rotation={} uri={}",
-                    rotation_started.elapsed().as_secs_f64() * 1000.0,
-                    image.width(),
-                    image.height(),
-                    worker_key.rotation,
-                    viewer_trace_uri(&worker_key.path),
-                ));
-                let geometry_started = std::time::Instant::now();
-                let image = crate::edit::render::apply_geometry(image, &recipe);
-                if cancelled() {
-                    anyhow::bail!("viewer request cancelled after geometry");
-                }
-                viewer_trace(format!(
-                    "stage=geometry elapsed_ms={:.3} size={}x{} uri={}",
-                    geometry_started.elapsed().as_secs_f64() * 1000.0,
-                    image.width(),
-                    image.height(),
-                    viewer_trace_uri(&worker_key.path),
-                ));
-                let tone_started = std::time::Instant::now();
-                let image = crate::edit::render::apply_tone_with_cancel(
+                let mut observer = ViewerRenderTrace {
+                    cancelled: &cancelled,
+                    rotation: worker_key.rotation,
+                    uri: viewer_trace_uri(&worker_key.path),
+                };
+                let image = crate::edit::render::render_decoded(
                     image,
+                    worker_key.rotation,
                     &recipe,
-                    &cancelled,
+                    &mut observer,
                 )
-                .ok_or_else(|| anyhow::anyhow!("viewer request cancelled during tone effects"))?;
-                if cancelled() {
-                    anyhow::bail!("viewer request cancelled after tone effects");
-                }
-                viewer_trace(format!(
-                    "stage=tone elapsed_ms={:.3} size={}x{} uri={}",
-                    tone_started.elapsed().as_secs_f64() * 1000.0,
-                    image.width(),
-                    image.height(),
-                    viewer_trace_uri(&worker_key.path),
-                ));
-                let overlay_started = std::time::Instant::now();
-                let image = crate::edit::overlays::composite_overlays(image, &recipe);
-                if cancelled() {
-                    anyhow::bail!("viewer request cancelled after overlays");
-                }
-                viewer_trace(format!(
-                    "stage=overlays elapsed_ms={:.3} size={}x{} uri={}",
-                    overlay_started.elapsed().as_secs_f64() * 1000.0,
-                    image.width(),
-                    image.height(),
-                    viewer_trace_uri(&worker_key.path),
-                ));
+                .ok_or_else(|| anyhow::anyhow!("viewer request cancelled during render"))?;
                 let pack_started = std::time::Instant::now();
                 let width = image.width();
                 let height = image.height();
@@ -2043,12 +2001,43 @@ fn current_native_zoom_scale(one_to_one: bool, zoom: f64, fit_scale: f64) -> f64
     }
 }
 
-fn rotate_image(image: image::RgbaImage, rotation: i32) -> image::RgbaImage {
-    match rotation.rem_euclid(360) {
-        90 => image::imageops::rotate90(&image),
-        180 => image::imageops::rotate180(&image),
-        270 => image::imageops::rotate270(&image),
-        _ => image,
+/// The viewer worker's cancellation and its `stage=` trace lines.
+struct ViewerRenderTrace<'a, C: Fn() -> bool> {
+    cancelled: &'a C,
+    rotation: i32,
+    uri: String,
+}
+
+impl<C: Fn() -> bool> crate::edit::render::RenderObserver for ViewerRenderTrace<'_, C> {
+    fn cancelled(&self) -> bool {
+        (self.cancelled)()
+    }
+
+    fn stage_done(
+        &mut self,
+        stage: crate::edit::render::RenderStage,
+        elapsed: std::time::Duration,
+        image: &image::RgbaImage,
+    ) {
+        use crate::edit::render::RenderStage;
+        let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+        let (width, height) = image.dimensions();
+        let uri = &self.uri;
+        match stage {
+            RenderStage::LibraryRotation => viewer_trace(format!(
+                "stage=library_rotation elapsed_ms={elapsed_ms:.3} size={width}x{height} rotation={} uri={uri}",
+                self.rotation,
+            )),
+            RenderStage::Geometry => viewer_trace(format!(
+                "stage=geometry elapsed_ms={elapsed_ms:.3} size={width}x{height} uri={uri}"
+            )),
+            RenderStage::Tone => viewer_trace(format!(
+                "stage=tone elapsed_ms={elapsed_ms:.3} size={width}x{height} uri={uri}"
+            )),
+            RenderStage::Overlays => viewer_trace(format!(
+                "stage=overlays elapsed_ms={elapsed_ms:.3} size={width}x{height} uri={uri}"
+            )),
+        }
     }
 }
 

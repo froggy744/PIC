@@ -2284,46 +2284,6 @@ fn ensure_selection_badge(frame: &gtk::Overlay) -> gtk::Image {
 /// pixel aspect ratio does not match the camera image dimensions. GTK cannot
 /// crop bars that are already part of the cached pixels, so crop the small
 /// cached image before handing it to the normal Cover-rendered Picture.
-#[cfg(test)]
-mod raw_thumbnail_orientation_tests {
-    #[test]
-    fn cached_preview_axes_determine_portrait_and_rotated_landscape() {
-        assert_eq!(
-            super::raw_display_dimensions(4032, 6040, 427, 640),
-            (4032, 6040)
-        );
-        assert_eq!(
-            super::raw_display_dimensions(4032, 6040, 640, 427),
-            (6040, 4032)
-        );
-        assert_eq!(
-            super::raw_display_dimensions(6040, 4032, 640, 427),
-            (6040, 4032)
-        );
-        assert_eq!(
-            super::raw_display_dimensions(6040, 4032, 427, 640),
-            (4032, 6040)
-        );
-    }
-}
-
-fn raw_display_dimensions(
-    source_width: i64,
-    source_height: i64,
-    preview_width: u32,
-    preview_height: u32,
-) -> (i64, i64) {
-    let source_ratio = source_width as f64 / source_height as f64;
-    let preview_ratio = preview_width as f64 / preview_height as f64;
-    let direct = (preview_ratio / source_ratio).ln().abs();
-    let swapped = (preview_ratio * source_ratio).ln().abs();
-    if swapped < direct {
-        (source_height, source_width)
-    } else {
-        (source_width, source_height)
-    }
-}
-
 pub(crate) fn raw_cached_thumbnail(photo: &PhotoObject, path: &str) -> Option<gtk::gdk::Paintable> {
     let source_path = photo.path();
     if !crate::image_format::uses(&source_path, crate::image_format::DecoderKind::Raw) {
@@ -2351,30 +2311,10 @@ pub(crate) fn raw_cached_thumbnail(photo: &PhotoObject, path: &str) -> Option<gt
     }
 
     // The cached preview already has EXIF orientation applied. Its axes tell
-    // us whether the sensor dimensions need swapping without reading the
+    // whether the sensor dimensions need swapping without reading the
     // original RAW file (which may live on a slow network share).
-    let (display_width, display_height) =
-        raw_display_dimensions(source_width, source_height, image_width, image_height);
-    let target_ratio = display_width as f64 / display_height as f64;
-    let image_ratio = image_width as f64 / image_height as f64;
-    if image_ratio > target_ratio {
-        let crop_width =
-            ((image_height as f64 * target_ratio).round() as u32).clamp(1, image_width);
-        let left = (image_width - crop_width) / 2;
-        image = image::imageops::crop_imm(&image, left, 0, crop_width, image_height).to_image();
-    } else if image_ratio < target_ratio {
-        let crop_height =
-            ((image_width as f64 / target_ratio).round() as u32).clamp(1, image_height);
-        let top = (image_height - crop_height) / 2;
-        image = image::imageops::crop_imm(&image, 0, top, image_width, crop_height).to_image();
-    }
-
-    image = match rotation {
-        90 => image::imageops::rotate90(&image),
-        180 => image::imageops::rotate180(&image),
-        270 => image::imageops::rotate270(&image),
-        _ => image,
-    };
+    image = crate::thumbnail_display::crop_raw_cached_preview(image, source_width, source_height);
+    image = crate::edit::render::apply_library_rotation(image, rotation);
     if !recipe.is_default() {
         image = crate::edit::render::apply_recipe(image, &recipe);
     }

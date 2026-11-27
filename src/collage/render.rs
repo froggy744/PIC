@@ -111,16 +111,11 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
         // decode_for_viewer has already applied source EXIF orientation. The
         // database rotation is PIC presentation metadata and is applied once
         // here, before the collage's own placement rotation.
-        let source = apply_library_rotation(
-            DynamicImage::ImageRgba8(decoded),
-            item.photo.library_rotation,
-        );
-        let decoded_size = (source.width(), source.height());
+        let source =
+            crate::edit::render::apply_library_rotation(decoded, item.photo.library_rotation);
+        let decoded_size = source.dimensions();
         let recipe = crate::edit::EditRecipe::decode(&item.photo.edit_recipe);
-        let source = DynamicImage::ImageRgba8(crate::edit::render::apply_recipe(
-            source.to_rgba8(),
-            &recipe,
-        ));
+        let source = DynamicImage::ImageRgba8(crate::edit::render::apply_recipe(source, &recipe));
         let contain = matches!(
             project.layout,
             super::model::LayoutKind::Mosaic | super::model::LayoutKind::SmartMosaic
@@ -340,15 +335,6 @@ fn draw_photo_border(image: &mut RgbaImage, radius_ratio: f32, color: [u8; 3], t
                     / 4) as u8;
             }
         }
-    }
-}
-
-fn apply_library_rotation(source: DynamicImage, rotation: i32) -> DynamicImage {
-    match rotation.rem_euclid(360) {
-        90 => DynamicImage::ImageRgba8(image::imageops::rotate90(&source.to_rgba8())),
-        180 => DynamicImage::ImageRgba8(image::imageops::rotate180(&source.to_rgba8())),
-        270 => DynamicImage::ImageRgba8(image::imageops::rotate270(&source.to_rgba8())),
-        _ => source,
     }
 }
 

@@ -317,7 +317,7 @@ fn peak_rss_kib() -> Result<u64> {
 }
 
 fn run_one_worker_configuration(album_name: &str, workers: usize, output: &Path) -> Result<()> {
-    const MAX_EDGE: u32 = 3840;
+    let max_edge = bench_max_edge();
     let (_, base_jobs) = load_album_jobs(album_name)?;
     let repeat_count = std::env::var("PIC_EXPORT_BENCH_REPEAT")
         .ok()
@@ -327,7 +327,7 @@ fn run_one_worker_configuration(album_name: &str, workers: usize, output: &Path)
     let jobs = repeat_jobs(&base_jobs, repeat_count)?;
     std::fs::create_dir_all(output)?;
     let started = Instant::now();
-    let result = run_real_batch(&jobs, output, MAX_EDGE, workers);
+    let result = run_real_batch(&jobs, output, max_edge, workers);
     let peak_rss = peak_rss_kib()?;
     let elapsed = result?;
     std::fs::write(
@@ -544,8 +544,16 @@ fn source_fingerprints(jobs: &[ExportJob]) -> Result<Vec<(u64, u128, blake3::Has
         .collect()
 }
 
+/// Export size of the benchmark: 3840, or `PIC_EXPORT_BENCH_MAX_EDGE`.
+fn bench_max_edge() -> u32 {
+    std::env::var("PIC_EXPORT_BENCH_MAX_EDGE")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(3840)
+}
+
 pub fn run(album_name: &str) -> Result<()> {
-    const MAX_EDGE: u32 = 3840;
+    let max_edge = bench_max_edge();
     if let (Some(workers), Some(output)) = (
         std::env::var("PIC_EXPORT_BENCH_WORKERS")
             .ok()
@@ -576,11 +584,11 @@ pub fn run(album_name: &str) -> Result<()> {
         album,
         jobs.len(),
         overlay_jobs,
-        MAX_EDGE,
+        max_edge,
         export_batch::default_export_quality(),
     );
     if repeat_count == 1 {
-        bench_resizers(&jobs, MAX_EDGE)?;
+        bench_resizers(&jobs, max_edge)?;
     } else {
         eprintln!(
             "PIC_EXPORT_BENCH resize_comparison=skipped repeat_count={repeat_count} base_photos={}",

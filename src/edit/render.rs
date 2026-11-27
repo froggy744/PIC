@@ -311,7 +311,20 @@ pub fn render_for_export(
     // distinguishable in one PICASA_TRACE run.
     let decode_started = std::time::Instant::now();
     let decoded = if crate::image_format::uses(reference, crate::image_format::DecoderKind::Raw) {
-        crate::thumbnail::decode_raw_source_for_export(reference)?
+        // The output long edge is this fraction of the decoded long edge
+        // (straighten and crop shrink it); the aspect comes from the catalog.
+        let output_fraction = if source_width > 0 && source_height > 0 {
+            let (width, height) = (source_width as u32, source_height as u32);
+            let (width, height) = match rotation.rem_euclid(360) {
+                90 | 270 => (height, width),
+                _ => (width, height),
+            };
+            let (out_width, out_height) = estimated_output_dimensions(width, height, &recipe);
+            out_width.max(out_height) as f32 / width.max(height) as f32
+        } else {
+            0.0
+        };
+        crate::thumbnail::decode_raw_source_for_export_sized(reference, max_edge, output_fraction)?
     } else {
         let (width, height) = if source_width > 0 && source_height > 0 {
             // A square decode bound preserves native resolution even when EXIF

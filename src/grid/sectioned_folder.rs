@@ -354,17 +354,9 @@ impl SectionedFolderView {
             }
             let columns = view.current_columns.get().max(1);
             let next = match key {
-                gtk::gdk::Key::Left => {
-                    let next = current.checked_sub(1);
-                    if let Some(next) = next {
-                        view.keyboard_preferred_column
-                            .set(view.column_for_index(next));
-                    }
-                    next
-                }
-                gtk::gdk::Key::Right => {
-                    let candidate = current.saturating_add(1);
-                    let next = (candidate < count).then_some(candidate);
+                gtk::gdk::Key::Left | gtk::gdk::Key::Right => {
+                    let direction = if key == gtk::gdk::Key::Left { -1 } else { 1 };
+                    let next = view.horizontal_neighbor(current, direction, count);
                     if let Some(next) = next {
                         view.keyboard_preferred_column
                             .set(view.column_for_index(next));

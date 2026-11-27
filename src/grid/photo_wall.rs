@@ -227,6 +227,30 @@ impl SectionedFolderView {
             .map(|item| item.photo_index as u32)
     }
 
+    /// Left/Right target. Grid, Photo Wall and Honeycomb place photos in
+    /// order along rows, so the next photo is the one beside it; Masonry
+    /// asks its columns which tile is beside it on screen.
+    fn horizontal_neighbor(&self, index: u32, direction: i32, count: u32) -> Option<u32> {
+        if self.layout_mode.get() == PhotoLayout::Masonry {
+            if let Some(next) = self
+                .wall_state
+                .borrow()
+                .layout
+                .masonry_horizontal_neighbor(index as usize, direction)
+            {
+                return Some(next as u32);
+            }
+            if self.wall_state.borrow().layout.item(index as usize).is_some() {
+                return None;
+            }
+        }
+        if direction < 0 {
+            index.checked_sub(1)
+        } else {
+            index.checked_add(1).filter(|&next| next < count)
+        }
+    }
+
     fn wall_index_for_y(&self, y: f64) -> Option<usize> {
         let state = self.wall_state.borrow();
         if self.layout_mode.get() == PhotoLayout::Masonry {

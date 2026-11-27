@@ -129,22 +129,45 @@ pub fn render_decoded(
     recipe: &EditRecipe,
     observer: &mut dyn RenderObserver,
 ) -> Option<RgbaImage> {
-    render_decoded_fitted(image, rotation, recipe, 0, observer)
+    render_sized(image, rotation, recipe, RenderSize::FULL, observer)
 }
 
-/// [`render_decoded`] for an output whose long edge will be at most
-/// `max_edge` (0: full size). When the recipe looks the same at any size
-/// ([`renders_the_same_when_shrunk`]), the image is shrunk to `max_edge`
-/// right after geometry, so tone and overlays run on the output pixels; the
-/// result is then exactly what fitting the full-size render would give in
-/// dimensions, without the full-size tone work.
-pub fn render_decoded_fitted(
+/// How the decoded pixels relate to the photo, so effects sized in source
+/// pixels (sharpen, smooth, grain, Newspaper's dither) look the same at
+/// every size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderSize {
+    /// Long edge of the original photo in pixels; 0 when the decoded image
+    /// is the original's full size.
+    pub source_long_edge: u32,
+    /// Long edge the output is fitted to; 0 for no limit.
+    pub max_edge: u32,
+}
+
+impl RenderSize {
+    pub const FULL: Self = Self {
+        source_long_edge: 0,
+        max_edge: 0,
+    };
+}
+
+/// [`render_decoded`] at a given [`RenderSize`]. With `max_edge`, the image
+/// is shrunk to it right after geometry, with the same resize a full-size
+/// export ends with, so the dimensions are unchanged while tone and overlays
+/// run on the output pixels.
+pub fn render_sized(
     image: RgbaImage,
     rotation: i32,
     recipe: &EditRecipe,
-    max_edge: u32,
+    size: RenderSize,
     observer: &mut dyn RenderObserver,
 ) -> Option<RgbaImage> {
+    // Output pixels per source pixel; rotation and crop keep it.
+    let mut scale = if size.source_long_edge > 0 {
+        (image.width().max(image.height()) as f32 / size.source_long_edge as f32).min(1.0)
+    } else {
+        1.0
+    };
     let stage_started = std::time::Instant::now();
     let image = apply_library_rotation(image, rotation);
     if observer.cancelled() {
@@ -163,13 +186,12 @@ pub fn render_decoded_fitted(
     }
     observer.stage_done(RenderStage::Geometry, stage_started.elapsed(), &image);
 
-    let image = if max_edge > 0
-        && image.width().max(image.height()) > max_edge
-        && renders_the_same_when_shrunk(recipe)
-    {
+    let geometry_long = image.width().max(image.height());
+    let image = if size.max_edge > 0 && geometry_long > size.max_edge {
         let stage_started = std::time::Instant::now();
-        let image = super::export_batch::fit_max_edge(image, max_edge)
+        let image = super::export_batch::fit_max_edge(image, size.max_edge)
             .expect("resizing a valid RGBA image cannot fail");
+        scale *= image.width().max(image.height()) as f32 / geometry_long as f32;
         if observer.cancelled() {
             return None;
         }
@@ -182,7 +204,7 @@ pub fn render_decoded_fitted(
     let stage_started = std::time::Instant::now();
     let image = {
         let watcher: &dyn RenderObserver = observer;
-        apply_tone_with_cancel(image, recipe, || watcher.cancelled())?
+        apply_tone_scaled(image, recipe, scale, || watcher.cancelled())?
     };
     if observer.cancelled() {
         return None;
@@ -251,9 +273,9 @@ pub fn render_for_viewer(
 /// intentionally neither `Send` nor `Sync`.
 ///
 /// `max_edge` is the long edge the export will be fitted to (0: full size).
-/// When the recipe looks the same at any size, the image is shrunk to that
-/// size after geometry, so tone and overlays run on the output pixels
-/// instead of the full sensor resolution.
+/// The image is shrunk to that size after geometry, so tone and overlays run
+/// on the output pixels instead of the full sensor resolution; size-dependent
+/// effects are scaled to match (see [`RenderSize`]).
 pub fn render_for_export(
     reference: &str,
     rotation: i32,
@@ -306,7 +328,11 @@ pub fn render_for_export(
         recipe: &recipe,
         decode_elapsed,
     };
-    let output = render_decoded_fitted(decoded, rotation, &recipe, max_edge, &mut observer)
+    let size = RenderSize {
+        source_long_edge: 0,
+        max_edge,
+    };
+    let output = render_sized(decoded, rotation, &recipe, size, &mut observer)
         .expect("export renders are never cancelled mid-photo");
     if trace {
         eprintln!(
@@ -317,25 +343,6 @@ pub fn render_for_export(
         );
     }
     Ok(output)
-}
-
-/// Whether `recipe` gives the same picture, up to resampling, when the image
-/// is shrunk before it renders. Effects sized in output pixels do not:
-/// sharpen's 1.1 px radius, smooth's 5×5 window, per-pixel grain (also in
-/// the Disposable Film, Digicam Flash and Old Photo looks) and Newspaper's
-/// 4×4 dither. Everything else is per pixel or sized relative to the image.
-pub fn renders_the_same_when_shrunk(recipe: &EditRecipe) -> bool {
-    use filters::FilterPreset;
-    recipe.sharpen <= 0.001
-        && recipe.smooth <= 0.001
-        && recipe.grain <= 0.001
-        && !matches!(
-            recipe.filter,
-            FilterPreset::DisposableFilm
-                | FilterPreset::DigicamFlash
-                | FilterPreset::OldPhoto
-                | FilterPreset::Newspaper
-        )
 }
 
 /// Export's `PIC_EXPORT stage=` lines. `decode_rotate` keeps its old meaning
@@ -422,13 +429,35 @@ pub(crate) fn apply_tone(image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
 }
 
 pub(crate) fn apply_tone_with_cancel<F>(
-    mut image: RgbaImage,
+    image: RgbaImage,
     recipe: &EditRecipe,
     cancelled: F,
 ) -> Option<RgbaImage>
 where
     F: Fn() -> bool,
 {
+    apply_tone_scaled(image, recipe, 1.0, cancelled)
+}
+
+/// Tone for pixels that show the photo at `scale` output pixels per source
+/// pixel (1.0: full size). Effects sized in source pixels (sharpen's radius,
+/// smooth's window, grain, Newspaper's dither) are scaled so a shrunk render
+/// looks like the full-size render shrunk. At 1.0 the result is exactly the
+/// full-size tone.
+pub(crate) fn apply_tone_scaled<F>(
+    mut image: RgbaImage,
+    recipe: &EditRecipe,
+    scale: f32,
+    cancelled: F,
+) -> Option<RgbaImage>
+where
+    F: Fn() -> bool,
+{
+    let scale = if scale.is_finite() {
+        scale.clamp(0.01, 1.0)
+    } else {
+        1.0
+    };
     if cancelled() {
         return None;
     }
@@ -467,10 +496,10 @@ where
     if recipe.filter != filters::FilterPreset::None && filter_amount > 0.0 {
         if filter_amount >= 1.0 {
             // Keep the legacy 100% path identical, with no extra copy.
-            filters::apply_filter(&mut image, recipe.filter);
+            filters::apply_filter_scaled(&mut image, recipe.filter, scale);
         } else {
             let unfiltered = image.clone();
-            filters::apply_filter(&mut image, recipe.filter);
+            filters::apply_filter_scaled(&mut image, recipe.filter, scale);
             blend_filter_amount(&mut image, &unfiltered, filter_amount);
         }
     }
@@ -664,7 +693,7 @@ where
 
     if recipe.smooth > 0.001 && image.width() > 2 && image.height() > 2 {
         let smooth_started = std::time::Instant::now();
-        smooth_detail(&mut image, recipe.smooth);
+        smooth_detail(&mut image, recipe.smooth, scale);
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_EDIT_EFFECT op=smooth dimensions={}x{} elapsed_ms={:.3} amount={:.3}",
@@ -681,7 +710,9 @@ where
 
     if recipe.sharpen > 0.001 && image.width() > 2 && image.height() > 2 {
         let sharpen_started = std::time::Instant::now();
-        sharpen_unsharp(&mut image, 1.1, recipe.sharpen * 1.6);
+        // Unsharp masking is linear: sigma in output pixels = sigma in source
+        // pixels × scale gives the same boost at every photo frequency.
+        sharpen_unsharp(&mut image, 1.1 * scale, recipe.sharpen * 1.6);
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_EDIT_EFFECT op=sharpen dimensions={}x{} elapsed_ms={:.3} amount={:.3}",
@@ -697,7 +728,10 @@ where
     }
     let grain_started = std::time::Instant::now();
     if recipe.grain > 0.001 {
-        filters::apply_grain(&mut image, recipe.grain * 0.24);
+        filters::apply_grain(
+            &mut image,
+            recipe.grain * 0.24 * filters::grain_scale(scale),
+        );
     }
     if recipe.vignette.abs() > 0.001 {
         apply_vignette(&mut image, recipe.vignette);
@@ -960,7 +994,18 @@ fn apply_clarity(image: &mut RgbaImage, amount: f32) {
 
 /// Edge-aware 5x5 colour average for fine texture. Alpha and strong borders
 /// are preserved, and amount zero takes the unmodified fast path.
-fn smooth_detail(image: &mut RgbaImage, amount: f32) {
+fn smooth_detail(image: &mut RgbaImage, amount: f32, scale: f32) {
+    // The 5×5 window spans 2 source pixels each way; at a smaller scale it
+    // spans fewer output pixels, and below half size none.
+    let radius = if scale >= 1.0 {
+        2
+    } else {
+        (2.0 * scale).floor() as usize
+    };
+    if radius == 0 {
+        return;
+    }
+    let distance_scale = scale * scale;
     let (width, height) = (image.width() as usize, image.height() as usize);
     let source = image.as_raw().clone();
     let row_bytes = width * 4;
@@ -978,8 +1023,8 @@ fn smooth_detail(image: &mut RgbaImage, amount: f32) {
                 let center = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32);
                 let mut sum = [pixel[0] as f32, pixel[1] as f32, pixel[2] as f32];
                 let mut total = 1.0_f32;
-                for ny in y.saturating_sub(2)..=(y + 2).min(height - 1) {
-                    for nx in x.saturating_sub(2)..=(x + 2).min(width - 1) {
+                for ny in y.saturating_sub(radius)..=(y + radius).min(height - 1) {
+                    for nx in x.saturating_sub(radius)..=(x + radius).min(width - 1) {
                         if nx == x && ny == y {
                             continue;
                         }
@@ -995,7 +1040,7 @@ fn smooth_detail(image: &mut RgbaImage, amount: f32) {
                         let edge = 1.0 / (1.0 + range * range * range * range);
                         let dx = nx.abs_diff(x) as f32;
                         let dy = ny.abs_diff(y) as f32;
-                        let spatial = 1.0 / (1.0 + dx * dx + dy * dy);
+                        let spatial = 1.0 / (1.0 + (dx * dx + dy * dy) / distance_scale);
                         let weight = spatial * edge;
                         for channel in 0..3 {
                             sum[channel] += other[channel] as f32 * weight;
@@ -1833,8 +1878,124 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
+    /// Calibration for scaled effects: against a full-size render shrunk to
+    /// the output size, compare the old shrunk render (effects in output
+    /// pixels) and `render_sized`. Prints PSNR and the high-frequency energy
+    /// ratio (texture: 1.0 is the reference's sharpening or grain).
     #[test]
-    fn export_fits_after_geometry_only_when_the_recipe_allows_it() {
+    #[ignore = "calibration on a real photo: set PIC_TEST_EDIT_REFERENCE; prints numbers"]
+    fn scaled_effects_match_a_full_size_render_shrunk() {
+        let Some(path) = std::env::var_os("PIC_TEST_EDIT_REFERENCE") else {
+            return;
+        };
+        let source =
+            crate::thumbnail::decode_for_viewer(path.to_str().unwrap(), u32::MAX, u32::MAX)
+                .unwrap();
+        let fit = |image: RgbaImage, edge: u32| {
+            crate::edit::export_batch::fit_max_edge(image, edge).unwrap()
+        };
+        let as_f32 = |image: &RgbaImage| -> Vec<f32> {
+            image
+                .pixels()
+                .map(|p| rgb_luma(p[0] as f32, p[1] as f32, p[2] as f32))
+                .collect()
+        };
+        let high_frequency = |image: &RgbaImage| -> f64 {
+            let (w, h) = (image.width() as usize, image.height() as usize);
+            let luma = as_f32(image);
+            let mut energy = 0.0f64;
+            for y in 1..h - 1 {
+                for x in 1..w - 1 {
+                    let c = luma[y * w + x];
+                    let around = (luma[y * w + x - 1]
+                        + luma[y * w + x + 1]
+                        + luma[(y - 1) * w + x]
+                        + luma[(y + 1) * w + x])
+                        / 4.0;
+                    energy += f64::from((c - around) * (c - around));
+                }
+            }
+            energy / (w * h) as f64
+        };
+        let psnr = |a: &RgbaImage, b: &RgbaImage| -> f64 {
+            let mse = a
+                .as_raw()
+                .iter()
+                .zip(b.as_raw())
+                .map(|(x, y)| {
+                    let d = f64::from(*x) - f64::from(*y);
+                    d * d
+                })
+                .sum::<f64>()
+                / a.as_raw().len() as f64;
+            10.0 * (255.0f64 * 255.0 / mse.max(1e-9)).log10()
+        };
+        let recipes = [
+            ("none", EditRecipe::default()),
+            (
+                "sharpen",
+                EditRecipe {
+                    sharpen: 0.8,
+                    ..EditRecipe::default()
+                },
+            ),
+            (
+                "smooth",
+                EditRecipe {
+                    smooth: 0.8,
+                    ..EditRecipe::default()
+                },
+            ),
+            (
+                "grain",
+                EditRecipe {
+                    grain: 0.6,
+                    ..EditRecipe::default()
+                },
+            ),
+            (
+                "newspaper",
+                EditRecipe {
+                    filter: filters::FilterPreset::Newspaper,
+                    ..EditRecipe::default()
+                },
+            ),
+            (
+                "old_photo",
+                EditRecipe {
+                    filter: filters::FilterPreset::OldPhoto,
+                    ..EditRecipe::default()
+                },
+            ),
+        ];
+        for (name, recipe) in recipes {
+            let full = apply_recipe(source.clone(), &recipe);
+            for edge in [2000, 1000, 500] {
+                let reference = fit(full.clone(), edge);
+                let old = super::super::overlays::composite_overlays(
+                    apply_tone(fit(apply_geometry(source.clone(), &recipe), edge), &recipe),
+                    &recipe,
+                );
+                let size = RenderSize {
+                    source_long_edge: 0,
+                    max_edge: edge,
+                };
+                let scaled =
+                    render_sized(source.clone(), 0, &recipe, size, &mut NoObserver).unwrap();
+                let reference_hf = high_frequency(&reference);
+                println!(
+                    "CALIBRATE effect={name} edge={edge} old_psnr={:.2} scaled_psnr={:.2} old_hf={:.3} scaled_hf={:.3}",
+                    psnr(&reference, &old),
+                    psnr(&reference, &scaled),
+                    high_frequency(&old) / reference_hf,
+                    high_frequency(&scaled) / reference_hf,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn export_fits_after_geometry_without_changing_its_size() {
         let source = RgbaImage::from_fn(400, 300, |x, y| {
             Rgba([(x % 251) as u8, (y % 241) as u8, 150, 255])
         });
@@ -1849,29 +2010,11 @@ mod tests {
             },
             ..EditRecipe::default()
         };
-        assert!(renders_the_same_when_shrunk(&tone_only));
-        for rotation in [0, 90] {
-            let fitted =
-                render_decoded_fitted(source.clone(), rotation, &tone_only, 100, &mut NoObserver)
-                    .unwrap();
-            let full_then_fit = crate::edit::export_batch::fit_max_edge(
-                render_decoded(source.clone(), rotation, &tone_only, &mut NoObserver).unwrap(),
-                100,
-            )
-            .unwrap();
-            assert_eq!(
-                fitted.dimensions(),
-                full_then_fit.dimensions(),
-                "fitting early must not change the export size"
-            );
-        }
-
-        for sized in [
+        let recipes = [
+            tone_only.clone(),
             EditRecipe {
                 sharpen: 0.5,
-                ..tone_only.clone()
-            },
-            EditRecipe {
+                smooth: 0.5,
                 grain: 0.2,
                 ..tone_only.clone()
             },
@@ -1879,13 +2022,36 @@ mod tests {
                 filter: filters::FilterPreset::Newspaper,
                 ..tone_only.clone()
             },
-        ] {
-            assert!(!renders_the_same_when_shrunk(&sized));
-            let full = render_decoded(source.clone(), 0, &sized, &mut NoObserver).unwrap();
-            let kept =
-                render_decoded_fitted(source.clone(), 0, &sized, 100, &mut NoObserver).unwrap();
-            assert_eq!(kept, full, "size-dependent effects render at full size");
+        ];
+        for recipe in recipes {
+            for rotation in [0, 90] {
+                let size = RenderSize {
+                    source_long_edge: 0,
+                    max_edge: 100,
+                };
+                let fitted =
+                    render_sized(source.clone(), rotation, &recipe, size, &mut NoObserver).unwrap();
+                let full_then_fit = crate::edit::export_batch::fit_max_edge(
+                    render_decoded(source.clone(), rotation, &recipe, &mut NoObserver).unwrap(),
+                    100,
+                )
+                .unwrap();
+                assert_eq!(
+                    fitted.dimensions(),
+                    full_then_fit.dimensions(),
+                    "fitting early must not change the export size"
+                );
+            }
         }
+        let unlimited = render_sized(
+            source.clone(),
+            0,
+            &tone_only,
+            RenderSize::FULL,
+            &mut NoObserver,
+        )
+        .unwrap();
+        assert_eq!(unlimited, apply_recipe(source, &tone_only));
     }
 
     #[test]

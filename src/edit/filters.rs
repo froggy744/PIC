@@ -486,7 +486,25 @@ pub(crate) fn params(preset: FilterPreset) -> FilterParams {
     }
 }
 
+#[cfg(test)]
 pub fn apply_filter(image: &mut RgbaImage, preset: FilterPreset) {
+    apply_filter_scaled(image, preset, 1.0);
+}
+
+/// Grain strength at `scale` output pixels per source pixel. Shrinking
+/// averages about 1/scale² independent noise samples per output pixel, which
+/// divides the noise by about 1/scale.
+pub(crate) fn grain_scale(scale: f32) -> f32 {
+    if scale >= 1.0 {
+        1.0
+    } else {
+        scale
+    }
+}
+
+/// [`apply_filter`] for pixels at `scale` output pixels per source pixel:
+/// the looks' grain and Newspaper's dither are sized in source pixels.
+pub(crate) fn apply_filter_scaled(image: &mut RgbaImage, preset: FilterPreset, scale: f32) {
     if preset == FilterPreset::None {
         return;
     }
@@ -529,7 +547,7 @@ pub fn apply_filter(image: &mut RgbaImage, preset: FilterPreset) {
         return;
     }
     if preset == FilterPreset::Newspaper {
-        apply_newspaper(image);
+        apply_newspaper(image, scale);
         return;
     }
     if preset == FilterPreset::Duotone || preset == FilterPreset::InfraredBw {
@@ -600,10 +618,10 @@ pub fn apply_filter(image: &mut RgbaImage, preset: FilterPreset) {
         ]);
     }
     match preset {
-        FilterPreset::DisposableFilm => apply_grain(image, 0.035),
-        FilterPreset::DigicamFlash => apply_grain(image, 0.012),
+        FilterPreset::DisposableFilm => apply_grain(image, 0.035 * grain_scale(scale)),
+        FilterPreset::DigicamFlash => apply_grain(image, 0.012 * grain_scale(scale)),
         FilterPreset::DreamGlow => apply_glow(image),
-        FilterPreset::OldPhoto => apply_grain(image, 0.075),
+        FilterPreset::OldPhoto => apply_grain(image, 0.075 * grain_scale(scale)),
         _ => {}
     }
 }
@@ -635,8 +653,18 @@ fn apply_pencil_sketch(image: &mut RgbaImage) {
 /// Vintage press look: warm, lightly mottled newsprint with an ordered
 /// 4x4 halftone screen. The Bayer pattern is deterministic for previews,
 /// exports and repeated edits (no random noise or shifting frame-to-frame).
-fn apply_newspaper(image: &mut RgbaImage) {
+fn apply_newspaper(image: &mut RgbaImage, scale: f32) {
     const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+    // One output pixel covers 1/scale source pixels each way. Shrinking the
+    // full-size screen averages its dots: over a whole 4×4 cell the ink share
+    // is the number of thresholds the coverage passes. Blend towards that
+    // average as the covered area grows from one source pixel to two (at
+    // half size the shrink already blends neighbouring dots).
+    let averaged_share = if scale >= 1.0 {
+        0.0
+    } else {
+        (1.0 / scale - 1.0).clamp(0.0, 1.0)
+    };
     for (x, y, pixel) in image.enumerate_pixels_mut() {
         if pixel[3] == 0 {
             continue;
@@ -648,8 +676,18 @@ fn apply_newspaper(image: &mut RgbaImage) {
         let ink = ink_coverage >= threshold;
         let paper = [231_u8, 220, 196];
         let print = [36_u8, 34, 31];
+        if averaged_share <= 0.0 {
+            for c in 0..3 {
+                pixel[c] = if ink { print[c] } else { paper[c] };
+            }
+            continue;
+        }
+        let dot = if ink { 1.0 } else { 0.0 };
+        let cell = (ink_coverage * 16.0 + 0.5).floor().clamp(0.0, 16.0) / 16.0;
+        let share = dot + (cell - dot) * averaged_share;
         for c in 0..3 {
-            pixel[c] = if ink { print[c] } else { paper[c] };
+            pixel[c] =
+                (paper[c] as f32 + (print[c] as f32 - paper[c] as f32) * share).round() as u8;
         }
     }
 }

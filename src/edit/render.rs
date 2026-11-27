@@ -4,6 +4,7 @@ use rayon::prelude::*;
 
 use super::filters;
 use super::model::{CropRect, EditRecipe};
+use super::tone::{AUTO_COLOR_GAIN, AUTO_CONTRAST_RANGE};
 
 pub fn apply_library_rotation(image: RgbaImage, rotation: i32) -> RgbaImage {
     match rotation.rem_euclid(360) {
@@ -465,30 +466,7 @@ where
     // Keep the unedited image as-is. Besides avoiding a full pixel loop for
     // the common zero-adjustment state, this preserves every decoded detail
     // and makes reset pixel-identical to the source preview.
-    if recipe.filter == filters::FilterPreset::None
-        && !recipe.auto_color
-        && !recipe.auto_contrast
-        && !recipe.auto_brightness
-        && !recipe.auto_enhance
-        && recipe.exposure == 0.0
-        && recipe.temperature == 0.0
-        && recipe.tint == 0.0
-        && recipe.saturation == 0.0
-        && recipe.vibrance == 0.0
-        && recipe.fill_light == 0.0
-        && recipe.shadows == 0.0
-        && recipe.whites == 0.0
-        && recipe.blacks == 0.0
-        && recipe.highlights == 0.0
-        && recipe.contrast == 0.0
-        && !recipe.black_white
-        && !recipe.sepia
-        && recipe.clarity == 0.0
-        && recipe.smooth == 0.0
-        && recipe.sharpen == 0.0
-        && recipe.grain == 0.0
-        && recipe.vignette == 0.0
-    {
+    if super::tone::is_neutral(recipe) {
         return Some(image);
     }
     let filter_amount = recipe.filter_amount.clamp(0.0, 1.0);
@@ -768,16 +746,17 @@ fn smoothstep(low: f32, high: f32, y: f32) -> f32 {
 /// exposure/fill/shadows/highlights distinct; no broad additive RGB wash.
 fn map_tone_regions(y: f32, recipe: &EditRecipe) -> f32 {
     let y = y.clamp(0.0, 1.0);
-    let fill = y.powf(2.0_f32.powf(-recipe.fill_light * 1.15));
-    let shadows = y.powf(2.0_f32.powf(-recipe.shadows * 1.35));
-    let highlights = 1.0 - (1.0 - y).powf(2.0_f32.powf(recipe.highlights * 1.20));
+    use super::tone::*;
+    let fill = y.powf(2.0_f32.powf(-recipe.fill_light * FILL_GAIN));
+    let shadows = y.powf(2.0_f32.powf(-recipe.shadows * SHADOWS_GAIN));
+    let highlights = 1.0 - (1.0 - y).powf(2.0_f32.powf(recipe.highlights * HIGHLIGHTS_GAIN));
 
-    let fill_mask = 1.0 - smoothstep(0.48, 0.93, y);
-    let shadow_mask = 1.0 - smoothstep(0.18, 0.61, y);
-    let highlight_mask = smoothstep(0.48, 0.87, y);
-    (y + (fill - y) * fill_mask * 0.95
-        + (shadows - y) * shadow_mask * 0.95
-        + (highlights - y) * highlight_mask * 0.92)
+    let fill_mask = 1.0 - smoothstep(FILL_MASK.0, FILL_MASK.1, y);
+    let shadow_mask = 1.0 - smoothstep(SHADOWS_MASK.0, SHADOWS_MASK.1, y);
+    let highlight_mask = smoothstep(HIGHLIGHTS_MASK.0, HIGHLIGHTS_MASK.1, y);
+    (y + (fill - y) * fill_mask * FILL_WEIGHT
+        + (shadows - y) * shadow_mask * SHADOWS_WEIGHT
+        + (highlights - y) * highlight_mask * HIGHLIGHTS_WEIGHT)
         .clamp(0.0, 1.0)
 }
 
@@ -1097,7 +1076,7 @@ fn apply_contrast_curve(value: f32, contrast: f32) -> f32 {
     let x = value.clamp(0.0, 1.0);
     // Keep the visible slider range expressive without letting +1.0 collapse
     // ordinary near-black/near-white detail to pure clipping.
-    let amount = contrast.clamp(-1.0, 1.0) * 0.55;
+    let amount = contrast.clamp(-1.0, 1.0) * super::tone::CONTRAST_STRENGTH;
     // Smooth S-curve with fixed black, midpoint and white anchors. Positive
     // values deepen shadows and lift highlights; negative values compress them.
     let curve = 4.0 * (x - 0.5) * x * (1.0 - x);
@@ -1140,9 +1119,9 @@ fn apply_auto_color(image: &mut RgbaImage) {
     let means = [sums[0] / count, sums[1] / count, sums[2] / count];
     let neutral = 0.2126 * means[0] + 0.7152 * means[1] + 0.0722 * means[2];
     let gains = [
-        (neutral / means[0].max(1.0)).clamp(0.75, 1.35),
-        (neutral / means[1].max(1.0)).clamp(0.75, 1.35),
-        (neutral / means[2].max(1.0)).clamp(0.75, 1.35),
+        (neutral / means[0].max(1.0)).clamp(AUTO_COLOR_GAIN.0, AUTO_COLOR_GAIN.1),
+        (neutral / means[1].max(1.0)).clamp(AUTO_COLOR_GAIN.0, AUTO_COLOR_GAIN.1),
+        (neutral / means[2].max(1.0)).clamp(AUTO_COLOR_GAIN.0, AUTO_COLOR_GAIN.1),
     ];
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -1234,7 +1213,8 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
         if y <= 0.0001 {
             return;
         }
-        let stretched = ((y - pivot) * contrast + pivot).clamp(0.012, 0.988);
+        let stretched =
+            ((y - pivot) * contrast + pivot).clamp(AUTO_CONTRAST_RANGE.0, AUTO_CONTRAST_RANGE.1);
         let corrected = y + (stretched - y) * 0.75;
         // Scale luminance uniformly to retain hue/chroma as far as possible,
         // rather than adding an RGB offset that desaturates colour.

@@ -1106,29 +1106,7 @@ impl EditRecipe {
     pub fn is_default(&self) -> bool {
         self.crop.is_full()
             && self.straighten.abs() < 0.0001
-            && self.exposure.abs() < 0.0001
-            && self.contrast.abs() < 0.0001
-            && self.fill_light.abs() < 0.0001
-            && self.highlights.abs() < 0.0001
-            && self.shadows.abs() < 0.0001
-            && self.whites.abs() < 0.0001
-            && self.blacks.abs() < 0.0001
-            && self.temperature.abs() < 0.0001
-            && self.tint.abs() < 0.0001
-            && self.saturation.abs() < 0.0001
-            && self.vibrance.abs() < 0.0001
-            && !self.auto_contrast
-            && !self.auto_color
-            && !self.auto_brightness
-            && !self.auto_enhance
-            && !self.black_white
-            && !self.sepia
-            && self.filter == super::filters::FilterPreset::None
-            && self.sharpen.abs() < 0.0001
-            && self.clarity.abs() < 0.0001
-            && self.smooth.abs() < 0.0001
-            && self.grain.abs() < 0.0001
-            && self.vignette.abs() < 0.0001
+            && super::tone::is_neutral(self)
             && self.overlays.is_empty()
             && self.text_layers.is_empty()
             && self.drawings.is_empty()

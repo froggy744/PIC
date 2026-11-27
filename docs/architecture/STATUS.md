@@ -53,7 +53,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 21 | Workspace session: one owner for Editor and Collage open/close | Strong | proposed | | |
 | 22 | Tone stage as one deep module (CPU kernel, GLSL kernel, neutrality) | Strong | proposed | | |
 | 23 | Window keyboard dispatch: one key → command table | Strong | proposed | | |
-| 24 | Metadata panel presentation: Immersive Mode as an input | Strong | proposed (recommended first) | | |
+| 24 | Metadata panel presentation: Immersive Mode as an input | Strong | in progress (`refactor/metadata-panel-presentation`) | | `src/window/metadata_panel_presentation.rs` (pure), `src/window/metadata_panel.rs` (GTK adapter, `sync_view`), `src/window/navigation_filter.rs` |
 | 25 | Lightbox front request: one invalidation per reason | Worth exploring | proposed | | |
 | 26 | Editor opening phase | Worth exploring | proposed | | |
 | 27 | Photo action targets for Export and Print | Worth exploring | proposed | | |
@@ -70,7 +70,7 @@ None recorded.
 - `SidebarCells` (`src/window/sidebar_widgets.rs`) still shares mirror cells with "readers not yet moved onto the adapter".
 
 ### 3 · Properties presentation
-None recorded. `src/window/immersive.rs` still sets the Properties split's pin and collapse while immersive. That is layout, not visibility, so it is outside what `PropertiesWidgets` owns.
+None recorded. `src/window/immersive.rs` still sets the Properties split's pin and collapse while immersive. That is layout, not visibility, so it is outside what `PropertiesWidgets` owns. Still true after 24 (2026-11-27), which left it out of scope.
 
 ### 4 · InfoBar decides what it shows
 **Decisions (2026-11-23, by the owner):**
@@ -879,6 +879,20 @@ Context: `layout.rs`, `toolbar.rs`, `immersive.rs` and `shortcuts.rs` are `inclu
 - **29 · Render from a cached preview.** RAW aspect fix → rotation → `apply_recipe` repeated in 6 callers; the lightbox worker and `render_for_export` repeat `apply_recipe`'s stage order inline. Copies agree today.
 
 Rejected this round: `include!` → modules alone; toolbar.rs; Immersive chrome geometry; navigation crossfade; search session cells (overlap with browse scope); export spine, EditSession undo core, editor close/save, collage editor, viewer retention (already deep). 7 stays closed (still no user-visible effect).
+
+### 24 · Metadata panel presentation
+**Decisions (2026-11-27, by the owner; questions after the first round answered by the agent on the owner's instruction):**
+1. **Two pure functions, not a state machine.** `panel_shown(PanelInputs { page, toggled, pinned, lightbox_open, immersive })`, `toggle_shown(page)` and `closes_on_entry(page, filter, pinned)` in `window/metadata_panel_presentation.rs`. The Filters toggle button already holds the user's intent, so a state machine would only keep a second copy. `MetadataPanel::sync_view` is the one writer of `root` visibility; the `workspace_visible` cell went (it is derived from the page).
+2. **Immersive Mode is an input.** `MetadataPanel::set_immersive(bool)`; the `metadata_was_visible` snapshot and the `connect_visible_notify` guard in `immersive.rs` are deleted. Leaving Immersive Mode re-derives from the current toggle, pin and page. A Filters click during Immersive Mode shows nothing (as before) and the panel opens on leaving.
+3. **Filter pushed, not polled.** `Rc<Cell<SidebarFilter>>` became `Rc<NavigationFilter>` (`get`, `set`, `connect_changed`; listeners run only on a real change). Front mirrors subscribes; the `main_stack` tick callback in `build.rs` (which returned `Continue` every frame for the whole session) is deleted. Decided by the agent: the update is coalesced into one `HIGH_IDLE` callback per burst, not run synchronously, because a navigation sets the filter and switches the page in either order; the tick saw both, and so does the idle, which still runs before layout and paint (priority 100 < resize 110 < redraw 120). A synchronous call could see a half-done navigation (e.g. the old page with the new destination) and close a panel the user had reopened.
+4. **Out of scope, recorded as follow-ups:** Immersive Mode still sets the Properties split's pin and collapse by hand (`immersive.rs`, see 3); the panel's own 300 ms timer that polls the browse scope and the database path (`metadata_panel.rs`, `MetadataPanel::new`) stays (browse scope, 14).
+5. **No formal idle-wakeup measurement**: deleting a per-frame callback that did nothing on most frames needs none. Optional check on the live app: `PICASA_TRACE=1 cargo run`, leave the window idle, compare CPU in `top` on `main` and this branch.
+6. **Owner rule `metadata-panel`**: only `metadata_panel.rs` writes or watches the panel root's visibility (`metadata_root*` / `metadata_panel*.root` `.set_visible` / `.connect_visible_notify`). The `build.rs` tick's ALLOW entry is removed.
+
+**Bug confirmed and fixed.** Panel open in All Photos → Immersive Mode → Albums home (toggle closes) → leave Immersive Mode: the panel showed with its toggle off. Test `leaving_immersive_shows_the_metadata_panel_only_when_toggled` (`immersive_tests.rs`), seen red on the old code at the final assertion, green after.
+
+**Verification (2026-11-27, at `7f86b0d4`):** `cargo check --all-targets` clean; unit tests `metadata_panel_presentation`, `navigation_filter`, `front_surface`, `front_mirrors` pass. Display tests (Xvfb, one process each): 32 of 34 pass, among them all 11 `immersive_window_tests`, the responsive window tests, collection navigation and `metadata_panel_navigation_auto_closes_and_allows_manual_reopen`. The two failures fail on `main` too: `metadata_panel_theme_layout_and_close_reopen` (known), and `metadata_filters_actual_window_folder_album_and_layouts` (times out at its first `wait_until`, `metadata_panel.rs:~2200`, identically on `main` @ `77a45417`; newly noted, not investigated). Owner script: `--self-test` ok; the check shows only the 4 known `open_files.rs` session-state hits. GUI harness `viewer` COMPLETE. GUI harness `editing`: 24 checks pass, then "Timed out waiting for Exposure change to render", twice on the branch and identically on `main` @ `77a45417` (pre-existing, not investigated). `scripts/front-surface-checks/run.sh`: 16/16 on the branch and 16/16 on `main`.
+
 
 ### Next (updated 2026-11-26)
 Smart Albums merged into `main` (merge `89b7b79f`); it is a feature, not a candidate. Round three (14-20) is deferred. Current work is the round-three bugs, one at a time, on `fix/round-three-bugs`. Instructions: [`docs/development/HANDOFF-round-three-bugs.md`](../development/HANDOFF-round-three-bugs.md). Mark each bug below **Fixed** with its commit as it lands. Progress (2026-11-26): all five fixed (`18923e3e`, `24297e1b`, `5d83b50c`, `d3d2252a`, `ab33310c`), each with a test seen red first. Merged into `main` 2026-11-26 (merge `4db4685f`), followed by `feature/album-links` (merge `e2c4b980`: one Add to Album list and New Album dialog, the photo menu's In Albums links; issues #266, #267). Both branches deleted. Round three (14-20) stays deferred.

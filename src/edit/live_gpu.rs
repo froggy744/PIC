@@ -1810,7 +1810,9 @@ vec4 tonePixel(vec4 px) {
         vec4 sums = texelFetch(uAutoColorStats, ivec2(0,0), 0);
         if (sums.a >= 0.5) {
             vec3 means = sums.rgb / sums.a;
-            float neutral = dot(means, vec3(0.2126,0.7152,0.0722));
+            // Same evaluation order as the CPU and the histogram pass:
+            // dot() may fuse and round differently by one step.
+            float neutral = luma(means);
             vec3 gains = clamp(vec3(neutral) / max(means,vec3(1.0)), vec3(0.75), vec3(1.35));
             corrected = round(clamp(corrected * gains, 0.0, 1.0) * 255.0) / 255.0;
         }

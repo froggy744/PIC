@@ -225,6 +225,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         Rc::new(RefCell::new(None));
     let immersive_hide_search_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
+    let gallery_keys_slot: Rc<RefCell<Option<key_dispatch::GalleryKeys>>> =
+        Rc::new(RefCell::new(None));
 
     include!("shortcuts.rs");
 
@@ -4678,97 +4680,33 @@ fn start_photo_export_single(
         navigation.install();
     }
 
-    // Window-level photo shortcuts own keys that must work regardless of
-    // whether the GridView, sectioned Folder renderer or Lightbox has focus.
-    // Real text editors always keep their normal keyboard behaviour.
+    // The gallery's side of the window keys (`shortcuts.rs` decides which
+    // key is which command through `key_dispatch::key_command`).
     {
-        let window_for_keys = window.clone();
         let gallery_for_keys = gallery.clone();
+        let window_for_keys = window.clone();
         let filter_for_keys = filter.clone();
-        let front_for_keys = front.clone();
         let marks_for_keys = action_context.clone();
         let search_for_keys = search_text.clone();
-
-        let photo_keys = gtk::EventControllerKey::new();
-        photo_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        photo_keys.connect_key_pressed(move |_, key, _, modifiers| {
-            let typing = std::iter::successors(
-                gtk::prelude::RootExt::focus(&window_for_keys),
-                |widget| widget.parent(),
-            )
-            .any(|widget| widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>());
-            if typing {
-                return glib::Propagation::Proceed;
-            }
-
-            let control = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
-            let disallowed_modifier = modifiers.intersects(
-                gtk::gdk::ModifierType::ALT_MASK
-                    | gtk::gdk::ModifierType::SUPER_MASK
-                    | gtk::gdk::ModifierType::META_MASK,
-            );
-            // The Photos gallery (with or without the date overview) owns
-            // browse keys; the viewer keeps its own key map.
-            let gallery_front =
-                || matches!(front_for_keys.current(), Front::Gallery | Front::DateOverview);
-
-            // Browse navigation is handled at the window boundary so it is
-            // independent of whether a thumbnail, the grid, or a sidebar row
-            // retained focus. Text fields, Edit, Collage, and the Lightbox
-            // keep their own key maps.
-            if gallery_front() && !disallowed_modifier {
-                let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
-                let mut browser_command = false;
-                if control && !shift {
-                    browser_command = matches!(
-                        key,
-                        gtk::gdk::Key::Home
-                            | gtk::gdk::Key::End
-                            | gtk::gdk::Key::Up
-                            | gtk::gdk::Key::Down
-                    );
-                } else if !control && !shift {
-                    browser_command = matches!(
-                        key,
-                        gtk::gdk::Key::Left
-                            | gtk::gdk::Key::Right
-                            | gtk::gdk::Key::Up
-                            | gtk::gdk::Key::Down
-                            | gtk::gdk::Key::Page_Up
-                            | gtk::gdk::Key::Page_Down
-                            | gtk::gdk::Key::Home
-                            | gtk::gdk::Key::End
-                    );
+        let focus_in_gallery: Rc<dyn Fn() -> bool> = {
+            let gallery = gallery.clone();
+            Rc::new(move || {
+                std::iter::successors(gtk::prelude::RootExt::focus(&window_for_keys), |widget| {
+                    widget.parent()
+                })
+                .any(|widget| widget == gallery.visible_root())
+            })
+        };
+        let run: Rc<dyn Fn(key_dispatch::KeyCommand, gtk::gdk::Key) -> bool> =
+            Rc::new(move |command, key| match command {
+                key_dispatch::KeyCommand::GalleryBrowse { control } => {
+                    let current_photo_id =
+                        marks_for_keys.info.current_photo().map(|photo| photo.id());
+                    gallery_for_keys.navigate_browser_key(key, control, current_photo_id)
                 }
-                if browser_command {
-                    let focus_is_in_gallery = std::iter::successors(
-                        gtk::prelude::RootExt::focus(&window_for_keys),
-                        |widget| widget.parent(),
-                    )
-                    .any(|widget| widget == gallery_for_keys.visible_root());
-                    let arrow = matches!(
-                        key,
-                        gtk::gdk::Key::Left
-                            | gtk::gdk::Key::Right
-                            | gtk::gdk::Key::Up
-                            | gtk::gdk::Key::Down
-                    );
-                    if !arrow || !focus_is_in_gallery || control {
-                        let current_photo_id = marks_for_keys
-                            .info
-                            .current_photo()
-                            .map(|photo| photo.id());
-                        if gallery_for_keys.navigate_browser_key(key, control, current_photo_id) {
-                            return glib::Propagation::Stop;
-                        }
-                    }
-                }
-            }
-
-            if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
-                if gallery_front() {
-                    // Ctrl+A should select the complete visible result set.
-                    // A folder normally scopes selection to the active folder,
+                key_dispatch::KeyCommand::SelectAll => {
+                    // Ctrl+A selects the complete visible result set. A
+                    // folder normally scopes selection to the active folder,
                     // but search can return matches from elsewhere in the
                     // catalogue, so its filtered gallery is the scope.
                     let folder_id = if search_for_keys.borrow().is_empty() {
@@ -4785,49 +4723,25 @@ fn start_photo_export_single(
                         eprintln!("UI TRACE ctrl_a folder_id={folder_id:?}");
                     }
                     gallery_for_keys.select_all_keyboard_scope(folder_id);
-                    return glib::Propagation::Stop;
+                    true
                 }
-                return glib::Propagation::Proceed;
-            }
-
-            if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::d | gtk::gdk::Key::D) {
-                if gallery_front() {
+                key_dispatch::KeyCommand::ClearSelection => {
                     gallery_for_keys.clear_keyboard_selection();
-                    return glib::Propagation::Stop;
+                    true
                 }
-                return glib::Propagation::Proceed;
-            }
-
-            // Bare numeric keys are reserved outside text fields so a year such
-            // as 2026 cannot accidentally start type-to-search. 0 clears the
-            // rating, 1..5 assign that rating to the complete current selection,
-            // and 6..9 are intentionally consumed without an action.
-            if !control && !disallowed_modifier {
-                if let Some(digit) = key
-                    .to_unicode()
-                    .and_then(|character| character.to_digit(10))
-                {
-                    if digit <= 5
-                        && matches!(
-                            front_for_keys.current(),
-                            Front::Gallery | Front::DateOverview | Front::Lightbox
-                        )
-                    {
-                        if let Some(photo) = marks_for_keys.info.current_photo() {
-                            photo_mark_commands::run(
-                                &marks_for_keys,
-                                MarkIntent::SetRating(digit as u8),
-                                &photo,
-                            );
-                        }
+                key_dispatch::KeyCommand::SetRating(stars) => {
+                    if let Some(photo) = marks_for_keys.info.current_photo() {
+                        photo_mark_commands::run(
+                            &marks_for_keys,
+                            MarkIntent::SetRating(stars),
+                            &photo,
+                        );
                     }
-                    return glib::Propagation::Stop;
+                    true
                 }
-            }
-
-            glib::Propagation::Proceed
-        });
-        window.add_controller(photo_keys);
+                _ => false,
+            });
+        gallery_keys_slot.replace(Some(key_dispatch::GalleryKeys { focus_in_gallery, run }));
     }
 
     // Appearance button: opens Settings → Themes, where the theme list is

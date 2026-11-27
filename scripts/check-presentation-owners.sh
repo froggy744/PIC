@@ -64,6 +64,11 @@
 #   - src/window/workspace_session_widgets.rs (Workspace; the decision is
 #     window::workspace_session). No window code keeps its own detour flags
 #     (collage_add_mode, collage_editing) again.
+# Window keyboard shortcuts (candidate 23) have one controller; which
+# command a key means is decided by window::key_dispatch::key_command:
+#   - src/window/shortcuts.rs. Widgets keep their own key maps
+#     (WIDGET_KEY_MAPS; the two search-field controllers in layout.rs are
+#     in ALLOW).
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -93,6 +98,9 @@ PHOTO_LIST_OWNER='src/window/photo_list.rs'
 ALBUM_LIST_OWNER='src/window/album_list_widgets.rs'
 METADATA_PANEL_OWNER='src/window/metadata_panel.rs'
 WORKSPACE_OWNER='src/window/workspace_session_widgets.rs'
+SHORTCUTS_OWNER='src/window/shortcuts.rs'
+# Widgets with their own key maps (not window shortcuts).
+WIDGET_KEY_MAPS='src/window/search.rs src/albums/coverflow.rs src/edit/draw_ui.rs src/edit/editor.rs src/grid/sectioned_folder.rs src/grid/selection.rs src/lightbox/impl.rs src/screensaver.rs src/settings.rs src/sidebar.rs'
 SESSION_FIXTURES='src/window/immersive_tests.rs src/window/responsive_tests.rs'
 ID='[[:alnum:]_]'
 
@@ -118,6 +126,7 @@ RULES=(
   "album-list~$ALBUM_LIST_OWNER~(albums_view::refresh|sidebar::refresh_album_rows)\(~the sidebar album rows or the Albums home (say AlbumList::changed)"
   "metadata-panel~$METADATA_PANEL_OWNER~(metadata_root$ID*|metadata_panel$ID*\.root)\.(set_visible|connect_visible_notify)\(~metadata filter panel visibility (MetadataPanel::set_immersive / set_lightbox_open / set_navigation_view)"
   "workspace-session~$WORKSPACE_OWNER~(^|[^[:alnum:]_])collage_(add_mode|editing)([^[:alnum:]_]|$)|edit_(space|escape)$ID*\.(borrow_mut\(\)\.take|replace)\(|set_setting\(.*DRAFT_SETTING_KEY~Collage/editor session state, the editor's key handlers or the collage draft (ask Workspace)"
+  "window-keys~$SHORTCUTS_OWNER $WIDGET_KEY_MAPS~^[^/]*EventControllerKey::new\(\)~a second window key controller (add the key to window::key_dispatch)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -149,6 +158,8 @@ ALLOW=(
   "src/window/photo_actions.rs|info.photo_updated(&viewer_photo);|test fixture (the shown photo)"
   "src/window/photo_actions.rs|sidebar::update_library_counts(&sidebar, db::sidebar_counts(&connection.borrow()).unwrap());|test fixture (trash counts test)"
   "src/window/photo_mark_commands.rs|info.photo_updated(&anchor);|test fixture (the shown photo)"
+  "src/window/layout.rs|let search_keyboard = gtk::EventControllerKey::new();|Ctrl+F focuses search (its own key map)"
+  "src/window/layout.rs|let search_navigation = gtk::EventControllerKey::new();|arrows leave the search field for the grid (its own key map)"
   "src/window/layout.rs|dock.set_visible(false);|KNOWN EXCEPTION: compact_dock visible-notify immersive guard predates SidebarWidgets"
 )
 
@@ -215,7 +226,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / MetadataPanel / Workspace / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed / CollectionNavigation (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / MetadataPanel / Workspace / key_dispatch / photo_mark_commands / InfoBar::current_photo / FrontSurface / FrontMirrors / ZoomSliderWidgets / session_state / scroll_motion / photo_list / AlbumList / photo_changed / CollectionNavigation (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -395,6 +406,7 @@ self_test() {
     "edit Space slot cleared in layout.rs|src/window/layout.rs|edit_space_slot_for_toggle.borrow_mut().take();|workspace-session"
     "edit Escape handler set in build.rs|src/window/build.rs|edit_escape_slot.replace(Some(editor.escape_action_handle()));|workspace-session"
     "collage draft saved in layout.rs|src/window/layout.rs|let _ = db::set_setting(&guard, crate::collage::DRAFT_SETTING_KEY, &json);|workspace-session"
+    "second key controller in build.rs|src/window/build.rs|let photo_keys = gtk::EventControllerKey::new();|window-keys"
     "navigation closure back in build.rs|src/window/build.rs|lightbox.set_collection_navigation_handler(handler);|collection-navigation"
   )
   local entry name file line rule

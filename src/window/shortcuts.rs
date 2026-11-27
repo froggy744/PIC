@@ -1,157 +1,145 @@
 {
-    // Handle viewer keyboard shortcuts at the window boundary as well as
-    // inside the lightbox. Capture prevents GtkGridView from interpreting
-    // Space as a selection toggle.
-    let window_escape = gtk::EventControllerKey::new();
-    window_escape.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let lightbox_for_window_escape = lightbox.clone();
-    let front_for_key = front.clone();
-    let space_open_slot_for_key = space_open_slot.clone();
-    let edit_space_slot_for_key = edit_space_slot.clone();
-    let edit_escape_slot_for_key = edit_escape_slot.clone();
-    let date_browser_back_for_key = date_browser_back_slot.clone();
-    let one_to_one_for_key = info.one_to_one.clone();
-    let space_toggle_in_progress_for_key = space_toggle_in_progress.clone();
-    let search_popup_for_key = search_popup_slot.clone();
-    let window_for_fullscreen_key = window.clone();
-    let immersive_active_for_key = immersive_active.clone();
-    let immersive_toggle_for_key = immersive_toggle_slot.clone();
-    window_escape.connect_key_pressed(move |_, key, _, modifiers| {
-        if key == gtk::gdk::Key::Escape {
-            // The editor may leave focus in the infobar, outside its own key
-            // controller. Clone before invoking: closing clears this slot.
-            let escape_action = edit_escape_slot_for_key.borrow().clone();
-            if let Some(escape_action) = escape_action {
-                escape_action();
-                return glib::Propagation::Stop;
-            }
-        }
-
-        // Escape dismisses the photo context menu before it closes the
-        // lightbox or affects the gallery. This mirrors normal context-menu
-        // behaviour and keeps one Escape press scoped to one UI layer.
-        if key == gtk::gdk::Key::Escape && dismiss_active_photo_context_menu() {
-            let root = lightbox_for_window_escape.root.clone();
-            glib::idle_add_local_once(move || {
-                if root.is_visible() {
-                    root.grab_focus();
-                }
-            });
-            return glib::Propagation::Stop;
-        }
-
-        // Typing must never invoke gallery Space / 1:1 / open shortcuts.
-        // Walk the focus chain so both the search entry (Editable) and
-        // edit-mode TextView (not Editable) are covered. This must run even
-        // while the lightbox is open: type-to-search can focus the entry
-        // under the viewer, and Space would otherwise toggle 1:1 instead of
-        // inserting a space.
-        let focused = gtk::prelude::RootExt::focus(&window_for_fullscreen_key);
-        let typing = std::iter::successors(focused.clone(), |widget| widget.parent())
-            .any(|widget| widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>());
-        // SearchEntry can retain focus after gallery navigation. An empty
-        // search field must not swallow Space meant to open the selected photo.
-        // Non-empty search and other editors still accept typed spaces.
-        let empty_search_focused = std::iter::successors(focused, |widget| widget.parent())
-            .any(|widget| {
-                widget
-                    .downcast::<gtk::SearchEntry>()
-                    .ok()
-                    .is_some_and(|entry| entry.text().is_empty())
-            });
-        if typing
-            && key != gtk::gdk::Key::F11
-            && key != gtk::gdk::Key::Escape
-            && !(key == gtk::gdk::Key::space && empty_search_focused)
-        {
-            return glib::Propagation::Proceed;
-        }
-
-        if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
-            && front_for_key.current() == Front::Lightbox
-        {
-            
-            lightbox_for_window_escape.request_close();
-            glib::Propagation::Stop
-        } else if key == gtk::gdk::Key::Escape && immersive_active_for_key.get() {
-            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref().cloned() {
-                // Switch widget parenting after key dispatch; GTK may still be
-                // snapshotting the gallery during a capture-phase key handler.
-                glib::idle_add_local_once(move || toggle());
-            }
-            glib::Propagation::Stop
-        } else if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
-            && date_browser_back_for_key.borrow().as_ref().is_some_and(|back| back()) {
-            glib::Propagation::Stop
-        } else if (key == gtk::gdk::Key::i || key == gtk::gdk::Key::I)
-            && !modifiers.intersects(
-                gtk::gdk::ModifierType::CONTROL_MASK
-                    | gtk::gdk::ModifierType::ALT_MASK
-                    | gtk::gdk::ModifierType::SUPER_MASK
-                    | gtk::gdk::ModifierType::META_MASK,
-            )
-        {
-            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref().cloned() {
-                glib::idle_add_local_once(move || toggle());
+    // The window's one keyboard shortcut controller (candidate 23). It runs
+    // in the capture phase, before the focused widget, so shortcuts work
+    // whether the grid, a sidebar row or the viewer has focus, and so
+    // GtkGridView does not take Space as a selection toggle. Which command a
+    // key means is decided by `key_dispatch::key_command`; this adapter
+    // gathers the context and carries the command out. The gallery's keys
+    // arrive through `gallery_keys_slot`, filled once the gallery exists.
+    let window_keys = gtk::EventControllerKey::new();
+    window_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let lightbox_for_keys = lightbox.clone();
+    let front_for_keys = front.clone();
+    let space_open_slot_for_keys = space_open_slot.clone();
+    let edit_space_slot_for_keys = edit_space_slot.clone();
+    let edit_escape_slot_for_keys = edit_escape_slot.clone();
+    let date_browser_back_for_keys = date_browser_back_slot.clone();
+    let one_to_one_for_keys = info.one_to_one.clone();
+    let space_toggle_in_progress_for_keys = space_toggle_in_progress.clone();
+    let search_popup_for_keys = search_popup_slot.clone();
+    let window_for_keys = window.clone();
+    let immersive_active_for_keys = immersive_active.clone();
+    let immersive_toggle_for_keys = immersive_toggle_slot.clone();
+    let gallery_keys_for_keys = gallery_keys_slot.clone();
+    window_keys.connect_key_pressed(move |_, key, _, modifiers| {
+        // Walk the focus chain so both entries (Editable) and the editor's
+        // TextView (not Editable) count as typing. An empty search field
+        // can keep focus after gallery navigation; Space still opens there.
+        let focused = gtk::prelude::RootExt::focus(&window_for_keys);
+        let chain = || std::iter::successors(focused.clone(), |widget| widget.parent());
+        let typing = if !chain().any(|widget| widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>()) {
+            key_dispatch::Typing::No
+        } else if chain().any(|widget| {
+            widget
+                .downcast::<gtk::SearchEntry>()
+                .ok()
+                .is_some_and(|entry| entry.text().is_empty())
+        }) {
+            key_dispatch::Typing::EmptySearch
+        } else {
+            key_dispatch::Typing::Text
+        };
+        let gallery_keys = gallery_keys_for_keys.borrow().clone();
+        let context = key_dispatch::KeyContext {
+            front: front_for_keys.current(),
+            typing,
+            editor_open: edit_escape_slot_for_keys.borrow().is_some(),
+            context_menu_open: photo_context_menu_is_open(),
+            immersive: immersive_active_for_keys.get(),
+            search_suggestions_shown: search_popup_for_keys
+                .borrow()
+                .as_ref()
+                .is_some_and(|popup| popup.is_visible()),
+            focus_in_gallery: gallery_keys
+                .as_ref()
+                .is_some_and(|keys| (keys.focus_in_gallery)()),
+        };
+        let handled = |done: bool| {
+            if done {
                 glib::Propagation::Stop
             } else {
                 glib::Propagation::Proceed
             }
-        } else if key == gtk::gdk::Key::F11 {
-            if window_for_fullscreen_key.is_fullscreen() {
-                window_for_fullscreen_key.unfullscreen();
-            } else {
-                window_for_fullscreen_key.fullscreen();
+        };
+        use key_dispatch::KeyCommand as Command;
+        let command = key_dispatch::key_command(key, modifiers, &context);
+        match command {
+            Command::Pass => glib::Propagation::Proceed,
+            Command::Consume => glib::Propagation::Stop,
+            Command::EditorEscape => {
+                // Clone before invoking: closing clears this slot.
+                let escape = edit_escape_slot_for_keys.borrow().clone();
+                handled(escape.map(|escape| escape()).is_some())
             }
-            glib::Propagation::Stop
-        } else if front_for_key.current() == Front::Lightbox
-            && (key == gtk::gdk::Key::Up || key == gtk::gdk::Key::Down)
-            && search_popup_for_key
-                .borrow()
-                .as_ref()
-                .is_some_and(|popup| popup.is_visible())
-        {
-            // Search suggestions own Up/Down while visible, even with the
-            // photo viewer open underneath.
-            glib::Propagation::Proceed
-        } else if front_for_key.current() == Front::Lightbox
-            && (key == gtk::gdk::Key::Left || key == gtk::gdk::Key::Right)
-        {
-            lightbox_for_window_escape.navigate_photo(if key == gtk::gdk::Key::Left { -1 } else { 1 });
-            glib::Propagation::Stop
-        } else if front_for_key.current() == Front::Lightbox
-            && (key == gtk::gdk::Key::Up || key == gtk::gdk::Key::Down)
-        {
-            lightbox_for_window_escape.navigate_collection(if key == gtk::gdk::Key::Up { -1 } else { 1 });
-            glib::Propagation::Stop
-        } else if key == gtk::gdk::Key::space {
-            // Edit-mode Space owns the key only while the edit page is
-            // visible (the slot can outlive the page via the Edit toggle).
-            // Text-section no-op still returns true so Space does not open
-            // the lightbox from inside the editor.
-            let edit_handled = edit_space_slot_for_key
-                .borrow()
-                .as_ref()
-                .is_some_and(|toggle_edit| toggle_edit());
-            if edit_handled {
-                return glib::Propagation::Stop;
+            Command::DismissContextMenu => {
+                dismiss_active_photo_context_menu();
+                let root = lightbox_for_keys.root.clone();
+                glib::idle_add_local_once(move || {
+                    if root.is_visible() {
+                        root.grab_focus();
+                    }
+                });
+                glib::Propagation::Stop
             }
-            if front_for_key.current() == Front::Lightbox {
-                if one_to_one_for_key.is_active() {
-                    space_toggle_in_progress_for_key.set(true);
-                    one_to_one_for_key.set_active(false);
+            Command::CloseViewer => {
+                lightbox_for_keys.request_close();
+                glib::Propagation::Stop
+            }
+            Command::LeaveImmersive | Command::ToggleImmersive => {
+                let toggle = immersive_toggle_for_keys.borrow().as_ref().cloned();
+                // Switch widget parenting after key dispatch; GTK may still
+                // be snapshotting the gallery during a capture-phase handler.
+                handled(toggle.map(|toggle| glib::idle_add_local_once(move || toggle())).is_some())
+            }
+            Command::DateBrowserBack => handled(
+                date_browser_back_for_keys
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|back| back()),
+            ),
+            Command::ToggleFullscreen => {
+                if window_for_keys.is_fullscreen() {
+                    window_for_keys.unfullscreen();
                 } else {
-                    space_toggle_in_progress_for_key.set(true);
-                    one_to_one_for_key.set_active(true);
+                    window_for_keys.fullscreen();
                 }
-            } else if let Some(open_selected) = space_open_slot_for_key.borrow().as_ref() {
-                open_selected();
+                glib::Propagation::Stop
             }
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
+            Command::ViewerPhoto(direction) => {
+                lightbox_for_keys.navigate_photo(direction);
+                glib::Propagation::Stop
+            }
+            Command::ViewerCollection(direction) => {
+                lightbox_for_keys.navigate_collection(direction);
+                glib::Propagation::Stop
+            }
+            Command::EditorSpace => {
+                // The editor's own Space: Fit / 1:1, a no-op in its Text
+                // section. Either way Space must not open the viewer.
+                let space = edit_space_slot_for_keys.borrow().clone();
+                if let Some(space) = space {
+                    space();
+                }
+                glib::Propagation::Stop
+            }
+            Command::ViewerToggleOneToOne => {
+                space_toggle_in_progress_for_keys.set(true);
+                one_to_one_for_keys.set_active(!one_to_one_for_keys.is_active());
+                glib::Propagation::Stop
+            }
+            Command::OpenSelected => {
+                if let Some(open_selected) = space_open_slot_for_keys.borrow().as_ref() {
+                    open_selected();
+                }
+                glib::Propagation::Stop
+            }
+            Command::GalleryBrowse { .. }
+            | Command::SelectAll
+            | Command::ClearSelection
+            | Command::SetRating(_) => {
+                handled(gallery_keys.is_some_and(|keys| (keys.run)(command, key)))
+            }
         }
     });
-    window.add_controller(window_escape);
-
+    window.add_controller(window_keys);
 }

@@ -17,6 +17,7 @@
     let one_to_one_for_keys = info.one_to_one.clone();
     let space_toggle_in_progress_for_keys = space_toggle_in_progress.clone();
     let search_popup_for_keys = search_popup_slot.clone();
+    let search_entry_for_keys = search_entry_slot.clone();
     let window_for_keys = window.clone();
     let immersive_active_for_keys = immersive_active.clone();
     let immersive_toggle_for_keys = immersive_toggle_slot.clone();
@@ -50,6 +51,10 @@
                 .borrow()
                 .as_ref()
                 .is_some_and(|popup| popup.is_visible()),
+            search_active: search_entry_for_keys
+                .borrow()
+                .as_ref()
+                .is_some_and(|entry| !entry.text().is_empty()),
             focus_in_gallery: gallery_keys
                 .as_ref()
                 .is_some_and(|keys| (keys.focus_in_gallery)()),
@@ -83,6 +88,14 @@
             }
             Command::CloseViewer => {
                 lightbox_for_keys.request_close();
+                glib::Propagation::Stop
+            }
+            Command::ClearSearch => {
+                // The entry's own stop-search: closes the suggestions and
+                // clears the text, which rebuilds the destination's view.
+                if let Some(entry) = search_entry_for_keys.borrow().as_ref() {
+                    entry.emit_stop_search();
+                }
                 glib::Propagation::Stop
             }
             Command::LeaveImmersive | Command::ToggleImmersive => {

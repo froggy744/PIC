@@ -228,6 +228,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_keys_slot: Rc<RefCell<Option<key_dispatch::GalleryKeys>>> =
         Rc::new(RefCell::new(None));
 
+    let search_entry_slot: Rc<RefCell<Option<gtk::SearchEntry>>> = Rc::new(RefCell::new(None));
     include!("shortcuts.rs");
 
     let info_for_grid = info.clone();
@@ -236,7 +237,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let properties_for_grid_selection = properties.clone();
     let filter = NavigationFilter::new(initial_filter);
     let search_text = Rc::new(RefCell::new(String::new()));
-    let search_entry_slot: Rc<RefCell<Option<gtk::SearchEntry>>> = Rc::new(RefCell::new(None));
     let search_suppressed = Rc::new(Cell::new(false));
     let cleared_search_query = Rc::new(RefCell::new(None::<String>));
     let search_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
@@ -3655,8 +3655,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let navigate_to_folder = navigate_to_folder.clone();
         let inspector_for_prepare = properties_panel.clone();
         let gallery_for_prepare = gallery_overlay.clone();
+        let clear_search_on_close = clear_search_after_result.clone();
         lightbox.set_close_prepare_handler(move || {
             prepared.set(false);
+            // A search typed over the viewer and left half way must not
+            // survive the return to the grid (issue #268). Clear it as picking
+            // a suggested photo does; that also returns to the viewed photo's
+            // folder below instead of showing the partial results.
+            clear_search_on_close();
             if let Some(photo) = lightbox_for_prepare
                 .upgrade()
                 .and_then(|lightbox| lightbox.current_photo())

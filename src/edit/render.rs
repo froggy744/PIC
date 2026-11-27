@@ -1573,6 +1573,25 @@ pub fn save_export(
     save_export_with_metadata(image, destination, format, quality, None)
 }
 
+/// Creation date written into the export sRGB profile's header (ICC
+/// `dateTimeNumber`: year, month, day, hours, minutes, seconds), so exporting
+/// the same photo twice gives byte-identical files.
+const EXPORT_PROFILE_DATE: [u16; 6] = [2026, 1, 1, 0, 0, 0];
+
+/// The sRGB ICC profile embedded in exports. lcms2 stamps the current time
+/// into the header; replace it with a fixed date. lcms2 leaves the profile
+/// ID (an MD5 that would cover the date) zero, meaning "not computed".
+fn export_srgb_profile() -> Result<Vec<u8>> {
+    let mut icc = lcms2::Profile::new_srgb()
+        .icc()
+        .map_err(|error| anyhow::anyhow!("could not generate sRGB profile: {error}"))?;
+    anyhow::ensure!(icc.len() >= 128, "generated sRGB profile has no ICC header");
+    for (index, value) in EXPORT_PROFILE_DATE.iter().enumerate() {
+        icc[24 + index * 2..26 + index * 2].copy_from_slice(&value.to_be_bytes());
+    }
+    Ok(icc)
+}
+
 /// Export rendered pixels with rebuilt, orientation-normalized EXIF and an
 /// sRGB profile. Never copy a source ICC verbatim: pixels may have been color
 /// converted or edited and may no longer be in the source's color space.
@@ -1586,11 +1605,7 @@ pub fn save_export_with_metadata(
     use crate::edit::export_batch::ExportFormat;
     use image::ImageEncoder;
     let icc = if exif.is_some() {
-        Some(
-            lcms2::Profile::new_srgb()
-                .icc()
-                .map_err(|error| anyhow::anyhow!("could not generate sRGB profile: {error}"))?,
-        )
+        Some(export_srgb_profile()?)
     } else {
         None
     };
@@ -1987,6 +2002,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn export_profile_has_a_fixed_date_and_stays_a_valid_srgb_profile() {
+        let icc = export_srgb_profile().unwrap();
+        assert_eq!(&icc[24..36], &[7, 234, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0]);
+        assert!(
+            icc[84..100].iter().all(|&byte| byte == 0),
+            "a computed profile ID would cover the date and no longer match"
+        );
+        assert_eq!(icc, export_srgb_profile().unwrap());
+        assert!(lcms2::Profile::new_icc(&icc).is_ok());
     }
 
     #[test]

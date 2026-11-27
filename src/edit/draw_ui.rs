@@ -59,7 +59,7 @@ fn build_draw_panel(
     update_history_buttons: Rc<dyn Fn()>,
     queue_preview: Rc<dyn Fn()>,
     select_other_layer: Rc<dyn Fn((f32, f32)) -> bool>,
-) -> (Rc<dyn Fn()>, Rc<dyn Fn(usize)>) {
+) -> (Rc<dyn Fn()>, Rc<dyn Fn(usize)>, Rc<dyn Fn()>) {
     use super::model::DrawAnnotation;
     let tools = Rc::new(Cell::new(DrawTool::Pen));
     let selected = Rc::new(Cell::new(None::<usize>));
@@ -989,6 +989,21 @@ fn build_draw_panel(
             layer.queue_draw();
         })
     };
+    // The selection is a list of indices into `recipe.drawings`. Undo, Redo
+    // and Reset replace the drawings underneath it, so after one of them an
+    // index may name no drawing or a different one: drop the selection.
+    let forget_selection: Rc<dyn Fn()> = {
+        let selected = selected.clone();
+        let selected_many = selected_many.clone();
+        let drawing_list = drawing_list.clone();
+        let layer = layer.clone();
+        Rc::new(move || {
+            selected.set(None);
+            selected_many.borrow_mut().clear();
+            drawing_list.unselect_all();
+            layer.queue_draw();
+        })
+    };
     let _ = queue_preview;
     let layer_for_update = layer.clone();
     let pen_for_update = pen.clone();
@@ -1012,7 +1027,7 @@ fn build_draw_panel(
         }
         layer_for_update.queue_draw();
     });
-    (update, select_drawing)
+    (update, select_drawing, forget_selection)
 }
 
 fn draw_kind_label(kind: super::model::DrawKind) -> &'static str {
@@ -1122,6 +1137,66 @@ fn annotation_intersects_rect(
 #[cfg(test)]
 mod draw_ui_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn history_jump_drops_the_drawing_selection() {
+        use super::super::model::{DrawAnnotation, DrawKind};
+        gtk::init().unwrap();
+        let stroke = |color| DrawAnnotation {
+            kind: DrawKind::Line,
+            points: vec![(0.2, 0.3), (0.7, 0.8)],
+            color,
+            width: 0.01,
+            opacity: 1.0,
+            arrow_start: false,
+            arrow_end: false,
+        };
+        let parent = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let session = Rc::new(RefCell::new(EditSession::new(EditRecipe::default())));
+        let (_, select_drawing, forget_selection) = build_draw_panel(
+            &parent,
+            &gtk::DrawingArea::new(),
+            session.clone(),
+            Rc::new(Cell::new((100, 100))),
+            Rc::new(Cell::new(0.0)),
+            Rc::new(Cell::new(false)),
+            gtk::ScrolledWindow::new(),
+            gtk::ToggleButton::new(),
+            Rc::new(|| {}),
+            Rc::new(|| {}),
+            Rc::new(|_| false),
+        );
+        let swatch = {
+            let mut stack = vec![parent.clone().upcast::<gtk::Widget>()];
+            let mut found = None;
+            while let Some(widget) = stack.pop() {
+                if widget.has_css_class("text-colour-swatch")
+                    && widget.first_child().is_none()
+                    && found.is_none()
+                {
+                    found = widget.downcast_ref::<gtk::Button>().cloned();
+                }
+                let mut child = widget.first_child();
+                while let Some(next) = child {
+                    child = next.next_sibling();
+                    stack.push(next);
+                }
+            }
+            found.expect("a colour swatch")
+        };
+        // Draw a stroke, select it, then Undo it (the editor's Undo, Redo and
+        // Reset all end in `sync_controls`, which forgets the selection).
+        session.borrow_mut().mutate(|r| r.drawings.push(stroke(0x111111ff)));
+        select_drawing(0);
+        assert!(session.borrow_mut().undo());
+        forget_selection();
+        // A new stroke at the same index was never selected: a colour click
+        // sets the pen colour and leaves the stroke alone.
+        session.borrow_mut().mutate(|r| r.drawings.push(stroke(0x222222ff)));
+        swatch.emit_clicked();
+        assert_eq!(session.borrow().recipe.drawings[0].color, 0x222222ff);
+    }
 
     #[test]
     fn selection_and_eraser_gestures_are_not_draw_previews() {

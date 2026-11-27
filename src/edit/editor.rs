@@ -696,6 +696,10 @@ pub fn build(
     // reset, crop commits) can refresh the list without a dependency cycle.
     let sync_overlays_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let sync_text_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    // Filled once the Draw panel is built: undo/redo and reset drop its
+    // index-based drawing selection.
+    let forget_drawing_selection_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
     let pending_crop = Rc::new(RefCell::new(CropRect::default()));
     let crop_aspect_preset = Rc::new(Cell::new(CropAspectPreset::Free));
     let crop_portrait = Rc::new(Cell::new(false));
@@ -1716,6 +1720,12 @@ pub fn build(
                                     busy.stop();
                                     busy.set_visible(false);
                                     status.set_text("Preview worker stopped");
+                                    // No preview will come: end the opening
+                                    // as a failed preview does, so the
+                                    // stand-in cannot hide the layers.
+                                    end_placeholder(false);
+                                    preview_ready.set(true);
+                                    first_frame_shown.set(true);
                                 }
                                 glib::ControlFlow::Break
                             }
@@ -2265,6 +2275,7 @@ pub fn build(
         let draw_layer = draw_layer.clone();
         let sync_overlays_slot = sync_overlays_slot.clone();
         let sync_text_slot = sync_text_slot.clone();
+        let forget_drawing_selection_slot = forget_drawing_selection_slot.clone();
         let refresh_missing_overlay_warning = refresh_missing_overlay_warning.clone();
         Rc::new(move || {
             syncing.set(true);
@@ -2275,6 +2286,9 @@ pub fn build(
             }
             if let Some(sync_text) = sync_text_slot.borrow().as_ref() {
                 sync_text();
+            }
+            if let Some(forget) = forget_drawing_selection_slot.borrow().as_ref() {
+                forget();
             }
             refresh_missing_overlay_warning();
             draw_layer.queue_draw();
@@ -3262,7 +3276,7 @@ pub fn build(
         })
     };
 
-    let (update_draw_canvas, select_drawing) = build_draw_panel(
+    let (update_draw_canvas, select_drawing, forget_drawing_selection) = build_draw_panel(
         &draw_box,
         &draw_layer,
         session.clone(),
@@ -3275,6 +3289,7 @@ pub fn build(
         queue_preview.clone(),
         select_other_layer,
     );
+    forget_drawing_selection_slot.replace(Some(forget_drawing_selection));
     {
         let update_draw_canvas = update_draw_canvas.clone();
         let update_canvas_input = update_canvas_input.clone();

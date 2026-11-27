@@ -2273,7 +2273,7 @@
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some("Search photos"));
     search.set_width_chars(18);
-    search.set_max_width_chars(18);
+    search.set_max_width_chars(40);
     // Keep Search usable while the status yields space in narrow windows.
     search.set_size_request(180, -1);
     search.set_hexpand(true);

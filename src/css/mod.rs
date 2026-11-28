@@ -105,9 +105,8 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 5,
     );
 
-    // The gallery scrollbar's shape (slim pill, wider handle under the
-    // pointer) must win over theme-wide scrollbar rules (+1); its colours
-    // stay with the theme.
+    // The gallery scrollbar's shape (slim pill while scrolling) must win
+    // over theme-wide scrollbar rules (+1); its colours stay with the theme.
     let gallery_scrollbar = gtk::CssProvider::new();
     gallery_scrollbar.load_from_string(GALLERY_SCROLLBAR);
     gtk::style_context_add_provider_for_display(

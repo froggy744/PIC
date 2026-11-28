@@ -1,13 +1,14 @@
-/* Gallery scrollbar (All Photos and Folders), browser style.
+/* Gallery scrollbar (All Photos and Folders).
  *
- * It stays an overlay: hidden while idle, a slim pill while scrolling, and a
- * wider handle on a faint track once the pointer reaches it, so it is easy to
- * grab without taking width from the photos. Only geometry and the track are
- * set here; the thumb's colours stay with the active theme.
+ * It stays an overlay: hidden while idle and a slim pill while scrolling.
+ * Under the pointer it keeps the default hover geometry, the same as the
+ * sidebar's scrollbar, so the gallery's does not look wider next to the
+ * sidebar or Properties. Only geometry is set here; the thumb's colours stay
+ * with the active theme.
  *
- * The width snaps rather than animates: base.css limits the thumb's
- * transition to colours because interpolating libadwaita's overlay geometry
- * can invert the slim thumb mid-transition. */
+ * The geometry does not animate: base.css limits the thumb's transition to
+ * colours because interpolating libadwaita's overlay geometry can invert the
+ * slim thumb mid-transition. */
 .pic-gallery-scroller > scrollbar.vertical.overlay-indicator > range > trough > slider {
   border-radius: 999px;
 }
@@ -15,17 +16,4 @@
 .pic-gallery-scroller > scrollbar.vertical.overlay-indicator:not(.hovering):not(.dragging) > range > trough > slider {
   min-width: 4px;
   margin: 3px;
-}
-
-.pic-gallery-scroller > scrollbar.vertical.overlay-indicator.hovering > range > trough,
-.pic-gallery-scroller > scrollbar.vertical.overlay-indicator.dragging > range > trough {
-  margin: 2px;
-  border-radius: 999px;
-  background-color: alpha(@theme_fg_color, 0.08);
-}
-
-.pic-gallery-scroller > scrollbar.vertical.overlay-indicator.hovering > range > trough > slider,
-.pic-gallery-scroller > scrollbar.vertical.overlay-indicator.dragging > range > trough > slider {
-  min-width: 10px;
-  margin: 1px;
 }

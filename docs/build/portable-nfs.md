@@ -40,6 +40,15 @@ existing export options before changing them.
 If the NAS continues to require reserved ports, PIC reports that the export
 policy is incompatible with unprivileged direct NFS access.
 
+PIC names the likely cause when it cannot open an NFS session:
+
+- **The NAS refused this client** (NFSv3 "Permission denied", NFSv4
+  "Operation not permitted"): the export lacks `insecure`, as above.
+- **The NAS accepted the connection and then closed it** ("Remote side closed
+  connection"): the export options are not the problem. A Linux NAS whose
+  NFS service got into this state recovers after
+  `sudo systemctl restart nfs-server`.
+
 ## Packaging
 
 The Linux application links to libnfs directly. AppImage packaging bundles

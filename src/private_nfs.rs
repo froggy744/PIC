@@ -148,9 +148,43 @@ pub fn visit_scan(
     Ok(())
 }
 fn err(buffer: &[c_char]) -> String {
-    unsafe { CStr::from_ptr(buffer.as_ptr()) }
+    let message = unsafe { CStr::from_ptr(buffer.as_ptr()) }
         .to_string_lossy()
-        .into_owned()
+        .into_owned();
+    match session_failure_hint(&message) {
+        Some(hint) => format!("{message}; {hint}"),
+        None => message,
+    }
+}
+
+/// What to tell the user when `open_session` (native/private_nfs.c) fails,
+/// chosen from the per-version libnfs statuses it reports. Measured against
+/// a Linux NAS (nfs-kernel-server, 2026-11-28):
+/// - an export without `insecure` refuses the unprivileged source port:
+///   v3 `status=-13`, v4 `status=-1`;
+/// - a missing export path: v3 `status=-13`, v4 `status=-2`;
+/// - nfsd accepting the connection and then closing it at once, whatever the
+///   export options (cleared by restarting the NFS service): every attempt
+///   reports "Remote side closed connection".
+fn session_failure_hint(message: &str) -> Option<&'static str> {
+    if !message.starts_with("NFS session failed") {
+        return None;
+    }
+    let has = |status: &str| message.contains(&format!("status={status} "));
+    if message.contains("Remote side closed connection") {
+        return Some(
+            "the NAS accepted the connection and then closed it; if the export already has the \
+             'insecure' option, restart the NFS service on the NAS \
+             (for example 'sudo systemctl restart nfs-server')",
+        );
+    }
+    if (has("-1") || has("-13")) && !has("-2") {
+        return Some(
+            "the NAS refused this client; if it requires reserved client source ports, add the \
+             server-side 'insecure' export option for this read-only export",
+        );
+    }
+    None
 }
 fn encode(segment: &str) -> String {
     let mut out = String::new();
@@ -494,6 +528,58 @@ mod tests {
     #[test]
     fn reject_parent() {
         assert!(parsed("nfs://dietpi.local/mnt/4TBP/../etc").is_err());
+    }
+    #[test]
+    fn session_failure_hint_matches_the_cause() {
+        let session = "NFS session failed host=10.0.0.1 export=/mnt/x; ";
+        let refused = "the NAS refused this client";
+        let closed = "the NAS accepted the connection and then closed it";
+        let cases: [(&str, Option<&str>); 6] = [
+            // Export without `insecure`: unprivileged source port refused.
+            (
+                "v3 status=-13 (Permission denied); v4 status=-1 (Operation not permitted)",
+                Some(refused),
+            ),
+            // NAS with NFSv4 disabled, same refusal.
+            (
+                "v3 status=-13 (Permission denied); v4 status=-5 (Input/output error): Socket failed with POLLHUP",
+                Some(refused),
+            ),
+            // Missing export path: not a port problem.
+            (
+                "v3 status=-13 (Permission denied); v4 status=-2 (No such file or directory)",
+                None,
+            ),
+            // nfsd closes every new connection (2026-11-28; fixed by a restart).
+            (
+                "v3 status=-5 (Input/output error): Remote side closed connection for socket fd 13; \
+                 v4 status=-5 (Input/output error): Remote side closed connection for socket fd 13",
+                Some(closed),
+            ),
+            // NAS unreachable.
+            (
+                "v3 status=-5 (Input/output error): Socket failed with POLLHUP; \
+                 v4 status=-5 (Input/output error): Socket failed with POLLHUP",
+                None,
+            ),
+            // Status -10 and -130 must not read as -1 or -13.
+            ("v3 status=-10 (No child processes); v4 status=-130 (x)", None),
+        ];
+        for (attempts, expected) in cases {
+            let hint = session_failure_hint(&format!("{session}{attempts}"));
+            match expected {
+                Some(start) => assert!(
+                    hint.is_some_and(|hint| hint.starts_with(start)),
+                    "{attempts}: {hint:?}"
+                ),
+                None => assert_eq!(hint, None, "{attempts}"),
+            }
+        }
+        // Errors after the session opened never get a session hint.
+        assert_eq!(
+            session_failure_hint("nfs_opendir: Remote side closed connection"),
+            None
+        );
     }
 }
 

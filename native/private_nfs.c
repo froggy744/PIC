@@ -134,7 +134,7 @@ static struct nfs_context *open_session(const char *host, const char *export_pat
         nfs_destroy_context(nfs);
     }
     snprintf(error, cap,
-             "NFS session failed host=%s export=%s; %.250s; if the NAS requires reserved client source ports, add the server-side 'insecure' export option for this read-only export",
+             "NFS session failed host=%s export=%s; %.250s",
              host, export_path, attempts);
     return NULL;
 }

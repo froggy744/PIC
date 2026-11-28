@@ -162,3 +162,46 @@
 .navigation-sidebar button.compact-sidebar-button image {
     opacity: 0.75;
 }
+
+/* Properties Tags & albums: flat, content-sized items with a tiny glyph,
+ * sidebar type and a small muted remove button. No pill: only a subtle
+ * hover fill, like the sidebar rows. Colours follow the theme. */
+.scrapbook-inspector .properties-item {
+    padding: 2px 6px;
+    border-radius: 5px;
+}
+.scrapbook-inspector .properties-item:hover {
+    background: alpha(@accent_bg_color, 0.12);
+}
+.scrapbook-inspector .properties-item label {
+    font-weight: 400;
+}
+.scrapbook-inspector .properties-item-icon {
+    opacity: 0.65;
+}
+.scrapbook-inspector .properties-item button.properties-item-open,
+.scrapbook-inspector .properties-item button.properties-item-remove {
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: inherit;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+.scrapbook-inspector .properties-item button.properties-item-remove image {
+    -gtk-icon-size: 10px;
+    opacity: 0.5;
+}
+.scrapbook-inspector .properties-item button.properties-item-remove:hover image,
+.scrapbook-inspector .properties-item button.properties-item-remove:focus-visible image {
+    opacity: 1;
+}
+.scrapbook-inspector .properties-item button.properties-item-open:focus-visible,
+.scrapbook-inspector .properties-item button.properties-item-remove:focus-visible {
+    outline: 2px solid @accent_bg_color;
+    outline-offset: 1px;
+}

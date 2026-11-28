@@ -2222,50 +2222,210 @@ fn properties_action_button(icon_name: &str, label: &str) -> gtk::Button {
     button
 }
 
+/// The Tags & albums items' spacing: 8 px between items, 4 px between lines.
+const PROPERTIES_ITEM_GAP: i32 = 8;
+const PROPERTIES_ITEM_LINE_GAP: i32 = 4;
+
+/// Where each visible child of a Tags & albums group goes at `width`: in a
+/// row at its natural width (at most the whole width, so a long name
+/// ellipsizes), wrapping to the next line when it does not fit. A negative
+/// width lays everything out on one line.
+fn properties_wrap_items(group: &gtk::Widget, width: i32) -> Vec<(gtk::Widget, gtk::Allocation)> {
+    let mut placed = Vec::new();
+    let (mut x, mut y, mut line_height) = (0, 0, 0);
+    let mut child = group.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if !widget.should_layout() {
+            continue;
+        }
+        let (min, natural, _, _) = widget.measure(gtk::Orientation::Horizontal, -1);
+        let item_width = if width < 0 {
+            natural
+        } else {
+            natural.min(width).max(min)
+        };
+        if x > 0 && width >= 0 && x + item_width > width {
+            x = 0;
+            y += line_height + PROPERTIES_ITEM_LINE_GAP;
+            line_height = 0;
+        }
+        let (_, height, _, _) = widget.measure(gtk::Orientation::Vertical, item_width);
+        placed.push((widget, gtk::Allocation::new(x, y, item_width, height)));
+        x += item_width + PROPERTIES_ITEM_GAP;
+        line_height = line_height.max(height);
+    }
+    placed
+}
+
+mod properties_wrap_layout {
+    use super::{gtk, properties_wrap_items, PROPERTIES_ITEM_GAP};
+    use gtk::glib;
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::*;
+
+    #[derive(Default)]
+    pub(crate) struct PropertiesWrapLayout;
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for PropertiesWrapLayout {
+        const NAME: &'static str = "PicPropertiesWrapLayout";
+        type Type = super::PropertiesWrapLayout;
+        type ParentType = gtk::LayoutManager;
+    }
+
+    impl ObjectImpl for PropertiesWrapLayout {}
+
+    impl LayoutManagerImpl for PropertiesWrapLayout {
+        fn request_mode(&self, _: &gtk::Widget) -> gtk::SizeRequestMode {
+            gtk::SizeRequestMode::HeightForWidth
+        }
+
+        fn measure(
+            &self,
+            group: &gtk::Widget,
+            orientation: gtk::Orientation,
+            for_size: i32,
+        ) -> (i32, i32, i32, i32) {
+            if orientation == gtk::Orientation::Horizontal {
+                let (mut min, mut natural) = (0, 0);
+                let mut child = group.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    if widget.should_layout() {
+                        let (item_min, item_natural, _, _) =
+                            widget.measure(gtk::Orientation::Horizontal, -1);
+                        min = min.max(item_min);
+                        natural += item_natural + if natural > 0 { PROPERTIES_ITEM_GAP } else { 0 };
+                    }
+                }
+                (min, natural, -1, -1)
+            } else {
+                let height = properties_wrap_items(group, for_size)
+                    .iter()
+                    .map(|(_, at)| at.y() + at.height())
+                    .max()
+                    .unwrap_or(0);
+                (height, height, -1, -1)
+            }
+        }
+
+        fn allocate(&self, group: &gtk::Widget, width: i32, _: i32, _: i32) {
+            for (widget, at) in properties_wrap_items(group, width) {
+                widget.size_allocate(&at, -1);
+            }
+        }
+    }
+}
+
+glib::wrapper! {
+    /// Lays a Tags & albums group's items out like words: see
+    /// `properties_wrap_items`.
+    pub(crate) struct PropertiesWrapLayout(ObjectSubclass<properties_wrap_layout::PropertiesWrapLayout>)
+        @extends gtk::LayoutManager;
+}
+
+/// A Tags & albums group: content-sized items that wrap like words (GTK
+/// 4.12 / libadwaita 1.5 have no wrap box; a FlowBox aligns columns).
+fn properties_item_group(css_class: &str) -> gtk::Box {
+    let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    group.add_css_class(css_class);
+    // The items' own padding sits outside the section's text inset, so
+    // their glyphs line up with the action rows' glyphs below.
+    group.set_margin_start(sidebar::SIDEBAR_ALIGNMENT_INSET - 6);
+    group.set_margin_end(sidebar::SIDEBAR_CONTENT_INSET);
+    group.set_layout_manager(Some(glib::Object::new::<PropertiesWrapLayout>()));
+    group
+}
+
+/// One flat Tags & albums item: a tiny glyph and the name, then (when it
+/// can be removed) a small muted remove button. With `open`, the glyph and
+/// name are a button that opens it. Both buttons take keyboard focus.
+fn properties_item(
+    icon_name: &str,
+    name: &str,
+    open: Option<(&str, Box<dyn Fn(&gtk::Button)>)>,
+    remove: Option<(String, Box<dyn Fn()>)>,
+) -> gtk::Box {
+    let item = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    item.add_css_class("properties-item");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(12);
+    icon.set_valign(gtk::Align::Center);
+    icon.add_css_class("properties-item-icon");
+    content.append(&icon);
+    let label = gtk::Label::new(Some(name));
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_xalign(0.0);
+    content.append(&label);
+    match open {
+        Some((tooltip, on_open)) => {
+            let button = gtk::Button::new();
+            button.add_css_class("flat");
+            button.add_css_class("properties-item-open");
+            button.set_child(Some(&content));
+            button.set_tooltip_text(Some(tooltip));
+            button.set_hexpand(true);
+            button.connect_clicked(move |button| on_open(button));
+            item.append(&button);
+        }
+        None => {
+            label.set_tooltip_text(Some(name));
+            content.set_hexpand(true);
+            item.append(&content);
+        }
+    }
+    if let Some((tooltip, on_remove)) = remove {
+        let button = gtk::Button::from_icon_name("window-close-symbolic");
+        button.add_css_class("flat");
+        button.add_css_class("properties-item-remove");
+        button.set_valign(gtk::Align::Center);
+        button.set_tooltip_text(Some(&tooltip));
+        button.update_property(&[gtk::accessible::Property::Label(&tooltip)]);
+        button.connect_clicked(move |_| on_remove());
+        item.append(&button);
+    }
+    item
+}
+
 /// Global photo tags are always available from the Properties inspector,
 /// including outside Scrapbook. Only the extra paper Notes/Actions layout
 /// is skin-specific. The same SQLite tags power the global metadata filter.
-fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContext, photo_id: i64) {
+fn populate_properties_tags(tag_rows: &gtk::Box, context: &PhotoActionContext, photo_id: i64) {
     while let Some(child) = tag_rows.first_child() {
         tag_rows.remove(&child);
     }
-    let (tags, _) = db::scrapbook_details(&context.connection.borrow(), photo_id)
-        .unwrap_or_default();
-    for tag in &tags {
-        // A compact, content-sized chip: the tag, then a small remove glyph.
-        let chip = gtk::Button::new();
-        chip.add_css_class("scrapbook-tag-chip");
-        chip.set_halign(gtk::Align::Start);
-        let chip_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        chip_content.append(&gtk::Label::new(Some(tag)));
-        let remove = gtk::Image::from_icon_name("window-close-symbolic");
-        remove.set_pixel_size(10);
-        remove.set_valign(gtk::Align::Center);
-        remove.add_css_class("properties-tag-remove");
-        chip_content.append(&remove);
-        chip.set_child(Some(&chip_content));
-        chip.set_tooltip_text(Some(&format!("Remove tag {tag}")));
-        let tag = tag.clone();
-        let context_for_refresh = context.clone();
-        let rows_for_refresh = tag_rows.downgrade();
-        chip.connect_clicked(move |_| {
-            if let Err(error) = db::scrapbook_remove_tag(
-                &context_for_refresh.connection.borrow(), photo_id, &tag
-            ) {
+    let (tags, _) =
+        db::scrapbook_details(&context.connection.borrow(), photo_id).unwrap_or_default();
+    tag_rows.set_visible(!tags.is_empty());
+    for tag in tags {
+        let context = context.clone();
+        let rows = tag_rows.downgrade();
+        let remove_tag = tag.clone();
+        let remove: Box<dyn Fn()> = Box::new(move || {
+            if let Err(error) =
+                db::scrapbook_remove_tag(&context.connection.borrow(), photo_id, &remove_tag)
+            {
                 eprintln!("PIC Scrapbook: could not remove tag: {error:#}");
             } else {
-                if let Some(rows) = rows_for_refresh.upgrade() {
-                    populate_properties_tags(&rows, &context_for_refresh, photo_id);
+                if let Some(rows) = rows.upgrade() {
+                    populate_properties_tags(&rows, &context, photo_id);
                 }
-                photo_changed(&context_for_refresh, PhotoChange::Tagged(photo_id));
+                photo_changed(&context, PhotoChange::Tagged(photo_id));
             }
         });
-        tag_rows.insert(&chip, -1);
+        tag_rows.append(&properties_item(
+            "user-bookmarks-symbolic",
+            &tag,
+            None,
+            Some((format!("Remove tag {tag}"), remove)),
+        ));
     }
 }
 
 fn properties_add_tag_button(
-    tag_rows: &gtk::FlowBox,
+    tag_rows: &gtk::Box,
     context: &PhotoActionContext,
     photo_id: i64,
 ) -> gtk::Button {
@@ -2325,14 +2485,106 @@ fn properties_add_tag_button(
     add_tag
 }
 
+/// The albums and Smart Albums this photo is in, under its tags. Each
+/// opens its album as its sidebar row does (like the photo menu's In Albums
+/// rows); a manual album's remove button takes the photo out of it. Smart
+/// Albums are read-only photo sources, so theirs has none. The group is
+/// hidden when the photo is in none.
+fn populate_properties_albums(album_rows: &gtk::Box, context: &PhotoActionContext, photo_id: i64) {
+    while let Some(child) = album_rows.first_child() {
+        album_rows.remove(&child);
+    }
+    let containing =
+        db::albums_containing_photo(&context.connection.borrow(), photo_id).unwrap_or_default();
+    album_rows.set_visible(!containing.is_empty());
+    for album in containing {
+        let album_id = album.id;
+        let open: Box<dyn Fn(&gtk::Button)> = Box::new(move |button| {
+            let _ = button.activate_action(OPEN_ALBUM_ACTION, Some(&album_id.to_variant()));
+        });
+        let remove = (!album.is_smart()).then(|| {
+            let context = context.clone();
+            let rows = album_rows.downgrade();
+            let remove: Box<dyn Fn()> = Box::new(move || {
+                remove_photo_from_album_in_properties(&context, &rows, album_id, photo_id);
+            });
+            (format!("Remove from album {}", album.name), remove)
+        });
+        album_rows.append(&properties_item(
+            if album.is_smart() {
+                sidebar::smart_album_icon_name()
+            } else {
+                sidebar::album_icon_name()
+            },
+            &album.name,
+            Some((
+                if album.is_smart() {
+                    "Open this Smart Album"
+                } else {
+                    "Open this album"
+                },
+                open,
+            )),
+            remove,
+        ));
+    }
+}
+
+/// An album item's remove button: takes the photo out of that manual
+/// album, as the photo menu's Remove from Album does, then refills the
+/// albums. While that album is being viewed, the photo also leaves the gallery.
+fn remove_photo_from_album_in_properties(
+    context: &PhotoActionContext,
+    album_rows: &glib::WeakRef<gtk::Box>,
+    album_id: i64,
+    photo_id: i64,
+) {
+    let ids = [photo_id];
+    if let Err(error) = db::remove_photos_from_album(&context.connection.borrow(), album_id, &ids) {
+        if let Some(rows) = album_rows.upgrade() {
+            show_error(
+                rows.upcast_ref(),
+                "Could not remove from album",
+                &error.to_string(),
+            );
+        }
+        return;
+    }
+    if let Some(rows) = album_rows.upgrade() {
+        populate_properties_albums(&rows, context, photo_id);
+    }
+    if context.filter.get() == sidebar::SidebarFilter::Album(album_id) {
+        if let Some(lightbox) = context.lightbox.upgrade() {
+            lightbox.close();
+        }
+        if let Some(gallery) = context.gallery.borrow().upgrade() {
+            gallery.remove_photos(&ids);
+        }
+    }
+    albums_edited(context);
+}
+
 /// "Add to album" beside "Add tag": the one Add to Album list, for this photo.
-fn properties_add_to_album_button(context: &PhotoActionContext, photo_id: i64) -> gtk::Button {
+/// Adding it to an album refreshes the album items.
+fn properties_add_to_album_button(
+    album_rows: &gtk::Box,
+    context: &PhotoActionContext,
+    photo_id: i64,
+) -> gtk::Button {
     let add_to_album = properties_action_button("folder-new-symbolic", "Add to album");
     add_to_album.set_tooltip_text(Some("Add to Album"));
     let context = context.clone();
+    let album_rows = album_rows.downgrade();
     add_to_album.connect_clicked(move |button| {
         let ids: Rc<dyn Fn() -> Vec<i64>> = Rc::new(move || vec![photo_id]);
-        show_album_popover(button.upcast_ref(), None, context.clone(), ids, Rc::new(|| {}));
+        let refresh_context = context.clone();
+        let refresh_rows = album_rows.clone();
+        let refresh: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(rows) = refresh_rows.upgrade() {
+                populate_properties_albums(&rows, &refresh_context, photo_id);
+            }
+        });
+        show_album_popover(button.upcast_ref(), None, context.clone(), ids, refresh);
     });
     add_to_album
 }
@@ -2352,23 +2604,22 @@ fn scrapbook_inspector_extra(
         .unwrap_or_default();
 
     let tags = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let tag_rows = gtk::FlowBox::new();
-    tag_rows.add_css_class("scrapbook-tags");
-    tag_rows.set_selection_mode(gtk::SelectionMode::None);
-    tag_rows.set_min_children_per_line(1);
-    tag_rows.set_max_children_per_line(4);
-    tag_rows.set_column_spacing(6);
-    tag_rows.set_row_spacing(6);
-    tag_rows.set_halign(gtk::Align::Start);
+    let tag_rows = properties_item_group("properties-tags");
     populate_properties_tags(&tag_rows, context, photo_id);
-    properties_inset(&tag_rows);
     tags.append(&tag_rows);
+    let album_rows = properties_item_group("properties-albums");
+    populate_properties_albums(&album_rows, context, photo_id);
+    tags.append(&album_rows);
     // The action rows are not inset: their own row padding lines their
     // glyphs up with the section icons above.
     let tag_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     tag_actions.add_css_class("properties-actions");
     tag_actions.append(&properties_add_tag_button(&tag_rows, context, photo_id));
-    tag_actions.append(&properties_add_to_album_button(context, photo_id));
+    tag_actions.append(&properties_add_to_album_button(
+        &album_rows,
+        context,
+        photo_id,
+    ));
     tags.append(&tag_actions);
     root.append(&properties_section(
         &context.connection,
@@ -3438,6 +3689,98 @@ mod photo_actions_tests {
     /// manual albums as destinations, never a Smart Album.
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn properties_tags_and_albums_wrap_as_content_sized_items() {
+        gtk::init().unwrap();
+        let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
+        connection.borrow().execute_batch(db::SCHEMA).unwrap();
+        connection
+            .borrow()
+            .execute_batch(
+                "INSERT INTO folders(id,path,name) VALUES (1,'/photos','photos');
+                 INSERT INTO photos(id,path,folder_id) VALUES (1,'/photos/a.jpg',1);",
+            )
+            .unwrap();
+        for tag in [
+            "Food",
+            "Sea",
+            "A very long tag name that will not fit!!",
+            "Kids",
+        ] {
+            db::scrapbook_add_tag(&connection.borrow(), 1, tag).unwrap();
+        }
+        for name in ["Trip", "Family"] {
+            let album = db::create_album(&connection.borrow(), name).unwrap();
+            db::add_photos_to_album(&connection.borrow(), album.id, &[1]).unwrap();
+        }
+        let photo = crate::photo_object::PhotoObject::from_photo(
+            &db::photo(&connection.borrow(), 1).unwrap().unwrap(),
+        );
+        let context = PhotoActionContext::for_tests(&connection);
+        let section = scrapbook_inspector_extra(&photo, &context, PropertiesSurface::Gallery);
+        let window = gtk::Window::new();
+        window.set_default_size(200, 600);
+        window.set_child(Some(&section));
+        window.present();
+        settle_gtk_layout();
+
+        let group_of = |name: &str| {
+            let mut found = None;
+            let mut stack = vec![section.clone().upcast::<gtk::Widget>()];
+            while let Some(widget) = stack.pop() {
+                if widget.has_css_class(name) {
+                    found = Some(widget.clone());
+                }
+                let mut child = widget.first_child();
+                while let Some(next) = child {
+                    child = next.next_sibling();
+                    stack.push(next);
+                }
+            }
+            found.unwrap()
+        };
+        let tags = group_of("properties-tags");
+        let albums = group_of("properties-albums");
+        assert!(
+            !tags.is_ancestor(&albums) && !albums.is_ancestor(&tags),
+            "separate groups"
+        );
+        let items = |group: &gtk::Widget| {
+            let mut items = Vec::new();
+            let mut child = group.first_child();
+            while let Some(item) = child {
+                child = item.next_sibling();
+                assert!(item.has_css_class("properties-item"));
+                items.push(item.compute_bounds(group).unwrap());
+            }
+            items
+        };
+        let tag_items = items(&tags);
+        assert_eq!(tag_items.len(), 4);
+        // Content-sized: the short tags are narrower than the long one, and
+        // every item stays inside the narrow panel (the long name ellipsizes).
+        assert!(tag_items[0].width() < tag_items[2].width());
+        assert!(tag_items
+            .iter()
+            .all(|at| at.x() >= 0.0 && at.x() + at.width() <= tags.width() as f32 + 0.5));
+        // Food and Sea share the first line; the long tag wraps below them.
+        assert_eq!(tag_items[0].y(), tag_items[1].y());
+        assert!(tag_items[1].x() > tag_items[0].x() + tag_items[0].width());
+        assert!(tag_items[2].y() > tag_items[0].y());
+        assert_eq!(items(&albums).len(), 2);
+        // Every tag and album has a keyboard-focusable remove button.
+        for group in [&tags, &albums] {
+            let mut child = group.first_child();
+            while let Some(item) = child {
+                child = item.next_sibling();
+                let remove = item.last_child().and_downcast::<gtk::Button>().unwrap();
+                assert!(remove.has_css_class("properties-item-remove") && remove.is_focusable());
+            }
+        }
+        window.close();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn properties_add_to_album_uses_the_shared_album_list() {
         gtk::init().unwrap();
         let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
@@ -3493,6 +3836,32 @@ mod photo_actions_tests {
                 .collect::<Vec<_>>(),
             [trip.id]
         );
+        // The photo's albums show as chips under its tags: Trip once added.
+        assert!(
+            find_action(section.upcast_ref(), "Trip").is_some(),
+            "Properties lists the album the photo was just added to"
+        );
+        assert!(find_action(section.upcast_ref(), "Loved").is_none());
+        // Its item ends in a remove button, which takes the photo out again.
+        let item = find_action(section.upcast_ref(), "Trip")
+            .unwrap()
+            .parent()
+            .unwrap();
+        let rows = item.parent().and_downcast::<gtk::Box>().unwrap();
+        assert!(rows.has_css_class("properties-albums"));
+        let remove = item.last_child().and_downcast::<gtk::Button>().unwrap();
+        assert!(remove.has_css_class("properties-item-remove"));
+        assert!(remove.is_focusable(), "removing works from the keyboard");
+        remove.emit_clicked();
+        settle_gtk_layout();
+        assert!(db::albums_containing_photo(&connection.borrow(), 1)
+            .unwrap()
+            .is_empty());
+        assert!(
+            find_action(section.upcast_ref(), "Trip").is_none(),
+            "the item leaves with it"
+        );
+        assert!(!rows.is_visible(), "no album row once the photo is in none");
         window.close();
     }
 }

@@ -687,13 +687,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         },
         {
-            let connection = connection.clone();
+            let action_context = action_context.clone();
             let availability_refresh = availability_refresh.clone();
             move |photo, anchor| {
                 show_unavailable_dialog(
                     &anchor,
                     photo,
-                    connection.clone(),
+                    action_context.clone(),
                     availability_refresh.clone(),
                 );
             }
@@ -920,7 +920,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     })));
 
     {
-        let connection = connection.clone();
+        let unavailable_context = action_context.clone();
         let availability_refresh = availability_refresh.clone();
         let lightbox_for_retry = Rc::downgrade(&lightbox);
         lightbox.set_unavailable_handler(move |photo, anchor| {
@@ -932,7 +932,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     lightbox.retry_current_original();
                 }
             });
-            show_unavailable_dialog(&anchor, photo, connection.clone(), retry);
+            show_unavailable_dialog(&anchor, photo, unavailable_context.clone(), retry);
         });
     }
     configure_infobar_album_menu(&info.add_to_album, action_context.clone());

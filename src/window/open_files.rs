@@ -584,6 +584,96 @@ mod window_tests {
     }
 
     /// Candidate 21: the InfoBar Edit toggle closes the editor the same way
+    /// Candidate 37 reproduction: "Remove from Library" on a photo whose
+    /// drive is unmounted must take it out of the gallery.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn remove_from_library_takes_an_unavailable_photo_out_of_the_gallery() {
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id("io.pic.RemoveUnavailableTest")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("pic-remove-unavailable-{}", std::process::id()));
+        let photos = directory.join("photos");
+        std::fs::create_dir_all(&photos).unwrap();
+        let connection = db::open(&directory.join("library.db")).unwrap();
+        let folder = db::insert_folder(&connection, &photos.to_string_lossy()).unwrap();
+        connection
+            .execute(
+                "UPDATE folders SET imported_root = 1 WHERE id = ?1",
+                [folder],
+            )
+            .unwrap();
+        for name in ["a.jpg", "b.jpg"] {
+            let path = photos.join(name);
+            image::RgbImage::from_pixel(64, 48, image::Rgb([200, 120, 40]))
+                .save(&path)
+                .unwrap();
+            db::upsert_photo(&connection, &path, Some(folder), &Default::default()).unwrap();
+        }
+        for (key, value) in [
+            (LAST_VIEW_SETTING_KEY, "all"),
+            ("onboarding-never-show", "true"),
+            (WINDOW_WIDTH_SETTING_KEY, "1400"),
+            (WINDOW_HEIGHT_SETTING_KEY, "900"),
+        ] {
+            db::set_setting(&connection, key, value).unwrap();
+        }
+        // The drive goes away: the folder is unavailable.
+        std::fs::rename(&photos, directory.join("unmounted")).unwrap();
+        let window = crate::window::build(&app, connection);
+        window.present();
+        let root = window.upcast_ref::<gtk::Widget>();
+        let badges = || {
+            descendants(root)
+                .into_iter()
+                .filter(|widget| {
+                    widget.is_drawable()
+                        && widget
+                            .downcast_ref::<gtk::Button>()
+                            .is_some_and(|button| button.label().as_deref() == Some("!"))
+                })
+                .collect::<Vec<_>>()
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while badges().len() < 2 && Instant::now() < deadline {
+            settle();
+        }
+        assert_eq!(badges().len(), 2, "both photos should show as unavailable");
+
+        badges()[0]
+            .downcast_ref::<gtk::Button>()
+            .unwrap()
+            .emit_clicked();
+        settle();
+        let dialog = descendants(root)
+            .into_iter()
+            .find_map(|widget| widget.downcast::<adw::AlertDialog>().ok())
+            .expect("the unavailable dialog did not open");
+        dialog.emit_by_name::<()>("response", &[&"remove"]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            settle();
+        }
+        let check = db::open_existing(&directory.join("library.db")).unwrap();
+        let trashed: i64 = check
+            .query_row("SELECT COUNT(*) FROM photos WHERE trashed = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(trashed, 1, "Remove from Library did not reach the library");
+        assert_eq!(
+            badges().len(),
+            1,
+            "the removed photo is still in the gallery"
+        );
+        window.close();
+        settle();
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
     /// The InfoBar offers an outside photo the actions its context menu does
     /// (one capability table): Export and Print on, catalogue writes off, and
     /// Export opens on the outside photo.

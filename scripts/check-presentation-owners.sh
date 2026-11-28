@@ -75,6 +75,10 @@
 #   - src/photo_capabilities.rs (PhotoKind::capabilities); src/photo_object.rs
 #     defines is_outside_library and src/window/open_files.rs makes outside
 #     photos.
+# A photo leaves the library (Trash, or Remove from Library for an
+# unavailable original; candidate 37) only where the Photo change follows:
+#   - src/window/photo_actions.rs (trash_photos), src/window/availability.rs
+#     (show_unavailable_dialog). The db module defines and tests set_trashed.
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -105,6 +109,7 @@ ALBUM_LIST_OWNER='src/window/album_list_widgets.rs'
 METADATA_PANEL_OWNER='src/window/metadata_panel.rs'
 WORKSPACE_OWNER='src/window/workspace_session_widgets.rs'
 SHORTCUTS_OWNER='src/window/shortcuts.rs'
+TRASH_OWNER='src/window/photo_actions.rs src/window/availability.rs src/db/settings.rs src/db/tests.rs'
 CAPABILITIES_OWNER='src/photo_capabilities.rs src/photo_object.rs src/window/open_files.rs'
 # Widgets with their own key maps (not window shortcuts).
 WIDGET_KEY_MAPS='src/window/search.rs src/albums/coverflow.rs src/edit/draw_ui.rs src/edit/editor.rs src/grid/sectioned_folder.rs src/grid/selection.rs src/lightbox/impl.rs src/screensaver.rs src/settings.rs src/sidebar.rs'
@@ -135,6 +140,7 @@ RULES=(
   "workspace-session~$WORKSPACE_OWNER~(^|[^[:alnum:]_])collage_(add_mode|editing)([^[:alnum:]_]|$)|edit_(space|escape)$ID*\.(borrow_mut\(\)\.take|replace)\(|set_setting\(.*DRAFT_SETTING_KEY~Collage/editor session state, the editor's key handlers or the collage draft (ask Workspace)"
   "window-keys~$SHORTCUTS_OWNER $WIDGET_KEY_MAPS~^[^/]*EventControllerKey::new\(\)~a second window key controller (add the key to window::key_dispatch)"
   "outside-capabilities~$CAPABILITIES_OWNER~\.is_outside_library\(\)~what an outside photo may do (ask PhotoKind::capabilities)"
+  "photo-trash~$TRASH_OWNER~(^|[^[:alnum:]_])set_trashed\(~a photo trashed without its Photo change (say photo_changed(PhotoChange::Trashed))"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -383,6 +389,7 @@ self_test() {
     "gallery objects marked in build.rs|src/window/build.rs|gallery_for_keys.update_ratings(&ids, rating);|photo-marks"
     "outside check in infobar.rs|src/infobar.rs|let actions = target.photo_actions_enabled() && !photo.is_outside_library();|outside-capabilities"
     "outside check in photo_actions.rs|src/window/photo_actions.rs|if photo.is_outside_library() {|outside-capabilities"
+    "photo trashed in build.rs|src/window/build.rs|let _ = db::set_trashed(&connection.borrow(), id, true);|photo-trash"
     "current photo copied in build.rs|src/window/build.rs|selected_photo_for_grid.replace(photo);|current-photo"
     "current photo cell in window.rs|src/window/photo_actions.rs|selected_photo: Rc<RefCell<Option<PhotoObject>>>,|current-photo"
     "dock shown in build.rs|src/window/build.rs|compact_dock.set_visible(true);|sidebar-parts"

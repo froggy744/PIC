@@ -193,7 +193,7 @@ fn run_ui_guarded(label: &str, action: impl FnOnce()) {
 fn show_unavailable_dialog(
     parent: &gtk::Widget,
     photo: crate::photo_object::PhotoObject,
-    connection: Rc<RefCell<Connection>>,
+    context: PhotoActionContext,
     availability_refresh: Rc<dyn Fn()>,
 ) {
     let dialog = adw::AlertDialog::builder()
@@ -210,19 +210,19 @@ fn show_unavailable_dialog(
     dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
 
     let photo_for_response = photo.clone();
-    let connection_for_response = connection.clone();
     let availability_refresh_for_response = availability_refresh.clone();
     let parent_for_counts = parent.clone();
     dialog.connect_response(None, move |_, response| {
         if response == "retry" {
             availability_refresh_for_response();
         } else if response == "remove" {
-            if let Err(error) = db::set_trashed(
-                &connection_for_response.borrow(),
-                photo_for_response.id(),
-                true,
-            ) {
-                eprintln!("Could not remove unavailable photo from library: {error}");
+            let id = photo_for_response.id();
+            match db::set_trashed(&context.connection.borrow(), id, true) {
+                // The gallery, viewer, InfoBar and counts follow, as for Trash.
+                Ok(()) => photo_changed(&context, PhotoChange::Trashed(&[id])),
+                Err(error) => {
+                    eprintln!("Could not remove unavailable photo from library: {error}")
+                }
             }
             availability_refresh_for_response();
             let _ = parent_for_counts.activate_action(REFRESH_SMART_ALBUM_COUNTS_ACTION, None);

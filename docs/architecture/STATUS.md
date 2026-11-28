@@ -8,7 +8,7 @@ The single source of truth for the deepening candidates from the architecture re
 - Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. 21, 23, 24 merged; 25-29 and 22 done as small fixes or closed; see "Round four" below.
 - Render pipeline project (22 + 29 + 25 as one), candidates A-F: [`architecture-review-2026-11-27-render-pipeline.html`](architecture-review-2026-11-27-render-pipeline.html), taken at `main` @ `244645eb`, with export benchmarks. Branch `refactor/render-pipeline`; see "Render pipeline project" below.
 
-- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31-33 merged; 34-36 parked; 37 open (suspected bugs read from code, not reproduced unless noted).
+- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31-33 merged; 34-36 parked; 37 small fix (the module parked). Round five concluded 2026-11-28. (suspected bugs read from code, not reproduced unless noted).
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -69,7 +69,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 34 | Export run returns a typed outcome | Strong | parked by the owner (2026-11-28; Friday's render pipeline export work covers most of it) | | `src/window/build.rs:4120-4560`, `src/edit/export_batch.rs` |
 | 35 | Layer placement shared by Text and Overlays (after 32) | Worth exploring | parked by the owner (2026-11-28) | | `src/edit/overlays_ui.rs`, `text_ui.rs`, `model.rs` |
 | 36 | RAW decode plan for the viewer (with 30) | Worth exploring | parked by the owner (2026-11-28) | | `src/thumbnail/viewer.rs`, `src/lightbox/render.rs` |
-| 37 | Photo file operations return a Photo change | Worth exploring | open | | `src/window/photo_actions.rs`, `src/window/availability.rs` |
+| 37 | Photo file operations return a Photo change | Worth exploring | small fix on `fix/remove-from-library-photo-change`; the operations module parked | `fix/remove-from-library-photo-change` | `src/window/photo_actions.rs`, `src/window/availability.rs` |
 
 ## Outstanding work
 
@@ -951,6 +951,15 @@ Suspected bugs, read from code; reproduce each red first. Before/after diagrams 
 - **34 (parked by the owner 2026-11-28):** single-photo export rewrites the batch loop in `build.rs`; cancellation is found by `contains("cancelled")` (`build.rs:4409`), so a failure mentioning "cancelled" reads as "Export stopped" (suspected).
 - **35-37:** see the report. 37 suspects "Remove from Library" (`availability.rs:216`) bypasses `PhotoChange::Trashed`.
 - Not carded: typed settings (bookshelf background default differs, `settings.rs:1630` vs `:1678`); Print renders full size, then shrinks (`print.rs:388`).
+
+### 37 · Remove from Library reports a Photo change (round five, 2026-11-28)
+Owner: proceed only if the suspected stale-gallery or rollback problem reproduces; otherwise conclude round five.
+
+- **Bug reproduced red.** "Remove from Library" in the unavailable-original dialog (`availability.rs`) wrote `db::set_trashed` and skipped the Photo change, so the photo stayed in the gallery (and the viewer and InfoBar) until the next rebuild; the availability refresh rebuilds the gallery only when a folder's availability changes. Display test `remove_from_library_takes_an_unavailable_photo_out_of_the_gallery` (`open_files.rs`; imported folder renamed away = unmounted drive): red (library `trashed = 1`, gallery still 2 tiles), green after.
+- **Fix (owner decisions):** small fix only. The dialog takes the `PhotoActionContext` and, after `set_trashed`, says `photo_changed(PhotoChange::Trashed(&[id]))`, as Trash does. The "Photo file operations" module (rename, trash, remove returning a result) stays parked: the rename rollback suspicion was not reproduced (not tried). Owner rule `photo-trash`: `set_trashed` only in `photo_actions.rs`, `availability.rs` and `db`.
+- **Verification:** `cargo check --locked --all-targets` clean; the display test above; owner script `--self-test` ok, check shows only the known hits. Not checked by hand.
+
+**Round five concluded (2026-11-28):** 31-33 merged, 34-36 parked by the owner, 37 a small fix.
 
 ### 33 · Outside photo capabilities (round five, merged 2026-11-28)
 Branch `refactor/outside-photo-capabilities` from `main` @ `2121f525`, fast-forwarded into `main` on the owner's "push merge". Next in order: 37 (34-36 parked by the owner).

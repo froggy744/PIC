@@ -8,6 +8,8 @@ The single source of truth for the deepening candidates from the architecture re
 - Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. 21, 23, 24 merged; 25-29 and 22 done as small fixes or closed; see "Round four" below.
 - Render pipeline project (22 + 29 + 25 as one), candidates A-F: [`architecture-review-2026-11-27-render-pipeline.html`](architecture-review-2026-11-27-render-pipeline.html), taken at `main` @ `244645eb`, with export benchmarks. Branch `refactor/render-pipeline`; see "Render pipeline project" below.
 
+- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31 merged; 32-37 open (suspected bugs read from code, not reproduced unless noted).
+
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
 ## Starting a candidate
@@ -62,6 +64,12 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 29 | Render from a cached preview (keep the chokepoint whole) | Speculative | closed, no change (`1005cbda`); moved to the render pipeline project (A) | | |
 | 30 | Lightbox zoom shows the NEF sensor develop | Worth exploring | saved for later (2026-11-27), not started | | `src/thumbnail/viewer.rs` (`decode_local_raw_for_viewer`, `viewer_nef_source_cache_lookup`), `src/lightbox/render.rs` (`viewer_zoom_decode_target`) |
 | 31 | Photo rotation re-projects the Recipe (round five) | Strong | merged | fast-forward of `fix/photo-rotation-recipe` (owner checked by hand 2026-11-28) | `src/edit/rotation.rs` (pure), `db::rotate_photo` |
+| 32 | Continuous edit: one undo rule for slider drags | Strong | open (next) | | `src/edit/controls.rs`, `overlays_ui.rs`, `text_ui.rs`, `draw_ui.rs`, `model.rs` (`mutate_active`) |
+| 33 | Outside photo capabilities (one table per photo kind) | Strong | open | | `src/photo_object.rs`, `src/infobar.rs`, `src/window/photo_actions.rs`, `build.rs:4574/4609` |
+| 34 | Export run returns a typed outcome | Strong | open | | `src/window/build.rs:4120-4560`, `src/edit/export_batch.rs` |
+| 35 | Layer placement shared by Text and Overlays (after 32) | Worth exploring | open | | `src/edit/overlays_ui.rs`, `text_ui.rs`, `model.rs` |
+| 36 | RAW decode plan for the viewer (with 30) | Worth exploring | open | | `src/thumbnail/viewer.rs`, `src/lightbox/render.rs` |
+| 37 | Photo file operations return a Photo change | Worth exploring | open | | `src/window/photo_actions.rs`, `src/window/availability.rs` |
 
 ## Outstanding work
 
@@ -935,6 +943,14 @@ Owner's plan: 27/28/26/25 as small bug fixes, not deepening refactors; 29 and 22
 - **#268 · A half-typed search survives the return to the grid.** Two gaps. (1) Closing the viewer after typing over it kept the query: the viewer's close preparation (`build.rs`) now calls `clear_search_after_result`, as picking a suggested photo does, so the grid returns on the viewed photo's folder. Display test `closing_the_viewer_clears_a_half_typed_search` (`immersive_tests.rs`), red before, green after. (2) After a click on a result tile focus left the search field, so Escape did nothing: new `KeyCommand::ClearSearch` (`key_dispatch.rs`, context `search_active`) after the viewer's Escape and before Immersive Mode, only when no text field has focus; `shortcuts.rs` emits the entry's `stop-search`. Table cases in `escape_closes_one_layer_at_a_time`. Clicking a tile and scrolling keeps the results (by design). `search_entry_slot` moved above the shortcuts include in `build.rs`.
 
 **Verification (2026-11-27):** `cargo check` clean; `infobar::presentation` 6/6 and `key_dispatch` 5/5 unit tests pass; the display test above passes (Xvfb). Owner script: the 4 known `open_files.rs` hits plus `build.rs:3333` `[front-surface]`, both identical on `main` before this change. The Escape-after-tile-click path has no window test.
+
+### 32-37 · Round five, open (recorded 2026-11-28)
+Suspected bugs, read from code; reproduce each red first. Before/after diagrams are in the round-five report.
+- **32:** "a drag is one undo step" is hand-written five times. Only `controls.rs` has the `EventControllerLegacy` release fallback, so Text/Overlays may leave `dragging` stuck and edits skip Undo (suspected). Draw width/opacity call `mutate` every tick (confirmed in code): one drag can push the rest of the history off the 100-step limit. `EditSession::mutate_active` runs with no open action.
+- **33:** `InfoBar::current_photo` filters out photos from outside the library (confirmed in code), so InfoBar Export (`build.rs:4574`) and Print (`:4609`) can't reach their outside-photo branch, contrary to the v1.0.5 notes and candidate 27.
+- **34:** single-photo export rewrites the batch loop in `build.rs`; cancellation is found by `contains("cancelled")` (`build.rs:4409`), so a failure mentioning "cancelled" reads as "Export stopped" (suspected).
+- **35-37:** see the report. 37 suspects "Remove from Library" (`availability.rs:216`) bypasses `PhotoChange::Trashed`.
+- Not carded: typed settings (bookshelf background default differs, `settings.rs:1630` vs `:1678`); Print renders full size, then shrinks (`print.rs:388`).
 
 ### 31 · Photo rotation re-projects the Recipe (round five, started 2026-11-28)
 Round five report (candidates 31-37) was a scratchpad HTML; only 31 is started. Owner: correctness only, no merge or 32 before review.

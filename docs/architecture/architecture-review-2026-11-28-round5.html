@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Architecture review for PIC</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+</script>
+<style>
+  .seam { border-style: dashed; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #f8fafc; }
+  .schem { font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+  .leak { color: #dc2626; }
+  pre.mermaid { background: transparent; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-5xl mx-auto px-4 sm:px-6 py-12 space-y-12">
+
+<header class="space-y-3">
+  <h1 class="font-serif text-4xl">PIC · architecture review, round five</h1>
+  <p class="text-sm text-slate-500">2026-11-28 · <code>main</code> @ <code>62310c17</code> · read only, nothing built · candidates numbered 31–37 to follow STATUS.md (30 is the last)</p>
+  <div class="flex flex-wrap gap-4 text-xs text-slate-600 pt-2">
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 border border-slate-400 bg-white"></span>module</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-0 border-t-2 border-dashed border-slate-500"></span>seam</span>
+    <span class="flex items-center gap-2"><span class="leak font-bold">→</span>leakage / suspected bug</span>
+    <span class="flex items-center gap-2"><span class="inline-block w-5 h-4 deep rounded"></span>deep module</span>
+  </div>
+  <p class="text-xs text-slate-500">Scope: hot spots since round four: the editor and its inspector panels, <code>photo_actions.rs</code>, export, the lightbox/RAW viewer. Rounds 1–4, the render pipeline project and candidate 30 are excluded. "Confirmed in code" means the lines were re-read in the main session; nothing here has a red test yet.</p>
+</header>
+
+<section id="candidates" class="space-y-14">
+
+<!-- 31 -->
+<article id="c31" class="space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">31 · Photo rotation re-projects the Recipe</h2>
+    <span class="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">in-process</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-red-100 text-red-800">suspected bug · confirmed in code</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 leading-6">
+    <li>src/window/photo_actions.rs:1634 rotate_current_photo</li>
+    <li>src/edit/editor.rs:2763-2795 set_library_rotation_action</li>
+    <li>src/edit/model.rs:557 remap_drawings_for_rotation</li>
+    <li>src/edit/render.rs:173-186 library rotation → geometry</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-2">Before</div>
+      <pre class="mermaid">
+flowchart TD
+  G[Grid / viewer / InfoBar rotate] --> DB[(db::set_rotation)]
+  E[Editor rotate] --> DB
+  E --> R[remap drawings<br/>undoable session edit]
+  DB --> RN[render: rotate, then crop + drawings]
+  G -.crop and drawings not moved.-> RN
+  R -.undo leaves DB rotated.-> RN
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class G,R leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-2">After</div>
+      <pre class="mermaid">
+flowchart TD
+  G[Grid / viewer / InfoBar] --> M
+  E[Editor] --> M
+  M[Photo rotation<br/>rotation + crop + drawings<br/>one transaction, one Photo change]:::deep
+  M --> RN[render]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+      </pre>
+    </div>
+  </div>
+  <p><b>Problem.</b> Crop and drawings live in the rotated frame, but only the editor re-projects them, and only the drawings. Rotating from anywhere else writes the rotation alone.</p>
+  <p><b>Solution.</b> One Photo rotation module turns a quarter turn into new rotation plus re-projected Recipe geometry and reports one Photo change. The editor and photo actions both call it.</p>
+  <ul class="list-disc pl-6 text-sm text-slate-700">
+    <li>Locality: the frame rule lives once</li>
+    <li>Pure tests: 4 × 90° is identity</li>
+    <li>render(rotate(r)) = rotate(render(r))</li>
+    <li>Editor stops mixing DB and Undo</li>
+  </ul>
+</article>
+
+<!-- 32 -->
+<article id="c32" class="space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">32 · Continuous edit: one undo rule for drags</h2>
+    <span class="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">in-process</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-red-100 text-red-800">suspected bug · Draw part confirmed</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 leading-6">
+    <li>src/edit/controls.rs:408-520 connect_scale (has the release fallback)</li>
+    <li>src/edit/overlays_ui.rs:1299-1364 · src/edit/text_ui.rs:410-450, 488-545, 675-730</li>
+    <li>src/edit/draw_ui.rs:277-330 (mutate per tick)</li>
+    <li>src/edit/model.rs:1157-1184 begin_action / mutate_active / end_action</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">Before · five hand-written copies</div>
+      <div class="space-y-2 text-xs">
+        <div class="border border-slate-300 rounded p-2 flex justify-between"><span>controls.rs</span><span class="text-emerald-700">press · legacy release · end</span></div>
+        <div class="border border-slate-300 rounded p-2 flex justify-between"><span>overlays_ui opacity</span><span class="leak">press · release only</span></div>
+        <div class="border border-slate-300 rounded p-2 flex justify-between"><span>text_ui size / opacity</span><span class="leak">press · release only</span></div>
+        <div class="border border-slate-300 rounded p-2 flex justify-between"><span>text_ui typing</span><span>700 ms timer</span></div>
+        <div class="border border-red-400 rounded p-2 flex justify-between"><span>draw_ui width / opacity</span><span class="leak">mutate every tick</span></div>
+        <div class="border-t border-dashed border-slate-400 pt-2 text-slate-500">EditSession · mutate_active works with no open action</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">After</div>
+      <div class="space-y-2 text-xs">
+        <div class="flex gap-2"><span class="border rounded px-2 py-1">controls</span><span class="border rounded px-2 py-1">overlays</span><span class="border rounded px-2 py-1">text</span><span class="border rounded px-2 py-1">draw</span></div>
+        <div class="text-slate-500">each supplies only "apply this value"</div>
+        <div class="border-t-2 border-dashed border-slate-500"></div>
+        <div class="deep rounded p-4 space-y-1">
+          <div class="schem">Continuous edit</div>
+          <div class="opacity-70">press · physical release · cancel · typing pause · history buttons</div>
+        </div>
+        <div class="border rounded p-2 text-slate-600">EditSession refuses mutate_active without an action</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> "A drag is one undo step" is written five times. Only the sliders in <code>controls.rs</code> survive GtkScale cancelling the release, and the Draw sliders add one undo step per tick, so one drag can push the rest of the history off the 100-step limit.</p>
+  <p><b>Solution.</b> A Continuous edit module owns the gesture-to-undo rule. The panels bind a value to it.</p>
+  <ul class="list-disc pl-6 text-sm text-slate-700">
+    <li>Leverage: one interface, five panels</li>
+    <li>Tests without a display</li>
+    <li>Lost release can't leak edits</li>
+    <li>Delete four dragging cells</li>
+  </ul>
+</article>
+
+<!-- 33 -->
+<article id="c33" class="space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">33 · Outside photo capabilities</h2>
+    <span class="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">in-process</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-red-100 text-red-800">suspected bug · confirmed in code</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 leading-6">
+    <li>src/photo_object.rs:238 (id &lt; 0) · ~30 call sites</li>
+    <li>src/infobar.rs:1280-1289 current_photo filters outside photos · :1660-1676</li>
+    <li>src/window/build.rs:4574 (Export), :4609 (Print)</li>
+    <li>src/window/photo_actions.rs:959-976 menu hide list</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-2">Before</div>
+      <pre class="mermaid">
+flowchart LR
+  P[is_outside_library] --> CM[Context menu<br/>hides ~10, keeps Export/Print]
+  P --> IB[InfoBar<br/>disables Export/Print/Rotate]
+  P --> CP[current_photo → None]
+  P --> ED[Editor Done = save copy]
+  P --> WS[Workspace session]
+  CP -.InfoBar Export/Print unreachable.-> X[anchored_print_requests<br/>outside branch]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class CP,X leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-2">After</div>
+      <pre class="mermaid">
+flowchart LR
+  K[Photo kind<br/>library / outside]:::deep --> CM[Context menu]
+  K --> IB[InfoBar]
+  K --> ED[Editor]
+  K --> WS[Workspace]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+      </pre>
+    </div>
+  </div>
+  <p><b>Problem.</b> What a photo from outside the library may do is decided on each surface separately. The menu and the InfoBar disagree, and the InfoBar's own Export and Print can never reach their outside-photo branch, though the v1.0.5 notes and candidate 27 say they can.</p>
+  <p><b>Solution.</b> One capability table per photo kind, read by every surface.</p>
+  <ul class="list-disc pl-6 text-sm text-slate-700">
+    <li>Locality: one table, one test</li>
+    <li>Surfaces stop disagreeing</li>
+    <li>Fixes InfoBar Export/Print</li>
+  </ul>
+</article>
+
+<!-- 34 -->
+<article id="c34" class="space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">34 · Export run returns a typed outcome</h2>
+    <span class="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-800">Strong</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">local-substitutable</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">suspected bug · not yet re-read</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 leading-6">
+    <li>src/window/build.rs:4120-4560 dialog, presets, single runner, progress</li>
+    <li>src/edit/export_batch.rs:461-712 four run_batch_export* entry points</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">Before · interface ≈ implementation</div>
+      <div class="flex items-end gap-6 h-48">
+        <div class="flex flex-col items-center gap-1"><div class="w-16 bg-amber-200 border border-amber-400" style="height:9rem"></div><span class="text-xs">interface</span></div>
+        <div class="flex flex-col items-center gap-1"><div class="w-16 bg-slate-300 border border-slate-400" style="height:10rem"></div><span class="text-xs">impl.</span></div>
+        <ul class="text-xs text-slate-600 space-y-1">
+          <li>4 entry points</li><li>outcome logic ×3</li><li>index → pixels ×2</li><li class="leak">"cancelled" found by substring</li>
+        </ul>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">After</div>
+      <div class="flex items-end gap-6 h-48">
+        <div class="flex flex-col items-center gap-1"><div class="w-16 bg-amber-200 border border-amber-400" style="height:2.5rem"></div><span class="text-xs">interface</span></div>
+        <div class="flex flex-col items-center gap-1"><div class="w-16 deep rounded" style="height:10rem"></div><span class="text-xs">impl.</span></div>
+        <ul class="text-xs text-slate-600 space-y-1">
+          <li>run(choices) → outcome</li><li>Exported / Skipped / Failed / Cancelled</li><li>build.rs keeps widgets only</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> Single-photo export rewrites the batch loop in <code>build.rs</code>. Status travels as error text, so a failure that mentions "cancelled" (some sources say this) would be reported as "Export stopped".</p>
+  <p><b>Solution.</b> An Export run module takes the dialog's choices and returns a typed outcome. A fake renderer is the second adapter.</p>
+  <ul class="list-disc pl-6 text-sm text-slate-700">
+    <li>~450 lines leave build.rs</li>
+    <li>Outcome tests with fake renderer</li>
+    <li>Delete two pass-through wrappers</li>
+  </ul>
+</article>
+
+<!-- 35 -->
+<article id="c35" class="space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">35 · Layer placement shared by Text and Overlays</h2>
+    <span class="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">Worth exploring</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">in-process</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 leading-6">
+    <li>src/edit/overlays_ui.rs:291-337, 1398-1440 · src/edit/text_ui.rs:764-795, 864-890</li>
+    <li>src/edit/model.rs:368, 710 position_at ×2</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">Before · twins</div>
+      <div class="grid grid-cols-2 gap-3 text-xs">
+        <div class="border rounded p-2 space-y-1"><div class="schem">overlays_ui</div><div>grid_position</div><div>place_grid</div><div>offset spins</div><div>position_at</div></div>
+        <div class="border rounded p-2 space-y-1"><div class="schem">text_ui</div><div>grid_position</div><div>place_grid</div><div>offset spins</div><div>position_at</div></div>
+      </div>
+      <p class="text-xs text-slate-500 mt-2">same [0, 0.5, 1] targets; anchor read differently; each spin tick its own undo step</p>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">After</div>
+      <div class="grid grid-cols-2 gap-3 text-xs mb-2"><div class="border rounded p-2">overlays panel</div><div class="border rounded p-2">text panel</div></div>
+      <div class="border-t-2 border-dashed border-slate-500 mb-2"></div>
+      <div class="deep rounded p-4 text-xs"><div class="schem">Layer placement</div><div class="opacity-70">nine-cell anchor · offset · fit</div></div>
+    </div>
+  </div>
+  <p><b>Problem.</b> One placement model is written once per layer type, and the two copies already read the anchor differently.</p>
+  <p><b>Solution.</b> Placement moves into <code>model.rs</code> behind one shared layer interface. Do it after 32, which settles the spins' undo steps.</p>
+  <ul class="list-disc pl-6 text-sm text-slate-700"><li>One table test, both kinds</li><li>Delete one twin</li></ul>
+</article>
+
+<!-- 36 -->
+<article id="c36" class="space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">36 · RAW decode plan for the viewer</h2>
+    <span class="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">Worth exploring</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">local-substitutable</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 leading-6">
+    <li>src/thumbnail/viewer.rs:982-1165 (local), 1356-1420 (remote), (u32::MAX, u32::MAX) at 894, 1364, 1585</li>
+    <li>src/lightbox/render.rs:28, 227, 537, 1389 ViewerRequestKey built by hand</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">Before · decision inside I/O</div>
+      <div class="space-y-1 text-xs">
+        <div class="h-8 border-l-4 border-slate-400 bg-slate-50 pl-2 flex items-center">open file / network read</div>
+        <div class="h-8 border-l-4 border-red-400 bg-red-50 pl-2 flex items-center">embedded JPEG or sensor develop? (×2)</div>
+        <div class="h-8 border-l-4 border-slate-400 bg-slate-50 pl-2 flex items-center">decode</div>
+        <div class="h-8 border-l-4 border-red-400 bg-red-50 pl-2 flex items-center">cache? retain? two keys, two budgets</div>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-3">After</div>
+      <div class="space-y-1 text-xs">
+        <div class="deep rounded p-3"><div class="schem">Decode plan (pure)</div><div class="opacity-70">source · target · cache/retain</div></div>
+        <div class="border-t-2 border-dashed border-slate-500 my-1"></div>
+        <div class="h-8 border-l-4 border-slate-400 bg-slate-50 pl-2 flex items-center">I/O executes the plan</div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> The rule for which source to decode is buried in 180–330-line I/O functions and written twice. Testing it needs real RAW files, and 4 of its 22 tests are ignored.</p>
+  <p><b>Solution.</b> A pure decode plan plus one request-key constructor. Do it alongside candidate 30 (the NEF sensor develop at lightbox zoom), which changes the same rule.</p>
+  <ul class="list-disc pl-6 text-sm text-slate-700"><li>Decision table: format × purpose × local/remote</li><li>Request key built once</li></ul>
+</article>
+
+<!-- 37 -->
+<article id="c37" class="space-y-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="font-serif text-2xl mr-2">37 · Photo file operations return a Photo change</h2>
+    <span class="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">Worth exploring</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700">local-substitutable</span>
+    <span class="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">suspected bug · not yet re-read</span>
+  </div>
+  <ul class="font-mono text-sm text-slate-600 leading-6">
+    <li>src/window/photo_actions.rs:1476-1538 rename · 1593-1631 trash</li>
+    <li>src/window/availability.rs:216-228 Remove from Library</li>
+  </ul>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-2">Before</div>
+      <pre class="mermaid">
+flowchart TD
+  D1[Rename dialog response] --> F[file + DB + rollback + thumb re-key]
+  D2[Trash dialog] --> T[trash + rollback] --> PC[Photo change]
+  A[Remove from Library] --> S[(db::set_trashed)]
+  A -.bypasses Photo change.-> G[gallery / lightbox / InfoBar stale]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class A,G leak
+      </pre>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4">
+      <div class="schem text-slate-500 mb-2">After</div>
+      <pre class="mermaid">
+flowchart TD
+  D1[Rename dialog] --> O
+  D2[Trash dialog] --> O
+  A[Remove from Library] --> O
+  O[Photo file operations<br/>result + Photo change]:::deep --> PC[Photo change fan-out]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+      </pre>
+    </div>
+  </div>
+  <p><b>Problem.</b> Rollback rules sit inside GTK dialog callbacks with no rename test. "Remove from Library" writes the database directly and skips the Photo change fan-out from candidate 16.</p>
+  <p><b>Solution.</b> Rename, trash and remove become operations that return a result and a Photo change. The dialogs only present them.</p>
+  <ul class="list-disc pl-6 text-sm text-slate-700"><li>Rename rollback testable</li><li>One fan-out for every removal</li></ul>
+</article>
+
+<div class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600 space-y-2">
+  <div class="schem text-slate-500">Noted, not carded</div>
+  <p><b>Typed settings</b> (Speculative): 198 raw <code>db::setting</code> calls parse strings where they're used. The bookshelf background defaults to index 0 in one place and to "darkwood" in another (<code>settings.rs:1630</code> vs <code>:1678</code>).</p>
+  <p><b>Print</b> renders at full size and then shrinks (<code>print.rs:388-396</code>). It could ask the render pipeline for 4000 px, as export does.</p>
+  <p><b>Test gaps:</b> <code>edit/panel_ui.rs</code>, <code>lightbox/impl.rs</code> (3,081 lines) and the export dialog have no tests. <code>photo_actions.rs</code> has 9 of its 16 tests ignored.</p>
+</div>
+
+</section>
+
+<section id="top-recommendation" class="deep rounded-xl p-8 space-y-3">
+  <div class="schem opacity-70">Top recommendation</div>
+  <h2 class="font-serif text-3xl"><a href="#c31" class="underline decoration-dotted">31 · Photo rotation re-projects the Recipe</a></h2>
+  <p class="opacity-90">It's the only candidate where your edits silently land on the wrong part of the photo, which goes against non-destructive editing. It's small, and the deepened module can be tested without a display (four quarter turns are the identity). 32 comes next: same editor area, and its Draw undo flood is confirmed in the code.</p>
+</section>
+
+</main>
+</body>
+</html>

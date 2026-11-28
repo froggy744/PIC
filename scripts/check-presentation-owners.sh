@@ -69,6 +69,12 @@
 #   - src/window/shortcuts.rs. Widgets keep their own key maps
 #     (WIDGET_KEY_MAPS; the two search-field controllers in layout.rs are
 #     in ALLOW).
+# What a photo of each kind may do (candidate 33: library or outside the
+# library) is one table; the InfoBar and the photo context menu ask it, and
+# the other places that tell the kinds apart are behaviour, in ALLOW:
+#   - src/photo_capabilities.rs (PhotoKind::capabilities); src/photo_object.rs
+#     defines is_outside_library and src/window/open_files.rs makes outside
+#     photos.
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -99,6 +105,7 @@ ALBUM_LIST_OWNER='src/window/album_list_widgets.rs'
 METADATA_PANEL_OWNER='src/window/metadata_panel.rs'
 WORKSPACE_OWNER='src/window/workspace_session_widgets.rs'
 SHORTCUTS_OWNER='src/window/shortcuts.rs'
+CAPABILITIES_OWNER='src/photo_capabilities.rs src/photo_object.rs src/window/open_files.rs'
 # Widgets with their own key maps (not window shortcuts).
 WIDGET_KEY_MAPS='src/window/search.rs src/albums/coverflow.rs src/edit/draw_ui.rs src/edit/editor.rs src/grid/sectioned_folder.rs src/grid/selection.rs src/lightbox/impl.rs src/screensaver.rs src/settings.rs src/sidebar.rs'
 SESSION_FIXTURES='src/window/immersive_tests.rs src/window/responsive_tests.rs'
@@ -127,6 +134,7 @@ RULES=(
   "metadata-panel~$METADATA_PANEL_OWNER~(metadata_root$ID*|metadata_panel$ID*\.root)\.(set_visible|connect_visible_notify)\(~metadata filter panel visibility (MetadataPanel::set_immersive / set_lightbox_open / set_navigation_view)"
   "workspace-session~$WORKSPACE_OWNER~(^|[^[:alnum:]_])collage_(add_mode|editing)([^[:alnum:]_]|$)|edit_(space|escape)$ID*\.(borrow_mut\(\)\.take|replace)\(|set_setting\(.*DRAFT_SETTING_KEY~Collage/editor session state, the editor's key handlers or the collage draft (ask Workspace)"
   "window-keys~$SHORTCUTS_OWNER $WIDGET_KEY_MAPS~^[^/]*EventControllerKey::new\(\)~a second window key controller (add the key to window::key_dispatch)"
+  "outside-capabilities~$CAPABILITIES_OWNER~\.is_outside_library\(\)~what an outside photo may do (ask PhotoKind::capabilities)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -160,6 +168,9 @@ ALLOW=(
   "src/window/photo_mark_commands.rs|info.photo_updated(&anchor);|test fixture (the shown photo)"
   "src/window/layout.rs|let search_keyboard = gtk::EventControllerKey::new();|Ctrl+F focuses search (its own key map)"
   "src/window/layout.rs|let search_navigation = gtk::EventControllerKey::new();|arrows leave the search field for the grid (its own key map)"
+  "src/edit/editor.rs|let outside_library = photo.is_outside_library();|behaviour: an outside photo's editor saves a copy (Done = Save Copy)"
+  "src/edit/editor.rs|let unsaved = photo.is_outside_library()|behaviour: unsaved-copy warning on close"
+  "src/window/build.rs|if !photo.is_outside_library() {|behaviour: only library photos are looked up again"
   "src/window/layout.rs|dock.set_visible(false);|KNOWN EXCEPTION: compact_dock visible-notify immersive guard predates SidebarWidgets"
 )
 
@@ -294,6 +305,7 @@ RS
     if front.current() == Front::Lightbox {
                 && stack.visible_child_name().as_deref() == Some("photos")
             panel_for_close.set_lightbox_open(false);
+        if !photo.is_outside_library() {
 RS
   cat >"$root/src/window/scan_view_widgets.rs" <<'RS'
             sidebar::update_library_counts(&parts.sidebar, counts);
@@ -332,7 +344,8 @@ RS
     [[ "$apath" == src/window/layout.rs || "$apath" == src/window/library.rs \
       || "$apath" == src/window.rs || "$apath" == src/window/metadata_panel.rs \
       || "$apath" == src/albums_view.rs || "$apath" == src/window/photo_actions.rs \
-      || "$apath" == "$MARKS_OWNER" ]] \
+      || "$apath" == "$MARKS_OWNER" || "$apath" == src/edit/editor.rs ]] \
+      && mkdir -p "$(dirname "$root/$apath")" \
       && printf '    %s\n' "$atext" >>"$root/$apath"
   done
 }
@@ -368,6 +381,8 @@ self_test() {
     "favourite written in build.rs|src/window/build.rs|db::set_favorite(&db.borrow(), id, true)|photo-marks"
     "ratings written in photo_actions.rs|src/window/photo_actions.rs|db::set_rating_for_photos(&c, &ids, 3)|photo-marks"
     "gallery objects marked in build.rs|src/window/build.rs|gallery_for_keys.update_ratings(&ids, rating);|photo-marks"
+    "outside check in infobar.rs|src/infobar.rs|let actions = target.photo_actions_enabled() && !photo.is_outside_library();|outside-capabilities"
+    "outside check in photo_actions.rs|src/window/photo_actions.rs|if photo.is_outside_library() {|outside-capabilities"
     "current photo copied in build.rs|src/window/build.rs|selected_photo_for_grid.replace(photo);|current-photo"
     "current photo cell in window.rs|src/window/photo_actions.rs|selected_photo: Rc<RefCell<Option<PhotoObject>>>,|current-photo"
     "dock shown in build.rs|src/window/build.rs|compact_dock.set_visible(true);|sidebar-parts"

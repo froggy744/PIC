@@ -3228,7 +3228,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             // Copy the id out first: open_edit() changes the stack
             // synchronously and may trigger InfoBar events.
-            let photo_id = info.editable_photo().map(|photo| photo.id());
+            let photo_id = info.shown_photo().map(|photo| photo.id());
             if let Some(id) = photo_id {
                 open_edit(id);
                 show_draw();
@@ -4571,7 +4571,7 @@ fn start_photo_export_single(
         let info = Rc::downgrade(&info);
         let export_anchored = export_anchored.clone();
         move |_| {
-            if let Some(photo) = info.upgrade().and_then(|info| info.current_photo()) {
+            if let Some(photo) = info.upgrade().and_then(|info| info.shown_photo()) {
                 export_anchored(&photo);
             }
         }
@@ -4606,7 +4606,7 @@ fn start_photo_export_single(
     let gallery_for_print = gallery.clone();
 
     info.print.connect_clicked(move |_| {
-        let Some(photo) = info_for_print.upgrade().and_then(|info| info.current_photo()) else {
+        let Some(photo) = info_for_print.upgrade().and_then(|info| info.shown_photo()) else {
             return;
         };
 

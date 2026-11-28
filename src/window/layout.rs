@@ -2419,7 +2419,7 @@
             // synchronously, which may trigger InfoBar events.
             let photo_id = current
                 .upgrade()
-                .and_then(|info| info.editable_photo())
+                .and_then(|info| info.shown_photo())
                 .map(|photo| photo.id());
             if let Some(id) = photo_id {
                 open_edit(id);

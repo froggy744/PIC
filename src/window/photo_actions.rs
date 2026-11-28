@@ -407,8 +407,8 @@ fn show_photo_context_menu(
 
     // A photo opened from outside the library has no catalogue row, so the
     // library actions (albums, marks, edit recipes, rename, delete) cannot
-    // apply to it; they are hidden for it below.
-    let outside_library = photo.is_outside_library();
+    // apply to it; the capability table hides them below.
+    let can = crate::photo_capabilities::PhotoKind::of(&photo).capabilities();
     let open = add_action("Open");
     let edit = add_action("Edit Photo…");
     let open_with = add_action("Open With…");
@@ -466,7 +466,7 @@ fn show_photo_context_menu(
 
     // The albums and Smart Albums this photo is in, each opening as its
     // sidebar row does. The album being viewed is not listed.
-    if !outside_library {
+    if can.albums {
         let viewed = match context.filter.get() {
             sidebar::SidebarFilter::Album(id) => Some(id),
             _ => None,
@@ -624,8 +624,8 @@ fn show_photo_context_menu(
         photo_mark_commands::run(&favorite_context, MarkIntent::ToggleFavorite, &favorite_photo);
     });
 
-    if let (false, sidebar::SidebarFilter::Album(album_id)) =
-        (outside_library, context.filter.get())
+    if let (true, sidebar::SidebarFilter::Album(album_id)) =
+        (can.albums, context.filter.get())
     {
         // The cover only makes sense inside an album, and always applies to
         // the album being viewed: no album list, no cross-album choices.
@@ -956,23 +956,26 @@ fn show_photo_context_menu(
         });
     }
 
-    if outside_library {
-        for action in [
-            Some(&add_to_album),
-            Some(&collage),
-            Some(&copy_edits),
-            Some(&paste_edits),
-            Some(&paste_overlays),
-            Some(&reset_edits),
-            Some(&favorite),
-            open_in_folder.as_ref(),
-            Some(&rename),
-            Some(&delete),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            action.set_visible(false);
+    let allowed = [
+        (Some(&add_to_album), can.albums),
+        (Some(&collage), can.collage),
+        (Some(&copy_edits), can.recipe),
+        (Some(&paste_edits), can.recipe),
+        (Some(&paste_overlays), can.recipe),
+        (Some(&reset_edits), can.recipe),
+        (Some(&favorite), can.marks),
+        (open_in_folder.as_ref(), can.open_in_folder),
+        (Some(&rename), can.file_operations),
+        (Some(&delete), can.file_operations),
+        (Some(&edit), can.edit),
+        (Some(&export), can.export),
+        (Some(&print), can.print),
+    ];
+    if allowed.iter().any(|(_, allowed)| !allowed) {
+        for (action, allowed) in allowed {
+            if let Some(action) = action.filter(|_| !allowed) {
+                action.set_visible(false);
+            }
         }
         hide_orphan_separators(&menu);
     }
@@ -1152,7 +1155,7 @@ fn anchored_export_jobs(
     selected_ids: &[i64],
     gallery_objects: Vec<crate::photo_object::PhotoObject>,
 ) -> Vec<crate::edit::export_batch::ExportJob> {
-    if anchor.is_outside_library() {
+    if crate::photo_capabilities::PhotoKind::of(anchor) == crate::photo_capabilities::PhotoKind::Outside {
         return vec![export_job_for_object(anchor)];
     }
     let mut known: std::collections::HashMap<i64, _> = gallery_objects
@@ -1189,7 +1192,7 @@ fn anchored_print_requests(
     anchor: &crate::photo_object::PhotoObject,
     selected_ids: &[i64],
 ) -> Vec<PhotoPrintRequest> {
-    if anchor.is_outside_library() {
+    if crate::photo_capabilities::PhotoKind::of(anchor) == crate::photo_capabilities::PhotoKind::Outside {
         vec![print_request_for_object(anchor)]
     } else {
         photo_print_requests(connection, selected_ids)

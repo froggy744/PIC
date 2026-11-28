@@ -5,6 +5,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
+use crate::photo_capabilities::PhotoKind;
 use crate::photo_object::PhotoObject;
 
 #[path = "infobar_presentation.rs"]
@@ -1277,12 +1278,13 @@ impl InfoBar {
             .filter(|photo| photo.id() == id)
             // A photo opened from outside the library has no catalogue row
             // for the actions to write to.
-            .filter(|photo| !photo.is_outside_library())
+            .filter(|photo| PhotoKind::of(photo) == PhotoKind::Library)
     }
 
-    /// The photo Edit opens: the current photo, or the shown photo when it
-    /// is outside the library (its editor saves a copy instead of a recipe).
-    pub(crate) fn editable_photo(&self) -> Option<PhotoObject> {
+    /// The photo the InfoBar shows, of any kind: what Edit, Draw, Export and
+    /// Print act on (each allowed for every kind, `PhotoKind::capabilities`).
+    /// An outside photo's editor saves a copy instead of a recipe.
+    pub(crate) fn shown_photo(&self) -> Option<PhotoObject> {
         let id = self.presentation.borrow().target().photo?;
         self.written
             .borrow()
@@ -1616,7 +1618,7 @@ impl InfoBar {
         };
 
         let mut summary = PhotoSummary::of(&photo_facts(photo));
-        if photo.is_outside_library() {
+        if PhotoKind::of(photo) == PhotoKind::Outside {
             // A file opened from outside the library shows its name and file
             // size only: its capture facts were never read (the editor loads
             // them later), so Taken would show the file's date, Dimensions
@@ -1657,23 +1659,25 @@ impl InfoBar {
                 self.favorite.set_tooltip_text(Some("Add to Favourites"));
             }
         }
-        let outside = photo.is_outside_library();
-        let was_outside = old.map(|written| written.photo.is_outside_library());
-        if was_outside != Some(outside) {
+        let kind = PhotoKind::of(photo);
+        let was_kind = old.map(|written| PhotoKind::of(&written.photo));
+        if was_kind != Some(kind) {
             // Coming from no photo, or between a library photo and one from
             // outside the library: show the name and set the actions.
             self.has_photo.set(true);
             self.filename.set_visible(true);
-            let actions = target.photo_actions_enabled() && !outside;
-            self.favorite.set_sensitive(actions);
-            self.rating.set_sensitive(actions);
-            self.edit.set_sensitive(target.edit_enabled());
-            self.draw.set_sensitive(target.edit_enabled());
-            self.add_to_album.set_sensitive(actions);
-            self.rotate.set_sensitive(actions);
-            self.export.set_sensitive(actions);
+            let can = kind.capabilities();
+            let actions = target.photo_actions_enabled();
+            let edit = target.edit_enabled() && can.edit;
+            self.favorite.set_sensitive(actions && can.marks);
+            self.rating.set_sensitive(actions && can.marks);
+            self.edit.set_sensitive(edit);
+            self.draw.set_sensitive(edit);
+            self.add_to_album.set_sensitive(actions && can.albums);
+            self.rotate.set_sensitive(actions && can.rotate);
+            self.export.set_sensitive(actions && can.export);
             self.more.set_sensitive(true);
-            self.print.set_sensitive(actions);
+            self.print.set_sensitive(actions && can.print);
         }
         self.written.replace(Some(WrittenPhoto {
             photo: photo.clone(),

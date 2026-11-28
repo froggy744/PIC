@@ -18,6 +18,7 @@ mod network_picker;
 #[cfg(target_os = "linux")]
 mod network_shares;
 mod onboarding;
+mod photo_capabilities;
 mod photo_object;
 mod photo_texture;
 mod platform;

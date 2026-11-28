@@ -360,6 +360,7 @@ After a Folder scroll settles, a 16 ms timer prefetches ahead, capped by `Galler
 | Selection / keyboard nav | `src/grid/selection.rs` | + `window/shortcuts.rs` |
 | Lightbox / viewer | `src/lightbox.rs` (`Lightbox`), `src/lightbox/render.rs` | `lightbox/impl.rs`, decode lanes in `source.rs` |
 | Editor UI | `src/edit/editor.rs` (`EditEditor`, `build`) | panels in `edit/controls.rs`, `draw_ui.rs`, `text_ui.rs` (shared pieces in `panel_ui.rs`), `overlays_ui.rs`, `crop.rs` (all `include!`d into `editor.rs`) |
+| What an outside photo may do (InfoBar buttons, context menu items) | `src/photo_capabilities.rs` (`PhotoKind::capabilities`, table tests) | `InfoBar::shown_photo` (any kind: Edit, Draw, Export, Print) vs `current_photo` (library only); display test `infobar_exports_and_prints_an_outside_photo`; guard `scripts/check-presentation-owners.sh` (`outside-capabilities`) |
 | Editor slider or typing → Undo steps | `src/edit/continuous_edit.rs` (`bind_scale` for a `gtk::Scale`, `ContinuousEdit::type_change` + `settle` for typing) | `EditSession::begin_action`/`mutate_active`/`end_action` in `edit/model.rs`; panels never keep their own `dragging` cell; tests: `edit::continuous_edit` unit tests, display `a_scale_drag_cancelled_by_gtk_is_one_undo_step` |
 | A new edit effect / recipe field | `src/edit/model.rs` (`EditRecipe`), `src/edit/render.rs` | add to model + `render::apply_recipe`; GPU path in `edit/live_gpu.rs` |
 | Export | `src/edit/export_batch.rs`, `src/edit/export_metadata.rs` | + dialogs in `window/build.rs` (`show_photo_export_dialog`) |

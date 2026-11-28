@@ -8,7 +8,7 @@ The single source of truth for the deepening candidates from the architecture re
 - Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. 21, 23, 24 merged; 25-29 and 22 done as small fixes or closed; see "Round four" below.
 - Render pipeline project (22 + 29 + 25 as one), candidates A-F: [`architecture-review-2026-11-27-render-pipeline.html`](architecture-review-2026-11-27-render-pipeline.html), taken at `main` @ `244645eb`, with export benchmarks. Branch `refactor/render-pipeline`; see "Render pipeline project" below.
 
-- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31 and 32 merged; 33-37 open (suspected bugs read from code, not reproduced unless noted).
+- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31 and 32 merged; 33 in progress; 34-37 open (suspected bugs read from code, not reproduced unless noted).
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -65,7 +65,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 30 | Lightbox zoom shows the NEF sensor develop | Worth exploring | saved for later (2026-11-27), not started | | `src/thumbnail/viewer.rs` (`decode_local_raw_for_viewer`, `viewer_nef_source_cache_lookup`), `src/lightbox/render.rs` (`viewer_zoom_decode_target`) |
 | 31 | Photo rotation re-projects the Recipe (round five) | Strong | merged | fast-forward of `fix/photo-rotation-recipe` (owner checked by hand 2026-11-28) | `src/edit/rotation.rs` (pure), `db::rotate_photo` |
 | 32 | Continuous edit: one undo rule for slider drags | Strong | merged | fast-forward of `refactor/continuous-edit` (`57326d0e`; owner approved 2026-11-28) | `src/edit/continuous_edit.rs` (pure `ContinuousEdit` + adapter `bind_scale`), `model.rs` (`mutate_active`) |
-| 33 | Outside photo capabilities (one table per photo kind) | Strong | open | | `src/photo_object.rs`, `src/infobar.rs`, `src/window/photo_actions.rs`, `build.rs:4574/4609` |
+| 33 | Outside photo capabilities (one table per photo kind) | Strong | in progress | `refactor/outside-photo-capabilities` | `src/photo_capabilities.rs` (pure `PhotoKind::capabilities`), read by `src/infobar.rs` and `src/window/photo_actions.rs`; owner rule `outside-capabilities` |
 | 34 | Export run returns a typed outcome | Strong | open | | `src/window/build.rs:4120-4560`, `src/edit/export_batch.rs` |
 | 35 | Layer placement shared by Text and Overlays (after 32) | Worth exploring | open | | `src/edit/overlays_ui.rs`, `text_ui.rs`, `model.rs` |
 | 36 | RAW decode plan for the viewer (with 30) | Worth exploring | open | | `src/thumbnail/viewer.rs`, `src/lightbox/render.rs` |
@@ -951,6 +951,20 @@ Suspected bugs, read from code; reproduce each red first. Before/after diagrams 
 - **34:** single-photo export rewrites the batch loop in `build.rs`; cancellation is found by `contains("cancelled")` (`build.rs:4409`), so a failure mentioning "cancelled" reads as "Export stopped" (suspected).
 - **35-37:** see the report. 37 suspects "Remove from Library" (`availability.rs:216`) bypasses `PhotoChange::Trashed`.
 - Not carded: typed settings (bookshelf background default differs, `settings.rs:1630` vs `:1678`); Print renders full size, then shrinks (`print.rs:388`).
+
+### 33 · Outside photo capabilities (round five, started 2026-11-28)
+Branch `refactor/outside-photo-capabilities` from `main` @ `2121f525`. Owner: no merge before review.
+
+**Decisions (2026-11-28, by the owner):**
+1. One pure table: `PhotoKind { Library, Outside }` and `PhotoKind::capabilities() -> PhotoCapabilities` (marks, albums, rotate, edit, recipe, collage, export, print, file operations, Open in Folder) in `src/photo_capabilities.rs`, read by the context menu's hide list and the InfoBar's enabled state. The editor's Save Copy, the workspace session's routes and the other "is it outside" checks are behaviour, not permissions, and stay.
+2. An outside photo may Edit (Save Copy), Draw, Export and Print; everything that writes the catalogue is off (Rotate too: `db::rotate_photo` needs a row).
+3. `InfoBar::current_photo` stays library-only (its callers write the catalogue); `editable_photo` is renamed `shown_photo` (any kind) and Edit, Draw, Export and Print take it.
+4. Tests: table tests + display test, red first.
+5. Owner rule `outside-capabilities`: `is_outside_library()` only in `photo_capabilities.rs`, `photo_object.rs`, `open_files.rs` (makes outside photos), with 3 behaviour lines in ALLOW (`editor.rs` ×2, `build.rs` session record).
+
+**Bug confirmed and fixed.** InfoBar Export and Print were disabled for an outside photo, and `current_photo` returned `None` for it, so candidate 27's outside branch was unreachable from the InfoBar. Display test `infobar_exports_and_prints_an_outside_photo` (`open_files.rs`): red on `main` ("Export must be on"), green after (Export opens the Export Photo dialog, Print is on, Rotate off). Print is not on the default InfoBar; its click (print dialog) is not run under Xvfb.
+
+**Verification (2026-11-28):** `cargo check --locked --all-targets` clean; unit tests `photo_capabilities` 3, `infobar::` 12, `window::photo_actions` 4 pass. Display tests (Xvfb, one process each): all 16 `infobar::layout_tests`/`responsive_tests`/`open_files::window_tests` and all 9 `window::photo_actions_tests` pass. Owner script: `--self-test` ok (2 new cases); the check shows only the known `open_files.rs` session-state hits and `build.rs:3333` `[front-surface]`. Not checked by hand.
 
 ### 32 · Continuous edit (round five, merged 2026-11-28)
 Branch `refactor/continuous-edit` from `main` @ `35c752bd`, fast-forwarded into `main` on the owner's "done push merge". Next in order: 33.

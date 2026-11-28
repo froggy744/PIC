@@ -584,6 +584,49 @@ mod window_tests {
     }
 
     /// Candidate 21: the InfoBar Edit toggle closes the editor the same way
+    /// The InfoBar offers an outside photo the actions its context menu does
+    /// (one capability table): Export and Print on, catalogue writes off, and
+    /// Export opens on the outside photo.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn infobar_exports_and_prints_an_outside_photo() {
+        let (window, directory) = outside_photo_window("io.pic.OpenFilesExportTest", "export");
+        let root = window.upcast_ref::<gtk::Widget>();
+        // Print is not on the default InfoBar (Show in InfoBar), so buttons
+        // are found whether drawn or not.
+        let button = |tooltip: &str| {
+            descendants(root)
+                .into_iter()
+                .find(|widget| {
+                    widget.is::<gtk::Button>() && widget.tooltip_text().as_deref() == Some(tooltip)
+                })
+                .and_downcast::<gtk::Button>()
+                .unwrap_or_else(|| panic!("{tooltip} button missing"))
+        };
+        assert!(button("Export photo").is_sensitive(), "Export must be on");
+        assert!(button("Print photo").is_sensitive(), "Print must be on");
+        assert!(
+            !button("Rotate clockwise (right-click to rotate counter-clockwise)").is_sensitive(),
+            "Rotate writes the catalogue"
+        );
+
+        button("Export photo").emit_clicked();
+        settle();
+        let dialog = descendants(root)
+            .into_iter()
+            .find_map(|widget| widget.downcast::<adw::AlertDialog>().ok())
+            .expect("InfoBar Export did not open the export dialog");
+        assert_eq!(
+            adw::prelude::AlertDialogExt::heading(&dialog).as_deref(),
+            Some("Export Photo")
+        );
+        adw::prelude::AdwDialogExt::close(&dialog);
+        settle();
+        window.close();
+        settle();
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
     /// Back and Done do, so an outside photo returns to the viewer.
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]

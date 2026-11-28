@@ -8,7 +8,7 @@ The single source of truth for the deepening candidates from the architecture re
 - Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. 21, 23, 24 merged; 25-29 and 22 done as small fixes or closed; see "Round four" below.
 - Render pipeline project (22 + 29 + 25 as one), candidates A-F: [`architecture-review-2026-11-27-render-pipeline.html`](architecture-review-2026-11-27-render-pipeline.html), taken at `main` @ `244645eb`, with export benchmarks. Branch `refactor/render-pipeline`; see "Render pipeline project" below.
 
-- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31 and 32 merged; 33 in progress; 34-37 open (suspected bugs read from code, not reproduced unless noted).
+- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31-33 merged; 34-37 open (suspected bugs read from code, not reproduced unless noted).
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -65,7 +65,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 30 | Lightbox zoom shows the NEF sensor develop | Worth exploring | saved for later (2026-11-27), not started | | `src/thumbnail/viewer.rs` (`decode_local_raw_for_viewer`, `viewer_nef_source_cache_lookup`), `src/lightbox/render.rs` (`viewer_zoom_decode_target`) |
 | 31 | Photo rotation re-projects the Recipe (round five) | Strong | merged | fast-forward of `fix/photo-rotation-recipe` (owner checked by hand 2026-11-28) | `src/edit/rotation.rs` (pure), `db::rotate_photo` |
 | 32 | Continuous edit: one undo rule for slider drags | Strong | merged | fast-forward of `refactor/continuous-edit` (`57326d0e`; owner approved 2026-11-28) | `src/edit/continuous_edit.rs` (pure `ContinuousEdit` + adapter `bind_scale`), `model.rs` (`mutate_active`) |
-| 33 | Outside photo capabilities (one table per photo kind) | Strong | in progress | `refactor/outside-photo-capabilities` | `src/photo_capabilities.rs` (pure `PhotoKind::capabilities`), read by `src/infobar.rs` and `src/window/photo_actions.rs`; owner rule `outside-capabilities` |
+| 33 | Outside photo capabilities (one table per photo kind) | Strong | merged | fast-forward of `refactor/outside-photo-capabilities` (`f8850999`; owner approved 2026-11-28) | `src/photo_capabilities.rs` (pure `PhotoKind::capabilities`), read by `src/infobar.rs` and `src/window/photo_actions.rs`; owner rule `outside-capabilities` |
 | 34 | Export run returns a typed outcome | Strong | open | | `src/window/build.rs:4120-4560`, `src/edit/export_batch.rs` |
 | 35 | Layer placement shared by Text and Overlays (after 32) | Worth exploring | open | | `src/edit/overlays_ui.rs`, `text_ui.rs`, `model.rs` |
 | 36 | RAW decode plan for the viewer (with 30) | Worth exploring | open | | `src/thumbnail/viewer.rs`, `src/lightbox/render.rs` |
@@ -952,8 +952,8 @@ Suspected bugs, read from code; reproduce each red first. Before/after diagrams 
 - **35-37:** see the report. 37 suspects "Remove from Library" (`availability.rs:216`) bypasses `PhotoChange::Trashed`.
 - Not carded: typed settings (bookshelf background default differs, `settings.rs:1630` vs `:1678`); Print renders full size, then shrinks (`print.rs:388`).
 
-### 33 · Outside photo capabilities (round five, started 2026-11-28)
-Branch `refactor/outside-photo-capabilities` from `main` @ `2121f525`. Owner: no merge before review.
+### 33 · Outside photo capabilities (round five, merged 2026-11-28)
+Branch `refactor/outside-photo-capabilities` from `main` @ `2121f525`, fast-forwarded into `main` on the owner's "push merge". Next in order: 34.
 
 **Decisions (2026-11-28, by the owner):**
 1. One pure table: `PhotoKind { Library, Outside }` and `PhotoKind::capabilities() -> PhotoCapabilities` (marks, albums, rotate, edit, recipe, collage, export, print, file operations, Open in Folder) in `src/photo_capabilities.rs`, read by the context menu's hide list and the InfoBar's enabled state. The editor's Save Copy, the workspace session's routes and the other "is it outside" checks are behaviour, not permissions, and stay.

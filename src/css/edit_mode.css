@@ -1,5 +1,11 @@
 /* Editor toolbar colors and interaction states shared across appearance themes.
  * All colors come from the currently selected theme palette. */
+
+/* One selection look for every editor panel control (tool and format
+ * toggles, neutral buttons, layer rows). A theme whose sidebar uses a solid
+ * selection redefines these two colours (PIC-Default, PIC-Dark). */
+@define-color editor_selected_bg alpha(@accent_bg_color, 0.14);
+@define-color editor_selected_fg @accent_color;
 .edit-mode-toolbar {
   color: @theme_fg_color;
   background-color: @headerbar_bg_color;
@@ -7,9 +13,9 @@
 }
 
 .edit-mode-toolbar .edit-panel-tabs {
-  padding: 3px;
-  border-radius: 9px;
-  background-color: alpha(@theme_fg_color, 0.07);
+  padding: 0;
+  border-radius: 0;
+  background-color: transparent;
 }
 
 .edit-mode-toolbar .edit-panel-tabs > button.flat {
@@ -62,7 +68,7 @@
   background-color: transparent;
   background-image: none;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 6px;
   box-shadow: none;
   transition: background-color 140ms ease, border-color 140ms ease;
 }
@@ -77,11 +83,20 @@
   border-color: alpha(@theme_fg_color, 0.1);
 }
 
+/* Selected tools use the same selection as the active toolbar tab: a soft
+ * accent tint and accent foreground, no border or ring. */
 .editor-tool-group button.editor-tool-button:checked,
 .editor-tool-group button.editor-tool-button:checked:hover {
-  background-color: alpha(@accent_bg_color, 0.19);
-  border-color: alpha(@accent_bg_color, 0.38);
-  box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.16);
+  color: @editor_selected_fg;
+  background-color: @editor_selected_bg;
+  background-image: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.editor-tool-group button.editor-tool-button:checked image,
+.editor-tool-group button.editor-tool-button:checked label {
+  color: @editor_selected_fg;
 }
 
 .editor-tool-group button.editor-tool-button:focus-visible {
@@ -103,27 +118,78 @@
   margin: 2px 0;
 }
 
+/* Slider titles and values read the same in Tools (edit-adjustment-row)
+ * and in the panel_ui columns (Intensity, Straighten, Size, Thickness...). */
 .editor-slider-column > box > label:first-child,
+.pic-editor-panel .edit-adjustment-row > box > label:first-child,
 .pic-editor-panel label.editor-control-title {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
-.editor-slider-column scale {
+.editor-slider-column scale,
+.pic-editor-panel scale.edit-adjustment-scale {
   min-width: 0;
   margin-top: 0;
 }
 
-.editor-slider-value {
+.editor-slider-value,
+.pic-editor-panel label.edit-adjustment-value {
   min-width: 0;
+  font-size: 12px;
   color: alpha(@theme_fg_color, 0.72);
+  opacity: 1;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 500;
+}
+
+/* Offset row (Position): "Offset", "X" and "Y" match the slider titles. */
+.pic-editor-panel .editor-offset-row > label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Layer lists (Overlays, Text, Draw) select like the sidebar: the row is
+ * marked by its fill alone; text keeps the normal foreground and the trash
+ * icon stays neutral grey. */
+.pic-editor-panel .overlay-list row {
+  min-height: 32px;
+  padding: 3px 8px;
+  border-radius: 5px;
+}
+/* Layer names use the compact slider-title size at regular weight. */
+.pic-editor-panel .overlay-list row label {
+  font-size: 12px;
+  font-weight: 400;
+}
+.pic-editor-panel .overlay-list row:hover:not(:selected) {
+  background-color: alpha(@theme_fg_color, 0.05);
+}
+.pic-editor-panel .overlay-list row:selected,
+.pic-editor-panel .overlay-list row:selected:hover {
+  color: @theme_fg_color;
+  background-color: @editor_selected_bg;
+  background-image: none;
+  box-shadow: none;
+}
+.pic-editor-panel .overlay-list row:selected label {
+  color: inherit;
+}
+.pic-editor-panel .overlay-list row:selected button.editor-row-delete {
+  color: alpha(currentColor, 0.6);
+}
+.pic-editor-panel .overlay-list row:focus-visible {
+  outline: 2px solid @accent_bg_color;
+  outline-offset: -2px;
 }
 
 /* Neutral panel buttons live in components/editor_buttons.css (above themes). */
 
 /* Per-row trash in layer lists. */
+.pic-editor-panel button.editor-row-delete image {
+  -gtk-icon-size: 16px;
+}
+
 .pic-editor-panel button.editor-row-delete {
   min-width: 26px;
   min-height: 26px;
@@ -145,8 +211,8 @@
 
 .editor-tool-group.editor-format-group button.editor-tool-button:checked,
 .editor-tool-group.editor-format-group button.editor-tool-button:checked:hover {
-  background-color: alpha(@accent_bg_color, 0.19);
-  border-color: alpha(@accent_bg_color, 0.38);
+  background-color: @editor_selected_bg;
+  border-color: transparent;
 }
 
 .editor-tool-group.editor-format-group button.editor-tool-button label {
@@ -212,32 +278,52 @@
 }
 
 
-/* V1.01: clearer editor hierarchy, more generous targets, and consistent states. */
-.edit-mode-toolbar { border-bottom-color: alpha(@theme_fg_color, 0.16); }
+/* Compact editor toolbar: one 44 px row, flat transparent tabs and actions
+ * with no group backgrounds, thin dividers between the action groups, a
+ * subtle accent tint on the active tab and a solid primary Done button. */
+.edit-mode-toolbar {
+  padding: 6px 12px;
+  border-bottom-color: alpha(@theme_fg_color, 0.14);
+}
 .edit-mode-toolbar .edit-panel-tabs {
-  padding: 4px;
-  border: 1px solid alpha(@theme_fg_color, 0.09);
-  border-radius: 12px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+  box-shadow: none;
 }
 .edit-mode-toolbar .edit-panel-tabs > button.flat {
-  min-height: 40px;
-  padding: 0 17px;
-  border-radius: 8px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-weight: 500;
 }
 .edit-mode-toolbar .edit-panel-tabs > button.flat:first-child,
-.edit-mode-toolbar .edit-panel-tabs > button.flat:last-child { border-radius: 8px; }
-.edit-mode-toolbar .edit-panel-tabs > button.flat:checked {
-  background-color: alpha(@accent_bg_color, 0.23);
-  box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.26);
+.edit-mode-toolbar .edit-panel-tabs > button.flat:last-child { border-radius: 6px; }
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked:hover {
+  color: @accent_color;
+  background-color: alpha(@accent_bg_color, 0.14);
+  box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat.edit-action-tab {
+  min-width: 32px;
+  padding: 0 7px;
 }
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
-  min-width: 40px;
-  min-height: 40px;
-  border-radius: 10px;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 6px;
+}
+.edit-mode-toolbar .edit-toolbar-actions separator.edit-toolbar-divider {
+  min-height: 18px;
+  margin: 0 6px;
 }
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done {
-  min-height: 40px;
-  padding: 0 22px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-weight: 600;
 }
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:focus-visible,
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:focus-visible {

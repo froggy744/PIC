@@ -230,11 +230,9 @@ pub fn build(
     root.set_hexpand(true);
     root.set_vexpand(true);
 
+    // Height and side padding come from the theme CSS (.edit-mode-toolbar),
+    // so the bar stays one compact row in every theme.
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    toolbar.set_margin_top(8);
-    toolbar.set_margin_bottom(8);
-    toolbar.set_margin_start(12);
-    toolbar.set_margin_end(12);
     toolbar.add_css_class("toolbar");
     toolbar.add_css_class("edit-mode-toolbar");
 
@@ -284,7 +282,8 @@ pub fn build(
     toolbar_spacer.set_hexpand(true);
     toolbar.append(&toolbar_spacer);
 
-    let toolbar_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    // Dividers carry the gaps between the action groups.
+    let toolbar_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     toolbar_actions.set_valign(gtk::Align::Center);
     toolbar_actions.add_css_class("edit-toolbar-actions");
     toolbar.append(&toolbar_actions);
@@ -346,7 +345,11 @@ pub fn build(
 
     // Close and Done finish the session: a third strip matching the other
     // two, with Close as a strip icon and Done as the primary button in it.
-    let finish_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let finish_divider = gtk::Separator::new(gtk::Orientation::Vertical);
+    finish_divider.set_valign(gtk::Align::Center);
+    finish_divider.add_css_class("edit-toolbar-divider");
+    toolbar_actions.append(&finish_divider);
+    let finish_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     finish_tabs.set_valign(gtk::Align::Center);
     finish_tabs.add_css_class("linked");
     finish_tabs.add_css_class("edit-panel-tabs");
@@ -421,43 +424,43 @@ pub fn build(
     sidebar.set_hexpand(true);
     sidebar.set_halign(gtk::Align::Fill);
 
-    let tools_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let tools_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     tools_box.add_css_class("pic-editor-panel");
     tools_box.set_valign(gtk::Align::Start);
     tools_box.set_hexpand(true);
     tools_box.set_halign(gtk::Align::Fill);
-    tools_box.set_margin_top(12);
+    tools_box.set_margin_top(14);
     tools_box.set_margin_bottom(16);
-    tools_box.set_margin_start(14);
-    tools_box.set_margin_end(14);
+    tools_box.set_margin_start(16);
+    tools_box.set_margin_end(16);
     let filters_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     filters_box.add_css_class("pic-editor-panel");
     filters_box.set_valign(gtk::Align::Start);
     filters_box.set_hexpand(true);
     filters_box.set_vexpand(true);
-    filters_box.set_margin_top(12);
+    filters_box.set_margin_top(14);
     filters_box.set_margin_bottom(16);
-    filters_box.set_margin_start(14);
-    filters_box.set_margin_end(14);
+    filters_box.set_margin_start(16);
+    filters_box.set_margin_end(16);
     let crop_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     crop_box.add_css_class("pic-editor-panel");
     crop_box.set_valign(gtk::Align::Start);
     crop_box.set_hexpand(true);
     crop_box.set_vexpand(true);
-    crop_box.set_margin_top(12);
+    crop_box.set_margin_top(14);
     crop_box.set_margin_bottom(16);
-    crop_box.set_margin_start(14);
-    crop_box.set_margin_end(14);
+    crop_box.set_margin_start(16);
+    crop_box.set_margin_end(16);
     let overlays_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     overlays_box.add_css_class("pic-editor-overlay-controls");
     overlays_box.add_css_class("pic-editor-panel");
         overlays_box.set_valign(gtk::Align::Start);
     overlays_box.set_hexpand(true);
     overlays_box.set_vexpand(true);
-    overlays_box.set_margin_top(12);
+    overlays_box.set_margin_top(14);
     overlays_box.set_margin_bottom(16);
-    overlays_box.set_margin_start(14);
-    overlays_box.set_margin_end(14);
+    overlays_box.set_margin_start(16);
+    overlays_box.set_margin_end(16);
     let text_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     text_box.add_css_class("pic-editor-text-controls");
     text_box.add_css_class("pic-editor-panel");
@@ -465,20 +468,20 @@ pub fn build(
     text_box.set_hexpand(true);
     text_box.set_vexpand(true);
     text_box.set_halign(gtk::Align::Fill);
-    text_box.set_margin_top(12);
+    text_box.set_margin_top(14);
     text_box.set_margin_bottom(16);
-    text_box.set_margin_start(14);
-    text_box.set_margin_end(14);
+    text_box.set_margin_start(16);
+    text_box.set_margin_end(16);
     let draw_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     draw_box.add_css_class("pic-editor-draw-controls");
     draw_box.add_css_class("pic-editor-panel");
         draw_box.set_valign(gtk::Align::Start);
     draw_box.set_hexpand(true);
     draw_box.set_vexpand(true);
-    draw_box.set_margin_top(12);
+    draw_box.set_margin_top(14);
     draw_box.set_margin_bottom(16);
-    draw_box.set_margin_start(14);
-    draw_box.set_margin_end(14);
+    draw_box.set_margin_start(16);
+    draw_box.set_margin_end(16);
     let tools_scroll = gtk::ScrolledWindow::new();
     tools_scroll.set_hexpand(true);
     tools_scroll.set_halign(gtk::Align::Fill);
@@ -638,7 +641,10 @@ pub fn build(
     busy.set_visible(false);
     preview_area.add_overlay(&busy);
 
-    let status = gtk::Label::new(Some("Ready"));
+    // Only problems are reported over the canvas; routine progress and the
+    // preview size stay hidden so nothing covers the photo.
+    let status = gtk::Label::new(None);
+    status.set_visible(false);
     status.set_halign(gtk::Align::Start);
     status.set_valign(gtk::Align::End);
     status.set_margin_start(12);
@@ -1481,7 +1487,7 @@ pub fn build(
                     if !interactive {
                         busy.set_visible(true);
                         busy.start();
-                        status.set_text("Rendering preview…");
+                        status.set_visible(false);
                     }
 
                     let (result_sender, receiver) = std::sync::mpsc::channel();
@@ -1501,6 +1507,7 @@ pub fn build(
                         busy.stop();
                         busy.set_visible(false);
                         status.set_text("Preview worker stopped");
+                        status.set_visible(true);
                         return;
                     }
                     let cpu_preview_started = std::time::Instant::now();
@@ -1675,7 +1682,7 @@ pub fn build(
                                                 canvas_zoom.get(),
                                             );
                                         }
-                                        status.set_text(&format!("{} × {} preview", width, height));
+                                        status.set_visible(false);
                                         crop_overlay.queue_draw();
                                         overlay_layer.queue_draw();
                                         draw_layer.queue_draw();
@@ -1686,6 +1693,7 @@ pub fn build(
                                     }
                                     Err(error) => {
                                         status.set_text(&format!("Preview failed: {error}"));
+                                        status.set_visible(true);
                                         end_placeholder(false);
                                         preview_ready.set(true);
                                         first_frame_shown.set(true);
@@ -1704,6 +1712,7 @@ pub fn build(
                                     busy.stop();
                                     busy.set_visible(false);
                                     status.set_text("Preview worker stopped");
+                                    status.set_visible(true);
                                     // No preview will come: end the opening
                                     // as a failed preview does, so the
                                     // stand-in cannot hide the layers.

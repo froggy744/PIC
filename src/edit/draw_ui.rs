@@ -514,34 +514,9 @@ fn build_draw_panel(
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
-            for (index, (kind, rgba)) in signature.0.iter().copied().enumerate() {
+            for (index, (kind, _colour)) in signature.0.iter().copied().enumerate() {
                 let row = gtk::ListBoxRow::new();
                 let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                let dot = gtk::DrawingArea::new();
-                dot.set_content_width(12);
-                dot.set_content_height(12);
-                dot.set_valign(gtk::Align::Center);
-                dot.set_draw_func(move |_, cr, w, h| {
-                    let [r, g, b, _] = rgba.to_be_bytes();
-                    cr.set_source_rgb(
-                        f64::from(r) / 255.0,
-                        f64::from(g) / 255.0,
-                        f64::from(b) / 255.0,
-                    );
-                    let radius = f64::from(w.min(h)) / 2.0;
-                    cr.arc(
-                        f64::from(w) / 2.0,
-                        f64::from(h) / 2.0,
-                        radius - 0.5,
-                        0.0,
-                        std::f64::consts::TAU,
-                    );
-                    let _ = cr.fill_preserve();
-                    cr.set_source_rgba(0.5, 0.5, 0.5, 0.6);
-                    cr.set_line_width(1.0);
-                    let _ = cr.stroke();
-                });
-                content.append(&dot);
                 let label = gtk::Label::new(Some(draw_kind_label(kind)));
                 label.set_xalign(0.0);
                 label.set_hexpand(true);

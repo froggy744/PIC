@@ -214,8 +214,9 @@ fn editor_offset_row(parent: &gtk::Box) -> (gtk::SpinButton, gtk::SpinButton) {
     row.append(&title);
     for (axis, spin) in [("X", &offset_x), ("Y", &offset_y)] {
         spin.set_hexpand(true);
-        spin.set_width_chars(3);
-        spin.set_max_width_chars(3);
+        // Room for signed four-digit offsets such as -1250.
+        spin.set_width_chars(5);
+        spin.set_max_width_chars(6);
         spin.add_css_class("edit-offset-spin");
         let label = gtk::Label::new(Some(axis));
         label.set_margin_start(4);

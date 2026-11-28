@@ -1304,65 +1304,36 @@ fn build_overlays_panel(
         let syncing = syncing.clone();
         let update_history_buttons = update_history_buttons.clone();
         let redraw_canvas = redraw_canvas.clone();
-        let dragging = Rc::new(Cell::new(false));
-        let press = gtk::GestureClick::new();
-        press.set_button(1);
-        press.set_propagation_phase(gtk::PropagationPhase::Capture);
-        {
-            let session = session.clone();
+        let has_layer: Rc<dyn Fn() -> bool> = {
             let selected = selected.clone();
-            let dragging = dragging.clone();
-            press.connect_pressed(move |_, _, _, _| {
-                if selected.get().is_some() {
-                    dragging.set(true);
-                    session.borrow_mut().begin_action();
-                }
-            });
-        }
-        {
-            let session = session.clone();
-            let dragging = dragging.clone();
+            Rc::new(move || selected.get().is_some())
+        };
+        let changed: Rc<dyn Fn()> = {
             let update_history_buttons = update_history_buttons.clone();
             let redraw_canvas = redraw_canvas.clone();
-            press.connect_released(move |_, _, _, _| {
-                if dragging.replace(false) {
-                    session.borrow_mut().end_action();
-                    update_history_buttons();
-                    redraw_canvas();
-                }
-            });
-        }
-        opacity_row.add_controller(press);
-        opacity_row.connect_value_changed(move |scale| {
-            if syncing.get() {
-                return;
-            }
-            let Some(index) = selected.get() else {
-                return;
-            };
-            let value = (scale.value() as f32).clamp(0.0, 1.0);
-            let was_dragging = dragging.get();
-            {
-                let mut session = session.borrow_mut();
-                if was_dragging {
-                    session.mutate_active(move |recipe| {
-                        if let Some(overlay) = recipe.overlays.get_mut(index) {
-                            overlay.opacity = value;
-                        }
-                    });
-                } else {
-                    session.mutate(move |recipe| {
-                        if let Some(overlay) = recipe.overlays.get_mut(index) {
-                            overlay.opacity = value;
-                        }
-                    });
-                }
-            }
-            if !was_dragging {
+            Rc::new(move || {
                 update_history_buttons();
-            }
-            redraw_canvas();
-        });
+                redraw_canvas();
+            })
+        };
+        super::continuous_edit::bind_scale(
+            &opacity_row,
+            session,
+            super::continuous_edit::ScaleHooks {
+                syncing,
+                enabled: has_layer,
+                snap: None,
+                changed: changed.clone(),
+                settled: changed,
+                trace: false,
+            },
+            move |recipe, value| {
+                let Some(index) = selected.get() else { return };
+                if let Some(overlay) = recipe.overlays.get_mut(index) {
+                    overlay.opacity = (value as f32).clamp(0.0, 1.0);
+                }
+            },
+        );
     }
 
     // Position toggles align the existing overlay rectangle to the chosen

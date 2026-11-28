@@ -403,7 +403,8 @@ fn build_text_panel(
         let update_history_buttons = update_history_buttons.clone();
         let redraw_canvas = redraw_canvas.clone();
         let sync = sync.clone();
-        let typing = Rc::new(Cell::new(false));
+        // The typing burst is one continuous edit, settled by a pause.
+        let typing = Rc::new(RefCell::new(super::continuous_edit::ContinuousEdit::default()));
         let typing_source: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
         text_view.buffer().connect_changed(move |buffer| {
             if syncing.get() {
@@ -417,18 +418,13 @@ fn build_text_panel(
                 let end = buffer.end_iter();
                 buffer.text(&start, &end, false).to_string()
             };
-            {
-                let mut session = session.borrow_mut();
-                if !typing.get() {
-                    typing.set(true);
-                    session.begin_action();
-                }
-                session.mutate_active(move |recipe| {
+            typing
+                .borrow_mut()
+                .type_change(&mut session.borrow_mut(), move |recipe| {
                     if let Some(layer) = recipe.text_layers.get_mut(index) {
                         layer.text = text.clone();
                     }
                 });
-            }
             redraw_canvas();
             if let Some(previous) = typing_source.borrow_mut().take() {
                 previous.remove();
@@ -439,8 +435,8 @@ fn build_text_panel(
             let update_history_buttons = update_history_buttons.clone();
             let sync = sync.clone();
             let source = glib::timeout_add_local(Duration::from_millis(700), move || {
-                if typing.replace(false) {
-                    session.borrow_mut().end_action();
+                let settled = typing.borrow_mut().settle(&mut session.borrow_mut());
+                if settled.is_some() {
                     update_history_buttons();
                     sync();
                 }
@@ -485,63 +481,36 @@ fn build_text_panel(
         let update_history_buttons = update_history_buttons.clone();
         let redraw_canvas = redraw_canvas.clone();
         // A slider drag is one undo step, like the opacity slider.
-        let dragging = Rc::new(Cell::new(false));
-        let press = gtk::GestureClick::new();
-        press.set_button(1);
-        press.set_propagation_phase(gtk::PropagationPhase::Capture);
-        {
-            let session = session.clone();
+        let has_layer: Rc<dyn Fn() -> bool> = {
             let selected = selected.clone();
-            let dragging = dragging.clone();
-            press.connect_pressed(move |_, _, _, _| {
-                if selected.get().is_some() {
-                    dragging.set(true);
-                    session.borrow_mut().begin_action();
-                }
-            });
-        }
-        {
-            let session = session.clone();
-            let dragging = dragging.clone();
+            Rc::new(move || selected.get().is_some())
+        };
+        let changed: Rc<dyn Fn()> = {
             let update_history_buttons = update_history_buttons.clone();
             let redraw_canvas = redraw_canvas.clone();
-            press.connect_released(move |_, _, _, _| {
-                if dragging.replace(false) {
-                    session.borrow_mut().end_action();
-                    update_history_buttons();
-                    redraw_canvas();
-                }
-            });
-        }
-        size_slider.add_controller(press);
-        size_slider.connect_value_changed(move |slider| {
-            if syncing.get() {
-                return;
-            }
-            let Some(index) = selected.get() else {
-                return;
-            };
-            let size = (slider.value() / 100.0) as f32;
-            let size = size.clamp(TextLayerSpec::MIN_SIZE, TextLayerSpec::MAX_SIZE);
-            let was_dragging = dragging.get();
-            {
-                let mut session = session.borrow_mut();
-                let apply = move |recipe: &mut EditRecipe| {
-                    if let Some(layer) = recipe.text_layers.get_mut(index) {
-                        layer.size = size;
-                    }
-                };
-                if was_dragging {
-                    session.mutate_active(apply);
-                } else {
-                    session.mutate(apply);
-                }
-            }
-            if !was_dragging {
+            Rc::new(move || {
                 update_history_buttons();
-            }
-            redraw_canvas();
-        });
+                redraw_canvas();
+            })
+        };
+        super::continuous_edit::bind_scale(
+            &size_slider,
+            session,
+            super::continuous_edit::ScaleHooks {
+                syncing,
+                enabled: has_layer,
+                snap: None,
+                changed: changed.clone(),
+                settled: changed,
+                trace: false,
+            },
+            move |recipe, value| {
+                let Some(index) = selected.get() else { return };
+                if let Some(layer) = recipe.text_layers.get_mut(index) {
+                    layer.size = ((value / 100.0) as f32).clamp(TextLayerSpec::MIN_SIZE, TextLayerSpec::MAX_SIZE);
+                }
+            },
+        );
     }
 
     {
@@ -672,65 +641,36 @@ fn build_text_panel(
         let syncing = syncing.clone();
         let update_history_buttons = update_history_buttons.clone();
         let redraw_canvas = redraw_canvas.clone();
-        let dragging = Rc::new(Cell::new(false));
-        let press = gtk::GestureClick::new();
-        press.set_button(1);
-        press.set_propagation_phase(gtk::PropagationPhase::Capture);
-        {
-            let session = session.clone();
+        let has_layer: Rc<dyn Fn() -> bool> = {
             let selected = selected.clone();
-            let dragging = dragging.clone();
-            press.connect_pressed(move |_, _, _, _| {
-                if selected.get().is_some() {
-                    dragging.set(true);
-                    session.borrow_mut().begin_action();
-                }
-            });
-        }
-        {
-            let session = session.clone();
-            let dragging = dragging.clone();
+            Rc::new(move || selected.get().is_some())
+        };
+        let changed: Rc<dyn Fn()> = {
             let update_history_buttons = update_history_buttons.clone();
             let redraw_canvas = redraw_canvas.clone();
-            press.connect_released(move |_, _, _, _| {
-                if dragging.replace(false) {
-                    session.borrow_mut().end_action();
-                    update_history_buttons();
-                    redraw_canvas();
-                }
-            });
-        }
-        opacity_row.add_controller(press);
-        opacity_row.connect_value_changed(move |scale| {
-            if syncing.get() {
-                return;
-            }
-            let Some(index) = selected.get() else {
-                return;
-            };
-            let value = (scale.value() as f32).clamp(0.0, 1.0);
-            let was_dragging = dragging.get();
-            {
-                let mut session = session.borrow_mut();
-                if was_dragging {
-                    session.mutate_active(move |recipe| {
-                        if let Some(layer) = recipe.text_layers.get_mut(index) {
-                            layer.opacity = value;
-                        }
-                    });
-                } else {
-                    session.mutate(move |recipe| {
-                        if let Some(layer) = recipe.text_layers.get_mut(index) {
-                            layer.opacity = value;
-                        }
-                    });
-                }
-            }
-            if !was_dragging {
+            Rc::new(move || {
                 update_history_buttons();
-            }
-            redraw_canvas();
-        });
+                redraw_canvas();
+            })
+        };
+        super::continuous_edit::bind_scale(
+            &opacity_row,
+            session,
+            super::continuous_edit::ScaleHooks {
+                syncing,
+                enabled: has_layer,
+                snap: None,
+                changed: changed.clone(),
+                settled: changed,
+                trace: false,
+            },
+            move |recipe, value| {
+                let Some(index) = selected.get() else { return };
+                if let Some(layer) = recipe.text_layers.get_mut(index) {
+                    layer.opacity = (value as f32).clamp(0.0, 1.0);
+                }
+            },
+        );
     }
 
     for ((col, row), button) in &anchor_buttons {

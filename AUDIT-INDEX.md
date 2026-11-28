@@ -188,6 +188,7 @@
 | `text_render.rs` | 246 | Pango text measurement/render for text layers. |
 | `crop.rs` | 220 | Crop overlay + aspect presets. |
 | `undo.rs` | 46 | History/undo button wiring. |
+| `continuous_edit.rs` | 348 | **Continuous edit**: a slider drag or typing burst is one Undo step (`ContinuousEdit`, pure, table tests) and `bind_scale`, its GTK adapter (press, physical release, cancel) used by every editor slider (Adjust, Text size/opacity, Overlay opacity, Draw width/opacity). |
 | `export.rs` | 22 | Export action hookup. |
 
 ### `src/lightbox/` - full-screen viewer (root `lightbox.rs` + `include!`)
@@ -359,6 +360,7 @@ After a Folder scroll settles, a 16 ms timer prefetches ahead, capped by `Galler
 | Selection / keyboard nav | `src/grid/selection.rs` | + `window/shortcuts.rs` |
 | Lightbox / viewer | `src/lightbox.rs` (`Lightbox`), `src/lightbox/render.rs` | `lightbox/impl.rs`, decode lanes in `source.rs` |
 | Editor UI | `src/edit/editor.rs` (`EditEditor`, `build`) | panels in `edit/controls.rs`, `draw_ui.rs`, `text_ui.rs` (shared pieces in `panel_ui.rs`), `overlays_ui.rs`, `crop.rs` (all `include!`d into `editor.rs`) |
+| Editor slider or typing → Undo steps | `src/edit/continuous_edit.rs` (`bind_scale` for a `gtk::Scale`, `ContinuousEdit::type_change` + `settle` for typing) | `EditSession::begin_action`/`mutate_active`/`end_action` in `edit/model.rs`; panels never keep their own `dragging` cell; tests: `edit::continuous_edit` unit tests, display `a_scale_drag_cancelled_by_gtk_is_one_undo_step` |
 | A new edit effect / recipe field | `src/edit/model.rs` (`EditRecipe`), `src/edit/render.rs` | add to model + `render::apply_recipe`; GPU path in `edit/live_gpu.rs` |
 | Export | `src/edit/export_batch.rs`, `src/edit/export_metadata.rs` | + dialogs in `window/build.rs` (`show_photo_export_dialog`) |
 | Thumbnails / decode | `src/thumbnail.rs`, `src/thumbnail/viewer.rs` | format decoders in `thumbnail/*.rs`; display workers `thumbnail_display.rs`; CI `nef-quality-harness.yml` for NEF paths |

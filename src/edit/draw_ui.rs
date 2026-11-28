@@ -274,29 +274,42 @@ fn build_draw_panel(
         let style_sync = style_sync.clone();
         let update = update_history_buttons.clone();
         let layer = layer.clone();
-        width.connect_value_changed(move |scale| {
-            if style_sync.get() {
-                return;
-            }
-            let indices = selected_many.borrow().clone();
-            if !indices.is_empty() || selected.get().is_some() {
-                let value = (scale.value() as f32 / 1000.).clamp(0.001, 0.04);
-                session.borrow_mut().mutate(|r| {
-                    for i in &indices {
-                        if let Some(item) = r.drawings.get_mut(*i) {
-                            item.width = value;
-                        }
-                    }
-                    if indices.is_empty() {
-                        if let Some(item) = selected.get().and_then(|i| r.drawings.get_mut(i)) {
-                            item.width = value;
-                        }
-                    }
-                });
-                update();
-                layer.queue_draw();
-            }
+        let has_target: Rc<dyn Fn() -> bool> = {
+            let selected = selected.clone();
+            let selected_many = selected_many.clone();
+            Rc::new(move || !selected_many.borrow().is_empty() || selected.get().is_some())
+        };
+        let changed: Rc<dyn Fn()> = Rc::new(move || {
+            update();
+            layer.queue_draw();
         });
+        // A drag is one undo step, like every other editor slider.
+        super::continuous_edit::bind_scale(
+            &width,
+            session,
+            super::continuous_edit::ScaleHooks {
+                syncing: style_sync,
+                enabled: has_target,
+                snap: None,
+                changed: changed.clone(),
+                settled: changed,
+                trace: false,
+            },
+            move |r, value| {
+                let value = (value as f32 / 1000.).clamp(0.001, 0.04);
+                let indices = selected_many.borrow().clone();
+                for i in &indices {
+                    if let Some(item) = r.drawings.get_mut(*i) {
+                        item.width = value;
+                    }
+                }
+                if indices.is_empty() {
+                    if let Some(item) = selected.get().and_then(|i| r.drawings.get_mut(i)) {
+                        item.width = value;
+                    }
+                }
+            },
+        );
     }
     {
         let session = session.clone();
@@ -306,29 +319,42 @@ fn build_draw_panel(
         let style_sync = style_sync.clone();
         let update = update_history_buttons.clone();
         let layer = layer.clone();
-        opacity.connect_value_changed(move |scale| {
-            if style_sync.get() {
-                return;
-            }
-            let indices = selected_many.borrow().clone();
-            if !indices.is_empty() || selected.get().is_some() {
-                let value = (scale.value() / 100.) as f32;
-                session.borrow_mut().mutate(|r| {
-                    for i in &indices {
-                        if let Some(item) = r.drawings.get_mut(*i) {
-                            item.opacity = value;
-                        }
-                    }
-                    if indices.is_empty() {
-                        if let Some(item) = selected.get().and_then(|i| r.drawings.get_mut(i)) {
-                            item.opacity = value;
-                        }
-                    }
-                });
-                update();
-                layer.queue_draw();
-            }
+        let has_target: Rc<dyn Fn() -> bool> = {
+            let selected = selected.clone();
+            let selected_many = selected_many.clone();
+            Rc::new(move || !selected_many.borrow().is_empty() || selected.get().is_some())
+        };
+        let changed: Rc<dyn Fn()> = Rc::new(move || {
+            update();
+            layer.queue_draw();
         });
+        // A drag is one undo step, like every other editor slider.
+        super::continuous_edit::bind_scale(
+            &opacity,
+            session,
+            super::continuous_edit::ScaleHooks {
+                syncing: style_sync,
+                enabled: has_target,
+                snap: None,
+                changed: changed.clone(),
+                settled: changed,
+                trace: false,
+            },
+            move |r, value| {
+                let value = (value / 100.) as f32;
+                let indices = selected_many.borrow().clone();
+                for i in &indices {
+                    if let Some(item) = r.drawings.get_mut(*i) {
+                        item.opacity = value;
+                    }
+                }
+                if indices.is_empty() {
+                    if let Some(item) = selected.get().and_then(|i| r.drawings.get_mut(i)) {
+                        item.opacity = value;
+                    }
+                }
+            },
+        );
     }
 
     let display = {

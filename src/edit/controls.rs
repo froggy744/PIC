@@ -414,113 +414,38 @@ fn connect_scale(
     default_value: f64,
     assign: impl Fn(&mut EditRecipe, f32) + 'static,
 ) {
-    let dragging = Rc::new(Cell::new(false));
-    let action_start_recipe = Rc::new(RefCell::new(None::<EditRecipe>));
-    let finish_action: Rc<dyn Fn()> = {
-        let session = session.clone();
-        let dragging = dragging.clone();
-        let action_start_recipe = action_start_recipe.clone();
+    add_scale_default_affordance(scale, default_value);
+    // value_changed already queues the final full-resolution recipe; settling
+    // the drag only closes its undo action.
+    let changed: Rc<dyn Fn()> = {
         let update_history = update_history.clone();
         Rc::new(move || {
-            if dragging.replace(false) {
-                let start = action_start_recipe.borrow_mut().take();
-                let changed = scale_action_changed(start, &session.borrow().recipe);
-                session.borrow_mut().end_action();
-                update_history();
-                // value_changed already queued the final full-resolution recipe.
-                // Releasing the slider only closes its undo action.
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!("PIC_EDIT slider_action_end changed={changed}");
-                }
-            }
+            update_history();
+            queue_preview();
         })
     };
-    add_scale_default_affordance(scale, default_value);
-
-    let press = gtk::GestureClick::new();
-    press.set_button(1);
-    press.set_propagation_phase(gtk::PropagationPhase::Capture);
-    {
-        let session = session.clone();
-        let dragging = dragging.clone();
-        let action_start_recipe = action_start_recipe.clone();
-        press.connect_pressed(move |_, _, _, _| {
-            dragging.set(true);
-            action_start_recipe.replace(Some(session.borrow().recipe.clone()));
-            session.borrow_mut().begin_action();
-            if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!("PIC_EDIT slider_action_begin");
-            }
-        });
-    }
-    {
-        let finish_action = finish_action.clone();
-        press.connect_released(move |_, _, _, _| {
-            finish_action();
-        });
-    }
-    scale.add_controller(press);
-
-    // GtkScale's internal drag gesture can cancel a sibling GestureClick once
-    // the pointer moves. This capture controller still sees the physical
-    // release, ensuring the draft settles to a source-resolution render.
-    let release = gtk::EventControllerLegacy::new();
-    release.set_propagation_phase(gtk::PropagationPhase::Capture);
-    {
-        let finish_action = finish_action.clone();
-        release.connect_event(move |_, event| {
-            if event.event_type() == gtk::gdk::EventType::ButtonRelease
-                && event
-                    .downcast_ref::<gtk::gdk::ButtonEvent>()
-                    .is_some_and(|button| button.button() == 1)
-            {
-                finish_action();
-            }
-            glib::Propagation::Proceed
-        });
-    }
-    scale.add_controller(release);
-
-    scale.connect_value_changed(move |scale| {
-        if syncing.get() {
-            return;
-        }
-        if dragging.get() {
-            let adjustment = scale.adjustment();
-            if let Some(snapped) = slider_detent_value(
-                scale.value(),
-                default_value,
-                adjustment.lower(),
-                adjustment.upper(),
-                adjustment.step_increment(),
-            ) {
-                if (scale.value() - snapped).abs() > f64::EPSILON {
-                    // Set the exact neutral value when the thumb crosses its
-                    // detent. The nested value-changed signal applies that value
-                    // to the edit recipe and queues the matching preview.
-                    scale.set_value(snapped);
-                    return;
-                }
-            }
-        }
-        let value = scale.value() as f32;
-        if dragging.get() {
-            session
-                .borrow_mut()
-                .mutate_active(|recipe| assign(recipe, value));
-            update_history();
-        } else {
-            // Keyboard steps and deliberate wheel steps remain normal single
-            // undoable actions; only a continuous mouse drag is coalesced.
-            session.borrow_mut().mutate(|recipe| assign(recipe, value));
-            update_history();
-        }
-        queue_preview();
-    });
-}
-
-fn scale_action_changed(start_recipe: Option<EditRecipe>, current_recipe: &EditRecipe) -> bool {
-    start_recipe.is_some_and(|start| start != *current_recipe)
+    super::continuous_edit::bind_scale(
+        scale,
+        session,
+        super::continuous_edit::ScaleHooks {
+            syncing,
+            enabled: Rc::new(|| true),
+            snap: Some(Rc::new(move |scale: &gtk::Scale| {
+                let adjustment = scale.adjustment();
+                slider_detent_value(
+                    scale.value(),
+                    default_value,
+                    adjustment.lower(),
+                    adjustment.upper(),
+                    adjustment.step_increment(),
+                )
+            })),
+            changed,
+            settled: update_history,
+            trace: true,
+        },
+        move |recipe, value| assign(recipe, value as f32),
+    );
 }
 
 #[cfg(test)]
@@ -534,17 +459,6 @@ mod scale_action_tests {
         assert_eq!(slider_detent_value(0.06, 0.0, -1.0, 1.0, 0.1), None);
         assert_eq!(slider_detent_value(0.0, 0.0, 0.0, 1.0, 0.1), None);
         assert_eq!(slider_detent_value(0.0, 0.0, -1.0, 1.0, 0.0), Some(0.0));
-    }
-
-    #[test]
-    fn settle_render_is_requested_only_after_a_real_slider_change() {
-        let initial = EditRecipe::default();
-        assert!(!scale_action_changed(Some(initial.clone()), &initial));
-        assert!(!scale_action_changed(None, &initial));
-
-        let mut changed = initial.clone();
-        changed.exposure = -0.03;
-        assert!(scale_action_changed(Some(initial), &changed));
     }
 }
 

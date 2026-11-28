@@ -1172,7 +1172,13 @@ impl EditSession {
         self.active_action = Some(self.recipe.clone());
     }
 
+    /// Apply one intermediate value of a continuous action. With no action
+    /// open (it was closed by Undo, Redo or another edit) this opens one, so
+    /// the change still reaches Undo.
     pub fn mutate_active(&mut self, update: impl FnOnce(&mut EditRecipe)) {
+        if self.active_action.is_none() {
+            self.active_action = Some(self.recipe.clone());
+        }
         update(&mut self.recipe);
         self.redo.clear();
     }
@@ -1182,18 +1188,21 @@ impl EditSession {
         self.active_action.is_some()
     }
 
-    pub fn end_action(&mut self) {
+    /// Close the open continuous action. True when it added an Undo step
+    /// (the recipe changed since the action began).
+    pub fn end_action(&mut self) -> bool {
         let Some(previous) = self.active_action.take() else {
-            return;
+            return false;
         };
         if previous == self.recipe {
-            return;
+            return false;
         }
         self.undo.push(previous);
         if self.undo.len() > 100 {
             self.undo.remove(0);
         }
         self.redo.clear();
+        true
     }
 
     pub fn undo(&mut self) -> bool {
@@ -1459,6 +1468,20 @@ mod tests {
         assert!(session.redo());
         assert_eq!(session.recipe.exposure, 0.8);
         assert!(session.recipe.encode().contains("exposure=0.8000"));
+    }
+
+    #[test]
+    fn continuous_change_with_no_open_action_still_reaches_undo() {
+        // A panel whose action was already closed (by Undo, or a lost
+        // release) must not write past the history.
+        let mut session = EditSession::new(EditRecipe::default());
+        session.mutate_active(|recipe| recipe.exposure = 0.4);
+        session.mutate_active(|recipe| recipe.exposure = 0.6);
+        session.end_action();
+
+        assert!(session.undo());
+        assert_eq!(session.recipe.exposure, 0.0);
+        assert!(!session.undo());
     }
 
     #[test]

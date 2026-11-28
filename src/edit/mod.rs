@@ -1,4 +1,5 @@
 pub mod auto_develop;
+mod continuous_edit;
 mod editor;
 pub mod export_batch;
 #[cfg(debug_assertions)]

@@ -8,7 +8,7 @@ The single source of truth for the deepening candidates from the architecture re
 - Round four, candidates 21-29: [`architecture-review-2026-11-26-round4.html`](architecture-review-2026-11-26-round4.html), taken at `main` @ `61873093`. 21, 23, 24 merged; 25-29 and 22 done as small fixes or closed; see "Round four" below.
 - Render pipeline project (22 + 29 + 25 as one), candidates A-F: [`architecture-review-2026-11-27-render-pipeline.html`](architecture-review-2026-11-27-render-pipeline.html), taken at `main` @ `244645eb`, with export benchmarks. Branch `refactor/render-pipeline`; see "Render pipeline project" below.
 
-- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31 merged; 32-37 open (suspected bugs read from code, not reproduced unless noted).
+- Round five, candidates 31-37: [`architecture-review-2026-11-28-round5.html`](architecture-review-2026-11-28-round5.html), taken at `main` @ `62310c17`. 31 merged; 32 in progress; 33-37 open (suspected bugs read from code, not reproduced unless noted).
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
@@ -64,7 +64,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 29 | Render from a cached preview (keep the chokepoint whole) | Speculative | closed, no change (`1005cbda`); moved to the render pipeline project (A) | | |
 | 30 | Lightbox zoom shows the NEF sensor develop | Worth exploring | saved for later (2026-11-27), not started | | `src/thumbnail/viewer.rs` (`decode_local_raw_for_viewer`, `viewer_nef_source_cache_lookup`), `src/lightbox/render.rs` (`viewer_zoom_decode_target`) |
 | 31 | Photo rotation re-projects the Recipe (round five) | Strong | merged | fast-forward of `fix/photo-rotation-recipe` (owner checked by hand 2026-11-28) | `src/edit/rotation.rs` (pure), `db::rotate_photo` |
-| 32 | Continuous edit: one undo rule for slider drags | Strong | open (next) | | `src/edit/controls.rs`, `overlays_ui.rs`, `text_ui.rs`, `draw_ui.rs`, `model.rs` (`mutate_active`) |
+| 32 | Continuous edit: one undo rule for slider drags | Strong | in progress | `refactor/continuous-edit` | `src/edit/continuous_edit.rs` (pure `ContinuousEdit` + adapter `bind_scale`), `model.rs` (`mutate_active`) |
 | 33 | Outside photo capabilities (one table per photo kind) | Strong | open | | `src/photo_object.rs`, `src/infobar.rs`, `src/window/photo_actions.rs`, `build.rs:4574/4609` |
 | 34 | Export run returns a typed outcome | Strong | open | | `src/window/build.rs:4120-4560`, `src/edit/export_batch.rs` |
 | 35 | Layer placement shared by Text and Overlays (after 32) | Worth exploring | open | | `src/edit/overlays_ui.rs`, `text_ui.rs`, `model.rs` |
@@ -951,6 +951,25 @@ Suspected bugs, read from code; reproduce each red first. Before/after diagrams 
 - **34:** single-photo export rewrites the batch loop in `build.rs`; cancellation is found by `contains("cancelled")` (`build.rs:4409`), so a failure mentioning "cancelled" reads as "Export stopped" (suspected).
 - **35-37:** see the report. 37 suspects "Remove from Library" (`availability.rs:216`) bypasses `PhotoChange::Trashed`.
 - Not carded: typed settings (bookshelf background default differs, `settings.rs:1630` vs `:1678`); Print renders full size, then shrinks (`print.rs:388`).
+
+### 32 · Continuous edit (round five, started 2026-11-28)
+Branch `refactor/continuous-edit` from `main` @ `35c752bd`. Owner: no merge before review.
+
+**Decisions (2026-11-28, by the owner):**
+1. **Scope.** The editor's sliders: Adjust (`controls.rs`), Text size and opacity, Overlay opacity, and Draw width and opacity (they had one Undo step per tick). Text typing too (decision 4). Out of scope: the Text/Overlay X/Y offset spins (candidate 35; they can use `ContinuousEdit::type_change` + `settle` as a pause rule) and the canvas drags (`GestureDrag`, whose `drag-end` also runs when GTK cancels).
+2. **Shape.** Pure `ContinuousEdit` (`press`, `change`, `type_change`, `settle -> Option<bool>`) against an `EditSession`, plus one GTK adapter `bind_scale(scale, session, ScaleHooks { syncing, enabled, snap, changed, settled, trace }, apply)` in the new `edit/continuous_edit.rs`. The adapter installs the press gesture, the capture-phase physical-release fallback (`EventControllerLegacy`, before only in `controls.rs`), a `cancel` handler and `value-changed`. Every panel's own `dragging` cell is gone.
+3. **`mutate_active` with no open action opens one**, so a change after Undo, Redo or a lost release still reaches Undo (before: written to the recipe past the history). `end_action` now says whether it added a step.
+4. **Typing** uses the same module; the 700 ms pause timer stays in `text_ui.rs` and calls `settle`.
+5. **The Adjust detent** stays in `controls.rs` and is passed in as `snap` (applied only while held, as before).
+6. **Tests** below; no merge before the owner's review.
+7. **A cancelled or lost release keeps the value reached** and closes it as one step (no snap back).
+8. `PICASA_TRACE` `PIC_EDIT slider_action_begin/end changed=` unchanged, still from the Adjust sliders only (`trace: true`).
+
+**Bugs.** (a) Draw width/opacity: one Undo step per tick, so a single drag could push the earlier history off the 100-step limit (confirmed in code; table test `a_long_drag_keeps_the_earlier_history`). (b) `mutate_active` with no open action skipped Undo: unit test `continuous_change_with_no_open_action_still_reaches_undo` (`edit::model`), red before the fix, green after. (c) Text/Overlay sliders without the release fallback: a cancelled `GestureClick` left `dragging` set, so later keyboard steps joined the stale action, or after an Undo skipped Undo altogether (b). Display test `a_scale_drag_cancelled_by_gtk_is_one_undo_step` drives the adapter's real gesture (`pressed`, values, `cancel`, then a keyboard step); it was not run against the old panels (GTK4 cannot synthesise the pointer drag that cancels the click), so (c) is fixed by construction, not seen red.
+
+**Verification (2026-11-28):** `cargo check --locked --all-targets` clean; `edit::` unit tests 249 pass (7 new in `edit::continuous_edit`, 1 new in `edit::model`; the old `scale_action_changed` test went with the helper). Display tests (Xvfb, one process each): `a_scale_drag_cancelled_by_gtk_is_one_undo_step`, `history_jump_drops_the_drawing_selection`, `film_filter_labels_fit_compact_tiles` and `editor_toolbar_has_tool_tabs_and_sidebar_keeps_crop_workspace` pass (the last was listed as failing on `main` under the render pipeline project; it passes here, not investigated). GUI harness `editing` not run (it stops at the pre-existing "Exposure change to render" timeout before its slider drag checks). Not checked by hand yet.
+
+**Open at merge:** an owner rule (`continuous-edit`) so that no panel calls `begin_action`/`mutate_active` for a slider again; the canvas drags in `draw_ui.rs`/`overlays_ui.rs` still call them directly.
 
 ### 31 · Photo rotation re-projects the Recipe (round five, started 2026-11-28)
 Round five report (candidates 31-37) was a scratchpad HTML; only 31 is started. Owner: correctness only, no merge or 32 before review.

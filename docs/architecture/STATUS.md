@@ -69,7 +69,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 34 | Export run returns a typed outcome | Strong | parked by the owner (2026-11-28; Friday's render pipeline export work covers most of it) | | `src/window/build.rs:4120-4560`, `src/edit/export_batch.rs` |
 | 35 | Layer placement shared by Text and Overlays (after 32) | Worth exploring | parked by the owner (2026-11-28) | | `src/edit/overlays_ui.rs`, `text_ui.rs`, `model.rs` |
 | 36 | RAW decode plan for the viewer (with 30) | Worth exploring | parked by the owner (2026-11-28) | | `src/thumbnail/viewer.rs`, `src/lightbox/render.rs` |
-| 37 | Photo file operations return a Photo change | Worth exploring | small fix on `fix/remove-from-library-photo-change`; the operations module parked | `fix/remove-from-library-photo-change` | `src/window/photo_actions.rs`, `src/window/availability.rs` |
+| 37 | Photo file operations return a Photo change | Worth exploring | small fix merged (fast-forward of `fix/remove-from-library-photo-change`, `e03f5c50`); the operations module parked | | `src/window/photo_actions.rs`, `src/window/availability.rs` |
 
 ## Outstanding work
 

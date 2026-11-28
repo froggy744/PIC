@@ -56,6 +56,14 @@ Use the sidebar toggle to hide or reveal the sidebar. Hover behavior and other i
 
 ![PIC V1 — sidebar hidden](../../screenshots/screenshots-V1/sidebar%20hidden.jpg)
 
+## Open photos from outside the library
+
+Drag photos or a folder from the file manager onto the PIC window, or choose **Open With PIC**, to open them in the viewer. Photos already in the library open as themselves; others open as photos outside the library, without being added to it. One photo opens among the other photos in its folder, several open as that set, and a folder opens its photos.
+
+![PIC v1.0.5 — dragging a photo from Files onto the grid](../../screenshots/v1.05/drag-drop-quick-edit.jpg)
+
+Use **Edit** for a quick fix such as cropping a screenshot: **Save Copy** writes the edited photo as `<name>_edit` next to the original (PNG and WebP keep their format, others are saved as JPEG) and never overwrites anything. Copy, Print and Export also work for these photos. Drops are refused while the editor or a collage is open, and images dragged from a web browser without a local file are ignored.
+
 ## New in v1.0.5
 
 ![PIC v1.0.5 — Focus mode](../../screenshots/v1.05/focus-mode.jpg)

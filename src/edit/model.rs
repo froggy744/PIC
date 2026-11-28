@@ -1131,6 +1131,19 @@ impl EditSession {
         }
     }
 
+    /// Re-express every state the session can return to (current, Undo,
+    /// Redo, an open drag) in a new frame, without adding a step. Used when
+    /// the library rotation changes under the editor: the rotation is saved at
+    /// once and is not undoable, so Undo must not bring back the old frame.
+    pub fn reframe(&mut self, mut update: impl FnMut(&mut EditRecipe)) {
+        update(&mut self.recipe);
+        self.undo.iter_mut().for_each(&mut update);
+        self.redo.iter_mut().for_each(&mut update);
+        if let Some(active) = self.active_action.as_mut() {
+            update(active);
+        }
+    }
+
     pub fn replace(&mut self, next: EditRecipe) {
         self.end_action();
         if self.recipe == next {

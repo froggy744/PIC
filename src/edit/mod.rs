@@ -10,6 +10,7 @@ pub mod model;
 pub mod overlays;
 pub mod quick_save;
 pub mod render;
+pub mod rotation;
 pub mod text_render;
 pub mod tone;
 

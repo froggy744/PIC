@@ -61,6 +61,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 28 | Creative look choice and layer selection in EditSession | Worth exploring | fixed (`65b34d44`) | | |
 | 29 | Render from a cached preview (keep the chokepoint whole) | Speculative | closed, no change (`1005cbda`); moved to the render pipeline project (A) | | |
 | 30 | Lightbox zoom shows the NEF sensor develop | Worth exploring | saved for later (2026-11-27), not started | | `src/thumbnail/viewer.rs` (`decode_local_raw_for_viewer`, `viewer_nef_source_cache_lookup`), `src/lightbox/render.rs` (`viewer_zoom_decode_target`) |
+| 31 | Photo rotation re-projects the Recipe (round five) | Strong | merged | fast-forward of `fix/photo-rotation-recipe` (owner checked by hand 2026-11-28) | `src/edit/rotation.rs` (pure), `db::rotate_photo` |
 
 ## Outstanding work
 
@@ -934,6 +935,15 @@ Owner's plan: 27/28/26/25 as small bug fixes, not deepening refactors; 29 and 22
 - **#268 · A half-typed search survives the return to the grid.** Two gaps. (1) Closing the viewer after typing over it kept the query: the viewer's close preparation (`build.rs`) now calls `clear_search_after_result`, as picking a suggested photo does, so the grid returns on the viewed photo's folder. Display test `closing_the_viewer_clears_a_half_typed_search` (`immersive_tests.rs`), red before, green after. (2) After a click on a result tile focus left the search field, so Escape did nothing: new `KeyCommand::ClearSearch` (`key_dispatch.rs`, context `search_active`) after the viewer's Escape and before Immersive Mode, only when no text field has focus; `shortcuts.rs` emits the entry's `stop-search`. Table cases in `escape_closes_one_layer_at_a_time`. Clicking a tile and scrolling keeps the results (by design). `search_entry_slot` moved above the shortcuts include in `build.rs`.
 
 **Verification (2026-11-27):** `cargo check` clean; `infobar::presentation` 6/6 and `key_dispatch` 5/5 unit tests pass; the display test above passes (Xvfb). Owner script: the 4 known `open_files.rs` hits plus `build.rs:3333` `[front-surface]`, both identical on `main` before this change. The Escape-after-tile-click path has no window test.
+
+### 31 · Photo rotation re-projects the Recipe (round five, started 2026-11-28)
+Round five report (candidates 31-37) was a scratchpad HTML; only 31 is started. Owner: correctness only, no merge or 32 before review.
+
+- **Bug, reproduced red:** the Rotate button (grid, viewer, editor; all via `rotate_current_photo`) wrote only the library rotation. The renderer rotates first, so a cropped photo turned showed another region (40×24 test image: 12×20 output, wrong pixels) and drawings moved; the editor re-projected drawings only, as an undoable step, so Undo or Back left them turned against the photo. Test `edit::rotation::tests::a_quarter_turn_turns_the_edited_photo_as_it_was`.
+- **Frame rules:** crop (straightened frame) and drawings (cropped frame) are content and turn with the photo; straighten commutes with a quarter turn and is unchanged; text and overlays sit on the output frame (anchor + point) and stay upright where they are; text size (fraction of height) and overlay width (fraction of width) are not rescaled, as before.
+- **Decisions:** one pure `rotate_recipe`; `db::rotate_photo` saves rotation and recipe in one transaction (replaces `set_rotation`); rotation stays instant and not undoable; the editor calls `EditSession::reframe`, which turns current, Undo, Redo and an open drag without adding a step, so Undo, Redo, Back and Done all stay in the saved frame. Stored recipes keep their format; empty stays empty.
+- **Tests:** 5 in `edit::rotation` (render parity both directions, 4×90° identity, Undo/Redo, saved together, old recipes), display test `rotating_in_the_viewer_refreshes_the_viewer_properties` now checks the saved crop turned; `edit::model` 48 pass.
+- **Risks:** text/overlay pixel size changes on landscape↔portrait (unchanged behaviour); rotating while the editor's crop tool is open is not re-checked; render parity allows 12/255 anti-aliasing difference on strokes.
 
 ### 30 · Lightbox zoom shows the NEF sensor develop (saved for later, 2026-11-27)
 Owner: "save for later candidate". Nothing changed in code.

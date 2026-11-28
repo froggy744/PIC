@@ -2776,9 +2776,11 @@ pub fn build(
             let rotation = rotation.rem_euclid(360);
             let delta = (rotation - active_rotation.get()).rem_euclid(360);
             if delta != 0 {
-                session.borrow_mut().mutate(|recipe| {
-                    super::model::remap_drawings_for_rotation(&mut recipe.drawings, delta)
-                });
+                // The saved recipe was turned with the rotation
+                // (`db::rotate_photo`); turn every editor state the same way.
+                session
+                    .borrow_mut()
+                    .reframe(|recipe| super::rotation::rotate_recipe(recipe, delta));
                 update_history_buttons();
             }
             active_rotation.set(rotation);

@@ -1086,15 +1086,17 @@ pub fn any_edited(connection: &Connection, ids: &[i64]) -> Result<bool> {
     Ok(false)
 }
 
-pub fn set_rotation(connection: &Connection, id: i64, rotation: i32) -> Result<()> {
+/// A quarter turn: the new library rotation and the Recipe re-projected for
+/// it (`edit::rotation`) are saved together, or not at all.
+pub fn rotate_photo(connection: &Connection, id: i64, rotation: i32, recipe: &str) -> Result<()> {
     let normalized = rotation.rem_euclid(360);
     if ![0, 90, 180, 270].contains(&normalized) {
         anyhow::bail!("invalid rotation: {rotation}");
     }
     let transaction = connection.unchecked_transaction()?;
     let changed = transaction.execute(
-        "UPDATE photos SET rotation = ?1 WHERE id = ?2 AND rotation != ?1 AND trashed=0",
-        params![normalized, id],
+        "UPDATE photos SET rotation = ?1, edit_recipe = ?2 WHERE id = ?3 AND trashed=0",
+        params![normalized, recipe, id],
     )?;
     if changed > 0 {
         record_edit(&transaction, id, "edit", None)?;

@@ -1636,9 +1636,15 @@ fn rotate_current_photo(
     counter_clockwise: bool,
 ) -> Option<(crate::photo_object::PhotoObject, i32)> {
     let photo = context.info.current_photo()?;
-    let rotation = (photo.rotation() + if counter_clockwise { 270 } else { 90 }) % 360;
+    let rotation = crate::edit::rotation::rotated(photo.rotation(), counter_clockwise);
+    let recipe = crate::edit::rotation::rotate_encoded_recipe(
+        &photo.edit_recipe(),
+        rotation - photo.rotation(),
+    );
 
-    if let Err(error) = db::set_rotation(&context.connection.borrow(), photo.id(), rotation) {
+    if let Err(error) =
+        db::rotate_photo(&context.connection.borrow(), photo.id(), rotation, &recipe)
+    {
         eprintln!("Could not rotate photo: {error}");
         return None;
     }
@@ -3637,6 +3643,18 @@ mod photo_actions_tests {
                     (1,'/photos/gallery.jpg',1),(2,'/photos/viewer.jpg',1);",
             )
             .unwrap();
+        // The viewer's photo is cropped; the turn must carry the crop.
+        let cropped = crate::edit::EditRecipe {
+            crop: crate::edit::model::CropRect {
+                left: 0.1,
+                top: 0.2,
+                right: 0.6,
+                bottom: 0.9,
+            },
+            ..Default::default()
+        }
+        .encode();
+        db::set_edit_recipe(&connection.borrow(), 2, &cropped).unwrap();
         let object = |id| {
             crate::photo_object::PhotoObject::from_photo(
                 &db::photo(&connection.borrow(), id).unwrap().unwrap(),
@@ -3672,7 +3690,13 @@ mod photo_actions_tests {
 
         let (rotated, rotation) = rotate_current_photo(&context, false).unwrap();
         assert_eq!((rotated.id(), rotation), (2, 90));
-        assert_eq!(db::photo(&connection.borrow(), 2).unwrap().unwrap().rotation, 90);
+        let saved = db::photo(&connection.borrow(), 2).unwrap().unwrap();
+        assert_eq!(saved.rotation, 90);
+        assert_eq!(
+            saved.edit_recipe,
+            crate::edit::rotation::rotate_encoded_recipe(&cropped, 90),
+            "the saved crop turns with the photo"
+        );
         assert_eq!(
             properties.photo_for_test(PropertiesSurface::Lightbox).map(|photo| photo.id()),
             Some(2),

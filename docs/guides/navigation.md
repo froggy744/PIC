@@ -56,6 +56,20 @@ Use the sidebar toggle to hide or reveal the sidebar. Hover behavior and other i
 
 ![PIC V1 — sidebar hidden](../../screenshots/screenshots-V1/sidebar%20hidden.jpg)
 
+## New in v1.0.5
+
+![PIC v1.0.5 — Focus mode](../../screenshots/v1.05/focus-mode.jpg)
+
+- **Honeycomb** joins Grid, Photo Wall and Masonry as a gallery layout.
+- **Focus mode**: the toggle left of the calendar button in All Photos dims every photo except the one under the pointer or the selected one. Arrow keys and clicks move the lit photo. The setting is saved per library.
+- **Properties panel**: the InfoBar's Properties button opens a panel beside the gallery or the viewer. It shows the photo's preview, name, date, stars and favourite, its camera, and collapsible **Details**, **Location**, **Tags & albums** and **Notes** sections.
+- **InfoBar**: **Draw** opens the editor straight on its Draw tab, and **Libraries** switches library in one click. In the ⋮ menu, **Show in InfoBar** chooses which buttons appear and, with Move up and Move down, their order.
+- **Viewer Up / Down** moves to the next or previous sidebar destination with photos (Library views, albums, folder rows), in sidebar order. Alt, Ctrl and other modifiers with the arrow keys no longer change the photo.
+- **Search** also matches capture dates ("May 2023", "14/05/2023") and album names. Searching over the viewer suggests photos from the open photo's folder. Closing the viewer, or Esc after clicking a result, clears the search.
+- **Masonry**: Left / Right move to the tile beside on screen.
+
+![PIC v1.0.5 — InfoBar with Edit, Draw and Libraries](../../screenshots/v1.05/infobar-edit-draw-libraries.jpg)
+
 **Next:** [Folders →](folders.md)
 
 ## V1 gallery choices

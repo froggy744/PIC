@@ -4,6 +4,49 @@ A tour of PIC's actual Linux interface, captured from the V1.01 demo library. Th
 
 [Download PIC](https://github.com/froggy744/PIC/releases/latest) · [Getting started](guides/getting-started.md) · [Back to the main README](../README.md)
 
+## New in v1.0.5
+
+PIC v1.0.5 adds Smart Albums, Focus mode, a redesigned Properties panel and photo editor, quick library switching and a customisable InfoBar. See the [v1.0.5 release notes](releases/v1.0.5.md) for everything that changed.
+
+<p align="center">
+  <img src="../screenshots/v1.05/main-honeycomb-filters.jpg" alt="Honeycomb layout with the metadata filter row and date breadcrumb" width="100%">
+</p>
+
+<p align="center">
+  <img src="../screenshots/v1.05/properties.jpg" alt="The viewer with the redesigned Properties panel" width="100%">
+</p>
+
+<p align="center">
+  <img src="../screenshots/v1.05/focus-mode.jpg" alt="Focus mode dims every photo except the one under the pointer" width="100%">
+</p>
+
+<p align="center">
+  <img src="../screenshots/v1.05/smart-album-rules.jpg" alt="New Smart Album rules dialog" width="49%">
+  <img src="../screenshots/v1.05/context-menu-in-albums.jpg" alt="In Albums in the photo menu" width="49%">
+</p>
+
+<p align="center">
+  <img src="../screenshots/v1.05/editor-tools.jpg" alt="Editor Tools panel" width="32%">
+  <img src="../screenshots/v1.05/editor-text-layers.jpg" alt="Editor Text panel with Text Layers" width="32%">
+  <img src="../screenshots/v1.05/editor-draw-layers.jpg" alt="Editor Draw panel with Drawings" width="32%">
+</p>
+
+<p align="center">
+  <img src="../screenshots/v1.05/metadata-filters.jpg" alt="Metadata filters with tag counts" width="100%">
+</p>
+
+<p align="center">
+  <img src="../screenshots/v1.05/quick-switch-libraries.jpg" alt="Quick library switching from the InfoBar" width="24%">
+  <img src="../screenshots/v1.05/show-in-infobar-order.jpg" alt="Show in InfoBar with Move up and Move down" width="24%">
+  <img src="../screenshots/v1.05/sidebar.jpg" alt="The sidebar" width="24%">
+</p>
+
+<p align="center">
+  <img src="../screenshots/v1.05/infobar-edit-draw-libraries.jpg" alt="InfoBar with Edit, Draw and Libraries" width="70%">
+</p>
+
+**Highlights:** Smart Albums · Focus mode · Honeycomb layout · Properties panel · Editor layers for text, overlays and drawings · Quick library switching · Custom InfoBar order
+
 ## Photo browsing
 
 Browse the library in Photo Wall and open a photograph in the fullscreen viewer. The viewer supports zoom and navigation while keeping the library close at hand.
@@ -20,7 +63,7 @@ Browse the library in Photo Wall and open a photograph in the fullscreen viewer.
   <img src="../screenshots/v1.01/sidebar-autohide.jpg" alt="PIC gallery with the sidebar hidden" width="100%">
 </p>
 
-**Highlights:** Grid, Photo Wall and Masonry layouts · Fullscreen viewing · Zoom and navigation · Optional sidebar visibility
+**Highlights:** Grid, Photo Wall, Masonry and Honeycomb layouts · Fullscreen viewing · Zoom and navigation · Optional sidebar visibility
 
 ## Albums and Cover Flow
 

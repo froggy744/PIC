@@ -39,11 +39,11 @@ Don't want to drag? Choose an **aspect ratio** and the crop box snaps to it:
 | **16:9** | Widescreen — TVs and monitors |
 | **A4 / US Letter** | Printing on standard paper |
 
-Alongside the ratios you can also flip the **Orientation** between **Landscape** and **Portrait** with one click.
+Alongside the ratios you can also flip the **Orientation** between **Landscape** and **Portrait** with one click. Since v1.0.5 the presets sit in rows of three on the Crop tab, with Landscape and Portrait as a pair and **Reset Crop** beside **Apply Crop**.
 
 ## Straighten — Level It Perfectly
 
-Is the horizon doing its own thing? The **Straighten slider** rotates the photo in tiny amounts while you watch. Combined with the grid overlay, getting a perfectly level shot takes five seconds.
+Is the horizon doing its own thing? The **Straighten slider** on the Crop tab (shown in degrees) rotates the photo in tiny amounts while you watch. Combined with the grid overlay, getting a perfectly level shot takes five seconds.
 
 Use the shared zoom slider to inspect framing more closely. Crop and straighten remain part of the edit recipe; export creates a new image with them applied.
 

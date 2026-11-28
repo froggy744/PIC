@@ -23,9 +23,9 @@
 
 ## Download PIC
 
-**[Get PIC v1.0.4](https://github.com/froggy744/PIC/releases/tag/v1.0.4)** · [AppImage and Flatpak downloads](https://github.com/froggy744/PIC/releases/tag/v1.0.4) · [Source (tar.gz)](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.4.tar.gz) · [Source (zip)](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.4.zip) · [Installation guide](docs/build/linux.md)
+**[Get PIC v1.0.5](https://github.com/froggy744/PIC/releases/tag/v1.0.5)** · [AppImage and Flatpak downloads](https://github.com/froggy744/PIC/releases/tag/v1.0.5) · [Source (tar.gz)](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.5.tar.gz) · [Source (zip)](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.5.zip) · [Installation guide](docs/build/linux.md)
 
-The latest release is **v1.0.4**. Find available packages on the [GitHub release page](https://github.com/froggy744/PIC/releases/tag/v1.0.4). PIC is Linux-focused; Windows builds are experimental and are not a supported V1 download.
+The latest release is **v1.0.5**. Find available packages on the [GitHub release page](https://github.com/froggy744/PIC/releases/tag/v1.0.5). PIC is Linux-focused; Windows builds are experimental and are not a supported V1 download.
 
 <p align="center">
   <img src="docs/assets/github/pic-hero.jpg" alt="PIC photo library and editing experience" width="100%">
@@ -33,15 +33,25 @@ The latest release is **v1.0.4**. Find available packages on the [GitHub release
 
 ## A photo library made for browsing
 
-- **Browse** — Grid, Photo Wall and Masonry layouts, plus a fullscreen viewer with zoom and navigation.
-- **Organise** — Albums, favourites, star ratings, search, sorting, filters and multiple libraries.
-- **Edit** — Exposure and colour adjustments, filters, crop and straighten, drawing, text and overlays. Recipes keep edits non-destructive; export makes a separate file.
+- **Browse** — Grid, Photo Wall, Masonry and Honeycomb layouts, Focus mode for culling, plus a fullscreen viewer with zoom and navigation.
+- **Organise** — Albums and rule-based Smart Albums, favourites, star ratings, tags, metadata filters, search by name, date or album, sorting, and multiple libraries with one-click switching.
+- **Edit** — Exposure and colour adjustments, filters, crop and straighten, and layers of drawings, text and overlays. Recipes keep edits non-destructive; export makes a separate file.
 - **Create** — Grid, Mosaic and Smart AI collages, screensavers, printing and export.
 - **Make it yours** — Appearance themes, album covers, Bookshelf and Cover Flow layouts. The screensaver also offers a photo Cover Flow.
 
 Import from folders and supported cameras or SD cards, and browse supported SMB/NFS network shares. PIC does not upload your collection to a cloud service. PIC is a photo manager, not a backup solution; keep separate backups of your original photographs.
 
 ## See PIC in action
+
+**New in v1.0.5:** Smart Albums, Focus mode, a redesigned Properties panel and photo editor, quick library switching and much more. Read the [v1.0.5 release notes](docs/releases/v1.0.5.md).
+
+<p align="center">
+  <img src="screenshots/v1.05/main-honeycomb-filters.jpg" alt="PIC v1.0.5 in Honeycomb layout with the metadata filter row" width="100%">
+</p>
+
+<p align="center">
+  <img src="screenshots/v1.05/properties.jpg" alt="PIC v1.0.5 viewer with the redesigned Properties panel" width="100%">
+</p>
 
 Browse a colourful collection in Photo Wall:
 
@@ -59,7 +69,7 @@ Explore the [full screenshot gallery](docs/SHOWCASE.md) for albums, editing, col
 
 ## Install
 
-Download the available Linux packages from the [v1.0.4 release](https://github.com/froggy744/PIC/releases/tag/v1.0.4). See the [Linux installation guide](docs/build/linux.md) for setup details, or download the [source code](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.4.tar.gz) to build it yourself.
+Download the available Linux packages from the [v1.0.5 release](https://github.com/froggy744/PIC/releases/tag/v1.0.5). See the [Linux installation guide](docs/build/linux.md) for setup details, or download the [source code](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.5.tar.gz) to build it yourself.
 
 New to PIC? Start with the [getting started guide](docs/guides/getting-started.md) for first launch, import and browsing.
 

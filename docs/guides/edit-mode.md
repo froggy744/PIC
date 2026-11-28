@@ -24,11 +24,11 @@ The photo area becomes the editor: controls on the left, your photo big on the r
 
 [Watch the V1 walkthrough (MP4)](../../screenshots/screenshots-V1/walkthrough-V1.mp4).
 
-At the top you'll find the **back arrow**, **Undo / Redo**, **Reset**, **Export** and **Done**. The shared zoom slider in the bottom bar controls editor magnification. Use the 1:1 control to inspect detail.
+At the top you'll find **Undo, Redo, Reset, Export and Copy** in one strip, the six tabs in the middle, and **Close** and **Done** at the right end. The shared zoom slider in the bottom bar controls editor magnification. Use the 1:1 control to inspect detail.
 
-## The Five Tabs: Tools · Filters · Crop · Overlays · Text
+## The Six Tabs: Tools · Filters · Crop · Overlays · Text · Draw
 
-The left panel has five tabs:
+The left panel has six tabs:
 
 ### 🛠 Tools — sliders and one-click fixes
 
@@ -38,28 +38,34 @@ This is where the everyday corrections live, in three friendly groups:
 
 Auto Enhance processes the decoded display-referred image. For RAW files it cannot restore sensor detail already clipped or discarded by the RAW decoder, and editor previews may use a camera preview until native detail is requested.
 
-**Filter Amount** sits immediately below Auto Contrast and Auto Colour. Adjust the strength of Newspaper, Old Photo, any named filter, B&W or Sepia from **0% (unfiltered) to 100% (full style)**. The slider is disabled while Original is selected. It affects only the creative filter, not Auto Contrast/Colour, Fill Light, Shadows or other manual tools. Amount is stored in the non-destructive recipe; older saved photos default to 100%.
+**Intensity** (called Filter Amount before v1.0.5) sits immediately below Auto Contrast and Auto Colour. Adjust the strength of Newspaper, Old Photo, any named filter, B&W or Sepia from **0% (unfiltered) to 100% (full style)**. The slider is disabled while Original is selected. It affects only the creative filter, not Auto Contrast/Colour, Fill Light, Shadows or other manual tools. Amount is stored in the non-destructive recipe; older saved photos default to 100%.
+
+![PIC v1.0.5 — editor Tools panel](../../screenshots/v1.05/editor-tools.jpg)
+
+Since v1.0.5 the sliders sit two per row:
 
 **Light:**
 - **Exposure** — brighten or darken the whole photo
 - **Contrast** — punchy or soft
-- **Fill Light** — broadly lift lower midtones using a luminance-preserving curve
 - **Highlights** — darken or brighten bright regions without affecting deep shadows
 - **Shadows** — independently open or deepen the darker tonal regions
+- **Whites / Blacks** — set the brightest and darkest tones
+- **Fill Light** — broadly lift lower midtones using a luminance-preserving curve
 
 **Colour:**
 - **Saturation** — from gentle to vivid
+- **Vibrance** — boost muted colours more than already vivid ones
 - **Warmth** — cooler blues or golden warmth
+- **Tint** — shift between green and magenta
 
-**Detail:**
+**Detail & Effects:**
 - **Sharpen** — enhance small-scale image edges
 - **Clarity** — increase or soften midtone local contrast without pushing all colours
+- **Smooth** — soften fine texture
 - **Grain** — add deterministic monochrome film texture; zero leaves the image unchanged
+- **Vignette** — darken or lighten the corners
 
-**Geometry:**
-- **Straighten** — one slider to level a crooked horizon
-
-Move any slider and the preview updates instantly. The little numbers next to each slider show exactly how far you've pushed it.
+Move any slider and the preview updates instantly. The numbers next to each slider show exactly how far you've pushed it; two-sided sliders show a sign. **Reset adjustments** returns every Tools slider to neutral in one undo step and leaves filters, crop and layers alone. **Straighten** is on the Crop tab.
 
 ### 🎨 Filters — one-tap looks with live previews
 
@@ -103,11 +109,25 @@ Click **Add Text** to drop an editable text layer on the photo, then type your w
 - **Reset Placement** — back to centre at full opacity (keeps your wording and styling)
 - **Remove Text** — delete it from this photo
 
+Since v1.0.5, **+ Add text** sits beside the Text heading, position uses an **Offset X / Y** row and five placement buttons (left, top, centre, bottom, right), and the **Text Layers** list gives every layer its own trash button. Overlays work the same way.
+
+![PIC v1.0.5 — editor Text panel with Text Layers](../../screenshots/v1.05/editor-text-layers.jpg)
+
 Text layers live in the same edit recipe as overlays: they composite above everything else, survive copy/paste of edits, export at full quality, and **Undo / Redo** treats a burst of typing as one step.
 
----
-
 ![PIC V1 — edit mode - add text](../../screenshots/screenshots-V1/edit%20mode%20-%20add%20text.jpg)
+
+### ✏️ Draw — pen, shapes and arrows
+
+Draw freehand with the pen or highlighter, or add lines, arrows, rectangles and ellipses on top of the photo; pick a colour, thickness and opacity, and erase. The InfoBar's **Draw** button opens the editor straight on this tab, with the pen ready.
+
+![PIC v1.0.5 — editor Draw panel with Drawings](../../screenshots/v1.05/editor-draw-layers.jpg)
+
+The **Drawings** list shows one row per drawing with its colour and shape; select a row to select that drawing, or use its trash button to remove it (one undo step). The Delete key removes a multi-selection. Drawings are part of the same non-destructive recipe as text and overlays.
+
+**Select any layer from any tab:** clicking text, an overlay or a drawing on the photo opens its tab with it selected.
+
+---
 
 ## Undo, Redo, Reset — Experiment Freely
 
@@ -133,7 +153,7 @@ Editing happens inside PIC's library, so to get the edited version out as a real
 
 ## Done!
 
-When you're happy, click **Done**. You return to the grid exactly where you left off, and edited photos wear a small **pencil badge** so you can spot them. The saved recipe is used for edited previews and exported results.
+When you're happy, click **Done**. You return to where you opened the editor (the viewer, or the grid exactly where you left off), and edited photos wear a small **pencil badge** so you can spot them. The saved recipe is used for edited previews and exported results.
 
 ---
 

@@ -53,6 +53,12 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.0.5" date="2026-11-28" type="development">
+      <description>
+        <p>Smart Albums chosen by rules, Focus mode for culling, a redesigned Properties panel and photo editor with lists of text, overlay and drawing layers, quick library switching, a customisable InfoBar, search by capture date and album, one render pipeline for every view and export, faster Nikon RAW exports, and many fixes.</p>
+      </description>
+      <url type="details">https://github.com/froggy744/PIC/blob/main/docs/releases/v1.0.5.md</url>
+    </release>
     <release version="1.0.0" date="2026-10-02" type="development">
       <description>
         <p>Release Candidate 3 improves large-library browsing, Folder view performance, five-star ratings, multiple libraries, photo viewing, editing, imports, network browsing, colour management and Linux packaging.</p>

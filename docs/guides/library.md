@@ -52,9 +52,28 @@ Album context actions include renaming and cover customisation. An album is a vi
 
 ![PIC V1 — add new album](../../screenshots/screenshots-V1/add%20new%20album.jpg)
 
+## Smart Albums (v1.0.5)
+
+A **Smart Album** chooses its photos by rules instead of by hand. Use **+** beside Albums, pick **Smart Album**, name it and add conditions: camera, lens, capture date, aperture, ISO, rating, favourite, tags, edited and more. A photo must match every condition; choosing several values for one condition matches any of them. The dialog shows how many photos match as you go.
+
+![PIC v1.0.5 — New Smart Album rules](../../screenshots/v1.05/smart-album-rules.jpg)
+
+- **Save as Smart Album…** in the metadata filter row turns the filters you are browsing with into a Smart Album.
+- **Edit Rules…** in the album's menu changes its rules later; its name, cover and layout stay.
+- Smart Albums stay up to date as photos are rated, tagged, edited, imported or deleted. They are read-only: photos cannot be added to or removed from them by hand.
+- The Albums page's **Type** control shows all albums, only manual albums or only Smart Albums.
+
+## A photo's albums and tags (v1.0.5)
+
+![PIC v1.0.5 — In Albums in the photo menu](../../screenshots/v1.05/context-menu-in-albums.jpg)
+
+- **In Albums** in the photo menu lists the albums and Smart Albums the photo is in; choose one to open it.
+- **Add to Album** is the same list everywhere (InfoBar, photo menu, Properties) and offers manual albums only. **New Album…** at its end creates one with the photo in it.
+- In **Properties → Tags & albums**, the photo's tags and albums are listed under each other. Click an album to open it. The small × removes a tag, or takes the photo out of a manual album. **Add tag** and **Add to album** sit below.
+
 ## Search and return to a folder
 
-Search matches photo and folder names. Choose a folder suggestion with the keyboard and press Enter to navigate there; Esc clears search. **Open in Folder** on a photo returns to its folder section. Closing the viewer restores the photo selection and browsing position.
+Search matches photo and folder names and, since v1.0.5, capture dates ("May 2023", "14 May 2023", "14/05/2023") and album names. Matching albums appear in the suggestions and open the album. Choose a folder suggestion with the keyboard and press Enter to navigate there; Esc clears search. **Open in Folder** on a photo returns to its folder section. Closing the viewer restores the photo selection and browsing position.
 
 History shows recently edited photos and recorded operations, including saved edits and collage work. It is distinct from Recently Added, which reflects catalogue additions.
 
@@ -79,6 +98,10 @@ Open **Settings → Database** to manage catalogue databases:
 Separate libraries can represent different projects or archives. Photo files and the shared thumbnail cache are not copied by database management. A database backup protects organisation and edit recipes, not the original photographs; keep separate photo backups. Imported text/overlay assets also need to remain available for their edits.
 
 ![PIC V1 — settings - multiple libraries](../../screenshots/screenshots-V1/settings%20-%20multiple%20libraries.jpg)
+
+**Since v1.0.5**, the InfoBar's **Libraries** button lists every library, with the open one checked; click one to switch to it. **Manage Libraries…** opens the Database page.
+
+![PIC v1.0.5 — quick library switching](../../screenshots/v1.05/quick-switch-libraries.jpg)
 
 ## Thumbnail colour
 

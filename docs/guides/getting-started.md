@@ -36,7 +36,7 @@ You can also import from **Browse Network Photos** using SMB or NFS. A disconnec
 
 ## Choose your layout
 
-Use the gallery layout controls to switch between **Grid**, **Photo Wall** and **Masonry**, which arranges photos in rows using their natural proportions. Change thumbnail size with the zoom slider or **Ctrl + mouse wheel**.
+Use the gallery layout controls to switch between **Grid**, **Photo Wall**, **Masonry** and **Honeycomb**. Photo Wall arranges photos in rows using their natural proportions. Change thumbnail size with the zoom slider or **Ctrl + mouse wheel**.
 
 ![PIC V1 — grid metadata view](../../screenshots/screenshots-V1/grid%20metadata%20view.jpg)
 
@@ -50,11 +50,11 @@ In **Settings → Interface**, choose whether filenames are shown, how portrait 
 - Heart a photo for **Favourites**, give it a star rating, or add it to an album.
 - **1–5** assign ratings and **0** clears them; these shortcuts are inactive while typing in a text field.
 
-Search matches photo and folder names. Select a folder suggestion and press Enter to jump directly to it. Esc clears search. [Navigation guide →](navigation.md)
+Search matches photo and folder names, capture dates and album names. Select a folder suggestion and press Enter to jump directly to it. Esc clears search. [Navigation guide →](navigation.md)
 
 ## Make an edit
 
-Select a photo and choose the pencil button or **Edit** from its context menu. Explore **Tools, Filters, Crop, Overlays and Text**. Changes are recipes saved in PIC, with Undo, Redo and Reset. Use **Export** to create an edited image file.
+Select a photo and choose the pencil button or **Edit** from its context menu. Explore **Tools, Filters, Crop, Overlays, Text and Draw**, or use the InfoBar's **Draw** button to open the editor ready to draw. Changes are recipes saved in PIC, with Undo, Redo and Reset. Use **Export** to create an edited image file.
 
 ![PIC V1 — ratings](../../screenshots/screenshots-V1/ratings.jpg)
 
